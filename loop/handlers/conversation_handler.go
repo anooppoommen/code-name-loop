@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -262,6 +263,12 @@ func (h *ConversationHandler) Timeline(w http.ResponseWriter, r *http.Request) {
 type replyRequest struct {
 	Message       string `json:"message"`
 	ThinkingLevel string `json:"thinking_level,omitempty"`
+	Images        []replyImage `json:"images,omitempty"`
+}
+
+type replyImage struct {
+	MIMEType string `json:"mime_type"`
+	Data     string `json:"data"` // base64 encoded
 }
 
 // Reply handles user messages and streams the agent's response using SSE.
@@ -289,9 +296,23 @@ func (h *ConversationHandler) Reply(w http.ResponseWriter, r *http.Request) {
 		utils.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if req.Message == "" {
+	if req.Message == "" && len(req.Images) == 0 {
 		utils.WriteError(w, http.StatusBadRequest, "message is required")
 		return
+	}
+	for i, img := range req.Images {
+		if strings.TrimSpace(img.MIMEType) == "" {
+			utils.WriteError(w, http.StatusBadRequest, fmt.Sprintf("images[%d].mime_type is required", i))
+			return
+		}
+		if strings.TrimSpace(img.Data) == "" {
+			utils.WriteError(w, http.StatusBadRequest, fmt.Sprintf("images[%d].data is required", i))
+			return
+		}
+		if _, err := base64.StdEncoding.DecodeString(img.Data); err != nil {
+			utils.WriteError(w, http.StatusBadRequest, fmt.Sprintf("images[%d].data must be valid base64", i))
+			return
+		}
 	}
 	thinkingLevel, err := agent.ParseThinkingLevel(req.ThinkingLevel)
 	if err != nil {
@@ -350,8 +371,25 @@ func (h *ConversationHandler) Reply(w http.ResponseWriter, r *http.Request) {
 	session.ThinkingLevel = strings.ToLower(string(thinkingLevel))
 	session.IncludeThoughts = true
 
+	var parts []models.MessagePart
+	if req.Message != "" {
+		parts = append(parts, models.MessagePart{
+			Kind: models.PartText,
+			Text: &models.TextPart{Text: req.Message},
+		})
+	}
+	for _, img := range req.Images {
+		parts = append(parts, models.MessagePart{
+			Kind: models.PartInlineBlob,
+			InlineBlob: &models.InlineBlobPart{
+				MIMEType: img.MIMEType,
+				Data:     img.Data,
+			},
+		})
+	}
+
 	// Start the turn.
-	events, cancel, err := session.HandleUserMessage(r.Context(), req.Message)
+	events, cancel, err := session.HandleUserMessage(r.Context(), parts)
 	if err != nil {
 		utils.WriteError(w, http.StatusInternalServerError, err.Error())
 		return

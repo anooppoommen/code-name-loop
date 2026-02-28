@@ -94,7 +94,7 @@ function parseSseBlock(block) {
   return { eventName, data };
 }
 
-async function streamReplyToRenderer(streamId, baseUrl, conversationId, message, thinkingLevel) {
+async function streamReplyToRenderer(streamId, baseUrl, conversationId, message, thinkingLevel, images) {
   const endpoint = buildAbsoluteUrl(baseUrl, `/conversations/${conversationId}/reply`);
   const controller = new AbortController();
   const convKey = conversationKey(baseUrl, conversationId);
@@ -111,6 +111,7 @@ async function streamReplyToRenderer(streamId, baseUrl, conversationId, message,
       body: JSON.stringify({
         message,
         thinking_level: thinkingLevel || 'medium',
+        images,
       }),
       signal: controller.signal,
     });
@@ -252,13 +253,22 @@ ipcMain.handle('loop-api:request', async (_event, request) => {
 });
 
 ipcMain.handle('loop-api:start-stream', async (event, payload) => {
-  const { baseUrl, conversationId, message, streamId: clientStreamId, thinkingLevel } = payload || {};
+  const {
+    baseUrl,
+    conversationId,
+    message,
+    images,
+    streamId: clientStreamId,
+    thinkingLevel,
+  } = payload || {};
 
-  if (!baseUrl || !conversationId || !message) {
+  const hasMessage = typeof message === 'string' && message.trim().length > 0;
+  const hasImages = Array.isArray(images) && images.length > 0;
+  if (!baseUrl || !conversationId || (!hasMessage && !hasImages)) {
     return {
       ok: false,
       streamId: null,
-      error: 'Missing baseUrl, conversationId, or message.',
+      error: 'Missing baseUrl, conversationId, or message/images.',
     };
   }
 
@@ -273,7 +283,7 @@ ipcMain.handle('loop-api:start-stream', async (event, payload) => {
   }
 
   const streamId = clientStreamId || crypto.randomUUID();
-  void streamReplyToRenderer(streamId, baseUrl, conversationId, message, thinkingLevel);
+  void streamReplyToRenderer(streamId, baseUrl, conversationId, message || '', thinkingLevel, images);
 
   return {
     ok: true,

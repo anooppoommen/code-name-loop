@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"strings"
 
@@ -133,10 +134,17 @@ func partToGenAI(p models.MessagePart) *genai.Part {
 		}
 
 	case models.PartInlineBlob:
-		// InlineBlob parts reference attachments; conversion requires
-		// the attachment data to be resolved externally. We emit nil here
-		// since we can't resolve attachment bytes without the message context.
-		return nil
+		if p.InlineBlob != nil && p.InlineBlob.Data != "" {
+			b, err := base64.StdEncoding.DecodeString(p.InlineBlob.Data)
+			if err == nil {
+				gp = &genai.Part{
+					InlineData: &genai.Blob{
+						MIMEType: p.InlineBlob.MIMEType,
+						Data:     b,
+					},
+				}
+			}
+		}
 
 	case models.PartExecutableCode:
 		if p.ExecutableCode != nil {
@@ -224,6 +232,13 @@ func partFromGenAI(gp *genai.Part) models.MessagePart {
 		mp.FileRef = &models.FileRefPart{
 			URI:      gp.FileData.FileURI,
 			MIMEType: gp.FileData.MIMEType,
+		}
+
+	case gp.InlineData != nil:
+		mp.Kind = models.PartInlineBlob
+		mp.InlineBlob = &models.InlineBlobPart{
+			MIMEType: gp.InlineData.MIMEType,
+			Data:     base64.StdEncoding.EncodeToString(gp.InlineData.Data),
 		}
 
 	case gp.Thought:

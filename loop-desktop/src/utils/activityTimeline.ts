@@ -7,6 +7,7 @@ import {
   getString,
   parseToolResultPayload,
   trimForUI,
+  extractMessageImages,
 } from './parsers';
 
 export interface ActivityInput {
@@ -15,6 +16,7 @@ export interface ActivityInput {
   body?: string;
   streaming?: boolean;
   tool?: ActivityEvent['tool'];
+  images?: { mimeType: string; dataUrl: string }[];
 }
 
 function isApplyPatch(toolName: string): boolean {
@@ -185,24 +187,28 @@ export function historyRowsToActivities(items: unknown[]): ActivityEvent[] {
       const sentBy = getString(msg, ['SentBy', 'sent_by', 'sentBy']);
       if (sentBy === 'user') {
         const text = extractMessageText(msg);
-        if (text) {
+        const images = extractMessageImages(msg);
+        if (text || images.length > 0) {
           activityRows.push({
             id: getString(msg, ['ID', 'id']) || crypto.randomUUID(),
             kind: 'user',
             title: 'User prompt',
-            body: text,
+            body: text || '(Images attached)',
             timestamp: messageTimestamp(msg),
+            images,
           });
         }
       } else if (sentBy === 'agent') {
         const text = extractMessageText(msg);
-        if (text) {
+        const images = extractMessageImages(msg);
+        if (text || images.length > 0) {
           activityRows.push({
             id: getString(msg, ['ID', 'id']) || crypto.randomUUID(),
             kind: 'assistant',
             title: 'Assistant response',
-            body: text,
+            body: text || '(Images attached)',
             timestamp: messageTimestamp(msg),
+            images,
           });
         }
       } else if (sentBy === 'tool') {
@@ -224,19 +230,21 @@ export function historyRowsToActivities(items: unknown[]): ActivityEvent[] {
         case 'tool_start': {
           const callId = getString(metadata, ['call_id', 'callId']);
           const toolName = getString(metadata, ['tool_name']);
-          const args = getString(metadata, ['args']);
-          const command = parseToolCommand(toolName, args);
+          const argsText = getString(metadata, ['args']);
+          const parsedArgs = parseToolResultPayload(argsText);
+          const command = parseToolCommand(toolName, argsText);
           activityRows.push({
             id,
             kind: 'tool',
             title: `${toolName || 'tool'} started`,
-            body: isApplyPatch(toolName) ? (command || args || text || undefined) : (trimForUI(command || args || text, 900) || undefined),
+            body: isApplyPatch(toolName) ? (command || argsText || text || undefined) : (trimForUI(command || argsText || text, 900) || undefined),
             timestamp,
             tool: {
               name: toolName || 'tool',
               phase: 'start',
               callId: callId || undefined,
               command: command || undefined,
+              args: parsedArgs,
             },
           });
           if (callId) {
@@ -250,9 +258,11 @@ export function historyRowsToActivities(items: unknown[]): ActivityEvent[] {
           const success = getBoolean(metadata, ['success']);
           const resultText = getString(metadata, ['result']);
           const errorMsg = getString(metadata, ['error']);
+          const argsText = getString(metadata, ['args']);
+          const parsedArgs = parseToolResultPayload(argsText);
           const summary = summarizeToolBody(toolName, resultText, errorMsg);
           const fallbackBody = success ? text : errorMsg || text;
-          const mergedCommand = parseToolCommand(toolName, getString(metadata, ['args']));
+          const mergedCommand = parseToolCommand(toolName, argsText);
           const parsedPayload = parseToolResultPayload(resultText);
 
           const existingIndex = callId ? openToolByCallID.get(callId) : undefined;
@@ -272,6 +282,7 @@ export function historyRowsToActivities(items: unknown[]): ActivityEvent[] {
                   resultSummary: summary.title || undefined,
                   error: errorMsg || undefined,
                   command: existing.tool?.command || mergedCommand || undefined,
+                  args: existing.tool?.args ?? parsedArgs,
                   payload: parsedPayload,
                 },
               };
@@ -294,6 +305,7 @@ export function historyRowsToActivities(items: unknown[]): ActivityEvent[] {
               resultSummary: summary.title || undefined,
               error: errorMsg || undefined,
               command: mergedCommand || undefined,
+              args: parsedArgs,
               payload: parsedPayload,
             },
           });

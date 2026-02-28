@@ -67,6 +67,13 @@ interface StreamHandle {
 
 export type NoticeTone = 'success' | 'error' | 'info';
 
+export interface ComposerImage {
+  id: string;
+  data: string;
+  mimeType: string;
+  dataUrl: string;
+}
+
 export interface NoticeToast {
   id: string;
   tone: NoticeTone;
@@ -95,6 +102,8 @@ export interface LoopDesktopController {
 
   messageInput: string;
   setMessageInput: (value: string) => void;
+  composerImages: ComposerImage[];
+  setComposerImages: React.Dispatch<React.SetStateAction<ComposerImage[]>>;
   canCompose: boolean;
   isSending: boolean;
   notices: NoticeToast[];
@@ -141,6 +150,7 @@ export function useLoopDesktop(): LoopDesktopController {
   const [activities, setActivities] = useState<ActivityEvent[]>([]);
 
   const [messageInput, setMessageInput] = useState('');
+  const [composerImages, setComposerImages] = useState<ComposerImage[]>([]);
   const [isLoadingWorkspaces, setIsLoadingWorkspaces] = useState(false);
   const [sendingConversations, setSendingConversations] = useState<Record<string, boolean>>({});
   const isSending = !!sendingConversations[selectedConversationId];
@@ -210,6 +220,7 @@ export function useLoopDesktop(): LoopDesktopController {
       title: input.title,
       body: input.body,
       tool: input.tool,
+      images: input.images,
       timestamp: Date.now(),
       streaming: input.streaming,
     };
@@ -1035,7 +1046,7 @@ export function useLoopDesktop(): LoopDesktopController {
   const sendMessageText = useCallback(
     async (messageText: string, clearComposer: boolean): Promise<void> => {
       const text = messageText.trim();
-      if (!text || (selectedConversationId && sendingConversations[selectedConversationId])) {
+      if ((!text && composerImages.length === 0) || (selectedConversationId && sendingConversations[selectedConversationId])) {
         return;
       }
       const selectedThinkingLevel = normalizeThinkingLevel(thinkingLevel);
@@ -1056,10 +1067,16 @@ export function useLoopDesktop(): LoopDesktopController {
       draftThoughtIdRef.current = null;
       openToolEventIDsRef.current = {};
 
-      pushActivity({ kind: 'user', title: 'User prompt', body: text });
+      pushActivity({ 
+        kind: 'user', 
+        title: 'User prompt', 
+        body: text || '(Images attached)',
+        images: composerImages.map(img => ({ mimeType: img.mimeType, dataUrl: img.dataUrl })),
+      });
       pushActivity({ kind: 'lifecycle', title: 'Turn started' });
       if (clearComposer) {
         setMessageInput('');
+        setComposerImages([]);
       }
       const requestedStreamID = crypto.randomUUID();
       activeStreamsRef.current[conversationId] = {
@@ -1076,6 +1093,10 @@ export function useLoopDesktop(): LoopDesktopController {
           conversationId,
           message: text,
           thinkingLevel: selectedThinkingLevel,
+          images: composerImages.length > 0 ? composerImages.map(img => ({
+            mime_type: img.mimeType,
+            data: img.data,
+          })) : undefined,
         },
         (packet) => {
           handleStreamPacket(packet, conversationId);
@@ -1109,6 +1130,7 @@ export function useLoopDesktop(): LoopDesktopController {
       selectedConversationId,
       sendingConversations,
       thinkingLevel,
+      composerImages,
     ],
   );
 
@@ -1230,6 +1252,8 @@ export function useLoopDesktop(): LoopDesktopController {
 
     messageInput,
     setMessageInput,
+    composerImages,
+    setComposerImages,
     canCompose: selectedWorkspaceId !== '',
     isSending,
     notices,

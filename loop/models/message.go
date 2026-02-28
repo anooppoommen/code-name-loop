@@ -126,8 +126,9 @@ type FileRefPart struct {
 
 // InlineBlobPart references an attachment containing inline binary data.
 type InlineBlobPart struct {
-	AttachmentID AttachmentID `json:"attachment_id"`
+	AttachmentID AttachmentID `json:"attachment_id,omitempty"`
 	MIMEType     string       `json:"mime_type"`
+	Data         string       `json:"data,omitempty"` // Base64 encoded data
 	DisplayName  string       `json:"display_name,omitempty"`
 }
 

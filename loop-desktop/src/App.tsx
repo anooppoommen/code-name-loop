@@ -171,6 +171,8 @@ export default function App() {
                 onStop={app.cancelStream}
                 onNewConversation={() => void app.newConversation()}
                 conversationId={app.selectedConversationId}
+                composerImages={app.composerImages}
+                setComposerImages={app.setComposerImages}
               />
             </div>
           </div>

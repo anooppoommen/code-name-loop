@@ -37,6 +37,8 @@ export interface ParallelToolResult {
   name: string;
   success: boolean;
   error: string;
+  response?: Record<string, unknown> | null;
+  arguments?: Record<string, unknown> | null;
 }
 
 export interface ParallelToolPayload {

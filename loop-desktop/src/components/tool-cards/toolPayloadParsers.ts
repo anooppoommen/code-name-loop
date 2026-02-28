@@ -87,7 +87,10 @@ export function parseParallelToolPayload(event: ActivityEvent): ParallelToolPayl
       const name = readString(record.name) || 'tool';
       const success = Boolean(record.success);
       const error = readString(record.error);
-      return { name, success, error };
+      const response = asObject(record.response);
+      const args = asObject(record.arguments);
+      const itemResult: ParallelToolResult = { name, success, error, response, arguments: args };
+      return itemResult;
     })
     .filter((item): item is ParallelToolResult => item !== null);
 

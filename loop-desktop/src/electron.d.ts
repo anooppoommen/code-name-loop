@@ -18,6 +18,7 @@ export interface LoopStreamStartRequest {
   conversationId: string;
   message: string;
   thinkingLevel?: 'minimal' | 'low' | 'medium' | 'high';
+  images?: { mime_type: string; data: string }[];
 }
 
 export interface LoopStreamStartResponse {

@@ -18,6 +18,31 @@ export function parseWorkspace(input: unknown): WorkspaceSummary | null {
   };
 }
 
+export function extractMessageImages(message: unknown): { mimeType: string; dataUrl: string }[] {
+  const record = asRecord(message);
+  const rawParts = getField(record, ['Parts', 'parts']);
+  if (!Array.isArray(rawParts)) {
+    return [];
+  }
+
+  const images: { mimeType: string; dataUrl: string }[] = [];
+  for (const part of rawParts) {
+    const partRecord = asRecord(part);
+    const kind = getString(partRecord, ['Kind', 'kind']);
+    if (kind === 'inline_blob') {
+      const blob = asRecord(getField(partRecord, ['inline_blob', 'InlineBlob']));
+      if (blob) {
+        const mimeType = getString(blob, ['mime_type', 'MIMEType']);
+        const data = getString(blob, ['data', 'Data']);
+        if (mimeType && data) {
+          images.push({ mimeType, dataUrl: `data:${mimeType};base64,${data}` });
+        }
+      }
+    }
+  }
+  return images;
+}
+
 export function parseConversation(input: unknown): ConversationSummary | null {
   const record = asRecord(input);
   const id = getString(record, ['ID', 'id']);

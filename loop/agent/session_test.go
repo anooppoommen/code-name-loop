@@ -190,6 +190,13 @@ func simpleTool(name string, result string) *agent.ToolDef {
 	}
 }
 
+func textParts(text string) []models.MessagePart {
+	return []models.MessagePart{{
+		Kind: models.PartText,
+		Text: &models.TextPart{Text: text},
+	}}
+}
+
 // ─────────────────────────────────────────────────────────────────
 // Session Tests — Core Flow
 // ─────────────────────────────────────────────────────────────────
@@ -202,7 +209,7 @@ func TestSessionSimpleTextResponse(t *testing.T) {
 	mock := &mockModelClient{responses: [][]agent.TurnEvent{makeTextResponse("Hello!")}}
 
 	session := agent.NewSession(s, mock, ws, conv, nil, 0)
-	events, cancel, err := session.HandleUserMessage(ctx, "Hi")
+	events, cancel, err := session.HandleUserMessage(ctx, textParts("Hi"))
 	if err != nil {
 		t.Fatalf("HandleUserMessage: %v", err)
 	}
@@ -254,7 +261,7 @@ func TestSessionToolCallCycle(t *testing.T) {
 
 	session := agent.NewSession(s, mock, ws, conv, []*agent.ToolDef{simpleTool("read_file", `{"content":"hello world"}`)}, 0)
 
-	events, cancel, err := session.HandleUserMessage(ctx, "Read /tmp/test.txt")
+	events, cancel, err := session.HandleUserMessage(ctx, textParts("Read /tmp/test.txt"))
 	if err != nil {
 		t.Fatalf("HandleUserMessage: %v", err)
 	}
@@ -311,7 +318,7 @@ func TestSessionParallelToolCalls(t *testing.T) {
 		simpleTool("b", `{"ok":"b"}`),
 	}, 0)
 
-	events, cancel, _ := session.HandleUserMessage(ctx, "Go")
+	events, cancel, _ := session.HandleUserMessage(ctx, textParts("Go"))
 	defer cancel()
 	allEvents := collectEvents(events)
 
@@ -351,7 +358,7 @@ func TestSessionMultiTurnToolCycle(t *testing.T) {
 		simpleTool("s2", `{"ok":2}`),
 	}, 0)
 
-	events, cancel, _ := session.HandleUserMessage(ctx, "Multi-step")
+	events, cancel, _ := session.HandleUserMessage(ctx, textParts("Multi-step"))
 	defer cancel()
 	allEvents := collectEvents(events)
 
@@ -404,7 +411,7 @@ func TestSessionContextCancellation(t *testing.T) {
 	}}
 
 	session := agent.NewSession(s, mock, ws, conv, tools, 0)
-	events, cancel, _ := session.HandleUserMessage(ctx, "Run slow")
+	events, cancel, _ := session.HandleUserMessage(ctx, textParts("Run slow"))
 
 	go func() {
 		time.Sleep(10 * time.Millisecond)
@@ -428,7 +435,7 @@ func TestSessionCancellationEmitsAbortNotError(t *testing.T) {
 	}
 
 	session := agent.NewSession(s, slowMock, ws, conv, nil, 0)
-	events, cancel, err := session.HandleUserMessage(ctx, "Hello")
+	events, cancel, err := session.HandleUserMessage(ctx, textParts("Hello"))
 	if err != nil {
 		t.Fatalf("HandleUserMessage: %v", err)
 	}
@@ -492,10 +499,10 @@ func TestSessionAbortBeforeSpawn(t *testing.T) {
 	session := agent.NewSession(s, blockingMock, ws, conv, nil, 0)
 
 	// Start first turn.
-	events1, _, _ := session.HandleUserMessage(ctx, "First")
+	events1, _, _ := session.HandleUserMessage(ctx, textParts("First"))
 
 	// Start second turn immediately — should abort the first.
-	events2, cancel2, _ := session.HandleUserMessage(ctx, "Second")
+	events2, cancel2, _ := session.HandleUserMessage(ctx, textParts("Second"))
 	defer cancel2()
 
 	// Drain both channels.
@@ -554,7 +561,7 @@ func TestSessionModelError(t *testing.T) {
 	}
 
 	session := agent.NewSession(s, mock, ws, conv, nil, 0)
-	events, cancel, _ := session.HandleUserMessage(ctx, "Hello")
+	events, cancel, _ := session.HandleUserMessage(ctx, textParts("Hello"))
 	defer cancel()
 
 	allEvents := collectEvents(events)
@@ -598,7 +605,7 @@ func TestSessionToolHandlerError(t *testing.T) {
 	}}
 
 	session := agent.NewSession(s, mock, ws, conv, tools, 0)
-	events, cancel, _ := session.HandleUserMessage(ctx, "Run buggy")
+	events, cancel, _ := session.HandleUserMessage(ctx, textParts("Run buggy"))
 	defer cancel()
 	allEvents := collectEvents(events)
 
@@ -633,7 +640,7 @@ func TestSessionNoToolsRegistered(t *testing.T) {
 	}
 
 	session := agent.NewSession(s, mock, ws, conv, nil, 0)
-	events, cancel, _ := session.HandleUserMessage(ctx, "Call something")
+	events, cancel, _ := session.HandleUserMessage(ctx, textParts("Call something"))
 	defer cancel()
 	allEvents := collectEvents(events)
 
@@ -646,6 +653,129 @@ func TestSessionNoToolsRegistered(t *testing.T) {
 	}
 	if findEvent(allEvents, agent.EventTurnComplete) == nil {
 		t.Error("should still complete")
+	}
+}
+
+func TestSessionToolResultTruncationPreservesJSON(t *testing.T) {
+	s := newTestStore(t)
+	ws, conv := seedConversation(t, s)
+	ctx := context.Background()
+
+	longOutput := strings.Repeat("x", 5000)
+	mock := &mockModelClient{
+		responses: [][]agent.TurnEvent{
+			makeToolCallResponse(struct{ Name, CallID, Args string }{"echo", "c1", `{}`}),
+			makeTextResponse("done"),
+		},
+	}
+
+	tools := []*agent.ToolDef{simpleTool("echo", fmt.Sprintf(`{"output":%q,"ok":true}`, longOutput))}
+	session := agent.NewSession(s, mock, ws, conv, tools, 0)
+	events, cancel, _ := session.HandleUserMessage(ctx, textParts("run tool"))
+	defer cancel()
+	allEvents := collectEvents(events)
+
+	tr := findEvent(allEvents, agent.EventToolResult)
+	if tr == nil || tr.ToolResult == nil {
+		t.Fatal("expected tool result event")
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(tr.ToolResult.Result), &parsed); err != nil {
+		t.Fatalf("tool result should remain valid json, got error: %v", err)
+	}
+	out, ok := parsed["output"].(string)
+	if !ok {
+		t.Fatal("expected output string in tool result json")
+	}
+	if !strings.Contains(out, "...(truncated)") {
+		t.Fatal("expected output text to be truncated")
+	}
+
+	evts, err := s.UIEvents().GetByConversation(ctx, conv.ID)
+	if err != nil {
+		t.Fatalf("load ui events: %v", err)
+	}
+
+	var foundPersisted bool
+	for _, evt := range evts {
+		if evt.Kind != models.UIEventKindToolResult {
+			continue
+		}
+		raw, ok := evt.Metadata["result"].(string)
+		if !ok || raw == "" {
+			continue
+		}
+		if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+			t.Fatalf("persisted tool result should remain valid json, got error: %v", err)
+		}
+		foundPersisted = true
+		break
+	}
+	if !foundPersisted {
+		t.Fatal("expected persisted tool_result ui event with json result")
+	}
+}
+
+func TestSessionToolCallArgsTruncationPreservesJSON(t *testing.T) {
+	s := newTestStore(t)
+	ws, conv := seedConversation(t, s)
+	ctx := context.Background()
+
+	longPath := strings.Repeat("p", 2600)
+	args := fmt.Sprintf(`{"path":%q,"mode":"read"}`, longPath)
+	mock := &mockModelClient{
+		responses: [][]agent.TurnEvent{
+			makeToolCallResponse(struct{ Name, CallID, Args string }{"read_file", "c1", args}),
+			makeTextResponse("done"),
+		},
+	}
+
+	tools := []*agent.ToolDef{simpleTool("read_file", `{"output":"ok"}`)}
+	session := agent.NewSession(s, mock, ws, conv, tools, 0)
+	events, cancel, _ := session.HandleUserMessage(ctx, textParts("run tool"))
+	defer cancel()
+	allEvents := collectEvents(events)
+
+	tc := findEvent(allEvents, agent.EventToolCallStart)
+	if tc == nil || tc.ToolCall == nil {
+		t.Fatal("expected tool call start event")
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(tc.ToolCall.Args), &parsed); err != nil {
+		t.Fatalf("tool call args should remain valid json, got error: %v", err)
+	}
+	pathValue, ok := parsed["path"].(string)
+	if !ok {
+		t.Fatal("expected path string in tool args json")
+	}
+	if !strings.Contains(pathValue, "...(truncated)") {
+		t.Fatal("expected args text value to be truncated")
+	}
+
+	evts, err := s.UIEvents().GetByConversation(ctx, conv.ID)
+	if err != nil {
+		t.Fatalf("load ui events: %v", err)
+	}
+
+	var foundPersisted bool
+	for _, evt := range evts {
+		if evt.Kind != models.UIEventKindToolStart {
+			continue
+		}
+		raw, ok := evt.Metadata["args"].(string)
+		if !ok || raw == "" {
+			continue
+		}
+		if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+			t.Fatalf("persisted tool args should remain valid json, got error: %v", err)
+		}
+		foundPersisted = true
+		break
+	}
+	if !foundPersisted {
+		t.Fatal("expected persisted tool_start ui event with json args")
 	}
 }
 
@@ -672,7 +802,7 @@ func TestSessionMaxToolCallIterations(t *testing.T) {
 	session := agent.NewSession(s, mock, ws, conv, []*agent.ToolDef{simpleTool("loop_tool", `{"ok":true}`)}, 0)
 	session.MaxToolCallIterations = testMaxIterations
 
-	events, cancel, _ := session.HandleUserMessage(ctx, "Loop forever")
+	events, cancel, _ := session.HandleUserMessage(ctx, textParts("Loop forever"))
 	defer cancel()
 
 	allEvents := collectEvents(events)
@@ -704,7 +834,7 @@ func TestSessionEmitsTurnStarted(t *testing.T) {
 	mock := &mockModelClient{responses: [][]agent.TurnEvent{makeTextResponse("ok")}}
 
 	session := agent.NewSession(s, mock, ws, conv, nil, 0)
-	events, cancel, _ := session.HandleUserMessage(ctx, "Hi")
+	events, cancel, _ := session.HandleUserMessage(ctx, textParts("Hi"))
 	defer cancel()
 	allEvents := collectEvents(events)
 
@@ -739,7 +869,7 @@ func TestSessionSystemPrompt(t *testing.T) {
 	}
 
 	session := agent.NewSession(s, mock, ws, conv, nil, 0)
-	events, cancel, _ := session.HandleUserMessage(ctx, "hi")
+	events, cancel, _ := session.HandleUserMessage(ctx, textParts("hi"))
 	defer cancel()
 	collectEvents(events)
 
@@ -771,7 +901,7 @@ func TestSessionThinkingLevelAppliedToModelConfig(t *testing.T) {
 	session.ThinkingLevel = "high"
 	session.IncludeThoughts = true
 
-	events, cancel, _ := session.HandleUserMessage(ctx, "hi")
+	events, cancel, _ := session.HandleUserMessage(ctx, textParts("hi"))
 	defer cancel()
 	collectEvents(events)
 
@@ -813,7 +943,7 @@ func TestSessionDeltaStreaming(t *testing.T) {
 	}
 
 	session := agent.NewSession(s, mock, ws, conv, nil, 0)
-	events, cancel, _ := session.HandleUserMessage(ctx, "Hi")
+	events, cancel, _ := session.HandleUserMessage(ctx, textParts("Hi"))
 	defer cancel()
 	allEvents := collectEvents(events)
 
@@ -850,7 +980,7 @@ func TestSessionThoughtStatusSummary(t *testing.T) {
 	}
 
 	session := agent.NewSession(s, mock, ws, conv, nil, 0)
-	events, cancel, _ := session.HandleUserMessage(ctx, "Hi")
+	events, cancel, _ := session.HandleUserMessage(ctx, textParts("Hi"))
 	defer cancel()
 	allEvents := collectEvents(events)
 
@@ -881,7 +1011,7 @@ func TestSessionFillsMissingFunctionCallID(t *testing.T) {
 
 	session := agent.NewSession(s, mock, ws, conv, []*agent.ToolDef{simpleTool("t", `{"ok":true}`)}, 0)
 
-	events, cancel, _ := session.HandleUserMessage(ctx, "Go")
+	events, cancel, _ := session.HandleUserMessage(ctx, textParts("Go"))
 	defer cancel()
 	allEvents := collectEvents(events)
 
@@ -935,7 +1065,7 @@ func TestSessionStatusIncludesToolActionSummary(t *testing.T) {
 	}
 
 	session := agent.NewSession(s, mock, ws, conv, []*agent.ToolDef{simpleTool("shell", `{"output":"ok"}`)}, 0)
-	events, cancel, _ := session.HandleUserMessage(ctx, "Run checks")
+	events, cancel, _ := session.HandleUserMessage(ctx, textParts("Run checks"))
 	defer cancel()
 	allEvents := collectEvents(events)
 
@@ -971,7 +1101,7 @@ func TestSessionStatusIncludesThreadUpdateSummary(t *testing.T) {
 	}
 
 	session := agent.NewSession(s, mock, ws, conv, []*agent.ToolDef{simpleTool("spawn_thread", `{"thread_id":"12345678-1234-1234-1234-1234567890ab","status":"running"}`)}, 0)
-	events, cancel, _ := session.HandleUserMessage(ctx, "Spawn")
+	events, cancel, _ := session.HandleUserMessage(ctx, textParts("Spawn"))
 	defer cancel()
 	allEvents := collectEvents(events)
 
@@ -1005,11 +1135,11 @@ func TestSessionMultipleUserMessages(t *testing.T) {
 
 	session := agent.NewSession(s, mock, ws, conv, nil, 0)
 
-	events1, cancel1, _ := session.HandleUserMessage(ctx, "First")
+	events1, cancel1, _ := session.HandleUserMessage(ctx, textParts("First"))
 	collectEvents(events1)
 	cancel1()
 
-	events2, cancel2, _ := session.HandleUserMessage(ctx, "Second")
+	events2, cancel2, _ := session.HandleUserMessage(ctx, textParts("Second"))
 	collectEvents(events2)
 	cancel2()
 
@@ -1056,7 +1186,7 @@ func TestSessionThreadHistoryComposition(t *testing.T) {
 	}
 
 	session := agent.NewSession(s, mock, ws, thread, nil, 0)
-	events, cancel, _ := session.HandleUserMessage(ctx, "Thread question")
+	events, cancel, _ := session.HandleUserMessage(ctx, textParts("Thread question"))
 	defer cancel()
 	collectEvents(events)
 
@@ -1081,7 +1211,7 @@ func TestSessionEmptyUserMessage(t *testing.T) {
 	mock := &mockModelClient{responses: [][]agent.TurnEvent{makeTextResponse("I see empty input")}}
 
 	session := agent.NewSession(s, mock, ws, conv, nil, 0)
-	events, cancel, err := session.HandleUserMessage(ctx, "")
+	events, cancel, err := session.HandleUserMessage(ctx, textParts(""))
 	if err != nil {
 		t.Fatalf("HandleUserMessage: %v", err)
 	}
@@ -1107,7 +1237,7 @@ func TestSessionMessageIDsUnique(t *testing.T) {
 
 	session := agent.NewSession(s, mock, ws, conv, []*agent.ToolDef{simpleTool("t", `{}`)}, 0)
 
-	events, cancel, _ := session.HandleUserMessage(ctx, "Go")
+	events, cancel, _ := session.HandleUserMessage(ctx, textParts("Go"))
 	defer cancel()
 	collectEvents(events)
 
@@ -1130,7 +1260,7 @@ func TestSessionNoResponseFromModel(t *testing.T) {
 	mock := &mockModelClient{responses: [][]agent.TurnEvent{{}}}
 
 	session := agent.NewSession(s, mock, ws, conv, nil, 0)
-	events, cancel, _ := session.HandleUserMessage(ctx, "Hello")
+	events, cancel, _ := session.HandleUserMessage(ctx, textParts("Hello"))
 	defer cancel()
 
 	allEvents := collectEvents(events)
@@ -1158,7 +1288,7 @@ func TestSessionEventOrder(t *testing.T) {
 
 	session := agent.NewSession(s, mock, ws, conv, []*agent.ToolDef{simpleTool("t", `{}`)}, 0)
 
-	events, cancel, _ := session.HandleUserMessage(ctx, "Go")
+	events, cancel, _ := session.HandleUserMessage(ctx, textParts("Go"))
 	defer cancel()
 	allEvents := collectEvents(events)
 
@@ -1209,7 +1339,7 @@ func TestSessionHistoryGrowsEachIteration(t *testing.T) {
 
 	session := agent.NewSession(s, captureMock, ws, conv, []*agent.ToolDef{simpleTool("t", `{}`)}, 0)
 
-	events, cancel, _ := session.HandleUserMessage(ctx, "Go")
+	events, cancel, _ := session.HandleUserMessage(ctx, textParts("Go"))
 	defer cancel()
 	collectEvents(events)
 

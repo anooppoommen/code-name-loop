@@ -29,6 +29,7 @@ type parallelToolUseItem struct {
 type parallelToolUseResult struct {
 	Name     string          `json:"name"`
 	Success  bool            `json:"success"`
+	Arguments map[string]any `json:"arguments,omitempty"`
 	Response json.RawMessage `json:"response,omitempty"`
 	Error    string          `json:"error,omitempty"`
 }
@@ -178,10 +179,10 @@ func runParallelInvocation(ctx context.Context, invocation parallelToolUseItem, 
 
 	out, err := def.Handler(ctx, rawArgs)
 	if err != nil {
-		return parallelToolUseResult{Name: name, Success: false, Error: err.Error()}
+		return parallelToolUseResult{Name: name, Success: false, Arguments: argPayload, Error: err.Error()}
 	}
 
-	return parallelToolUseResult{Name: name, Success: true, Response: out}
+	return parallelToolUseResult{Name: name, Success: true, Arguments: argPayload, Response: out}
 }
 
 func normalizeParallelToolName(name, recipient string) string {

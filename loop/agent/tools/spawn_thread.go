@@ -275,7 +275,11 @@ func driveChildSession(
 	threadID models.ConversationID,
 	statusEmitter func(string),
 ) (result string, errMsg string) {
-	events, cancel, err := session.HandleUserMessage(ctx, task)
+	parts := []models.MessagePart{{
+		Kind: models.PartText,
+		Text: &models.TextPart{Text: task},
+	}}
+	events, cancel, err := session.HandleUserMessage(ctx, parts)
 	if err != nil {
 		return "", "start session: " + err.Error()
 	}

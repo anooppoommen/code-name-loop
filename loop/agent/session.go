@@ -249,7 +249,7 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 
 			argsStr := string(fc.Args)
 			if fc.Name != "apply_patch" {
-				argsStr = truncateEventText(argsStr, 2000)
+				argsStr = truncateJSONTextValues(argsStr, 2000)
 			}
 
 			ch <- TurnEvent{
@@ -303,7 +303,7 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 
 			resultText := string(result.ResponseJSON)
 			if result.Name != "apply_patch" {
-				resultText = truncateEventText(resultText, 4000)
+				resultText = truncateJSONTextValues(resultText, 4000)
 			}
 
 			errorText := errorString(result.Err)
@@ -416,10 +416,56 @@ func ensureFunctionCallIDs(msg *models.Message) {
 }
 
 func truncateEventText(s string, max int) string {
-	if max <= 0 || len(s) <= max {
+	if max <= 0 {
 		return s
 	}
-	return s[:max] + "...(truncated)"
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max]) + "...(truncated)"
+}
+
+func truncateJSONTextValues(raw string, max int) string {
+	if max <= 0 {
+		return raw
+	}
+
+	var payload any
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return truncateEventText(raw, max)
+	}
+
+	truncateAnyText(payload, max)
+
+	normalized, err := json.Marshal(payload)
+	if err != nil {
+		return truncateEventText(raw, max)
+	}
+	return string(normalized)
+}
+
+func truncateAnyText(v any, max int) {
+	switch t := v.(type) {
+	case map[string]any:
+		for key := range t {
+			switch tv := t[key].(type) {
+			case string:
+				t[key] = truncateEventText(tv, max)
+			default:
+				truncateAnyText(tv, max)
+			}
+		}
+	case []any:
+		for i := range t {
+			switch tv := t[i].(type) {
+			case string:
+				t[i] = truncateEventText(tv, max)
+			default:
+				truncateAnyText(tv, max)
+			}
+		}
+	}
 }
 
 func errorString(err error) string {
@@ -762,7 +808,7 @@ func (s *Session) emitUIEvent(
 // one (abort-before-spawn pattern).
 //
 // The returned context.CancelFunc can be used to cancel the turn.
-func (s *Session) HandleUserMessage(ctx context.Context, text string) (<-chan TurnEvent, context.CancelFunc, error) {
+func (s *Session) HandleUserMessage(ctx context.Context, parts []models.MessagePart) (<-chan TurnEvent, context.CancelFunc, error) {
 	// Abort any previously running turn.
 	s.mu.Lock()
 	if s.activeTurnCancel != nil {
@@ -776,12 +822,7 @@ func (s *Session) HandleUserMessage(ctx context.Context, text string) (<-chan Tu
 		ConversationID: s.Conversation.ID,
 		SentBy:         models.SentByUser,
 		State:          models.MessageStateCompleted,
-		Parts: []models.MessagePart{
-			{
-				Kind: models.PartText,
-				Text: &models.TextPart{Text: text},
-			},
-		},
+		Parts:          parts,
 	}
 
 	if err := s.Store.Messages().Append(ctx, userMsg); err != nil {

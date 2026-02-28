@@ -11,6 +11,7 @@ export interface ToolActivityMeta {
   resultSummary?: string;
   error?: string;
   command?: string;
+  args?: Record<string, unknown> | null;
   payload?: Record<string, unknown> | null;
 }
 
@@ -22,6 +23,7 @@ export interface ActivityEvent {
   timestamp: number;
   streaming?: boolean;
   tool?: ToolActivityMeta;
+  images?: { mimeType: string; dataUrl: string }[];
 }
 
 export interface WorkspaceSummary {
