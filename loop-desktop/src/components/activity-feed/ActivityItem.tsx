@@ -16,10 +16,12 @@ import {
   CommandToolCard,
   RequestUserInputCard,
   UpdatePlanCard,
+  FileToolCard,
   parseCommandToolPayload,
   parseParallelToolPayload,
   parseRequestUserInputPayload,
   parseUpdatePlanPayload,
+  parseFileToolPayload,
 } from '../tool-cards';
 import type { ToolReplyActions } from '../tool-cards';
 import type { ActivityEvent, ActivityKind } from '../../types/ui';
@@ -70,10 +72,9 @@ export const ActivityItem = memo(function ActivityItem({
   const updatePlanPayload = parseUpdatePlanPayload(event);
   const parallelToolPayload = parseParallelToolPayload(event);
   const commandToolPayload = parseCommandToolPayload(event);
+  const fileToolPayload = parseFileToolPayload(event);
   const isPatchToolEvent =
     event.tool?.name === 'apply_patch' || event.tool?.name?.endsWith(':apply_patch');
-  const isReadFileEvent =
-    event.tool?.name === 'read_file' || event.tool?.name?.endsWith(':read_file');
 
   if (event.kind === 'thought') {
     return (
@@ -97,10 +98,9 @@ export const ActivityItem = memo(function ActivityItem({
               const nestedRequestInputPayload = parseRequestUserInputPayload(nestedEvent);
               const nestedUpdatePlanPayload = parseUpdatePlanPayload(nestedEvent);
               const nestedCommandToolPayload = parseCommandToolPayload(nestedEvent);
+              const nestedFileToolPayload = parseFileToolPayload(nestedEvent);
               const nestedIsPatchToolEvent =
                 nestedEvent.tool?.name === 'apply_patch' || nestedEvent.tool?.name?.endsWith(':apply_patch');
-              const nestedIsReadFileEvent =
-                nestedEvent.tool?.name === 'read_file' || nestedEvent.tool?.name?.endsWith(':read_file');
               const nestedFallbackText = textTargetForEvent(nestedEvent);
 
               return (
@@ -130,6 +130,8 @@ export const ActivityItem = memo(function ActivityItem({
                     <CommandToolCard payload={nestedCommandToolPayload} />
                   ) : nestedUpdatePlanPayload ? (
                     <UpdatePlanCard payload={nestedUpdatePlanPayload} />
+                  ) : nestedFileToolPayload ? (
+                    <FileToolCard payload={nestedFileToolPayload} />
                   ) : nestedIsPatchToolEvent && (nestedEvent.tool?.command || nestedEvent.body) ? (
                     <div className="space-y-2">
                       {nestedEvent.body &&
@@ -140,18 +142,6 @@ export const ActivityItem = memo(function ActivityItem({
                         </pre>
                       ) : null}
                       <PatchViewer patchText={nestedEvent.tool?.command || nestedEvent.body || ''} />
-                    </div>
-                  ) : nestedIsReadFileEvent && nestedEvent.tool?.command ? (
-                    <div className="space-y-2">
-                      <div className="text-[13px] font-bold text-blue-400">
-                        {nestedEvent.tool.command}
-                      </div>
-                      {renderReadFileArgs(nestedEvent.tool?.args)}
-                      {nestedEvent.body ? (
-                        <pre className="max-h-96 overflow-y-auto whitespace-pre-wrap rounded-md bg-neutral-900/35 px-3 py-2 text-xs leading-relaxed text-neutral-300 scrollbar-thin">
-                          {nestedEvent.body}
-                        </pre>
-                      ) : null}
                     </div>
                   ) : nestedFallbackText ? (
                     <pre className="max-h-96 overflow-y-auto whitespace-pre-wrap rounded-md bg-neutral-900/35 px-3 py-2 text-xs leading-relaxed text-neutral-300 scrollbar-thin">
@@ -177,6 +167,16 @@ export const ActivityItem = memo(function ActivityItem({
     );
   }
 
+  if (fileToolPayload) {
+    return (
+      <article className="py-2">
+        <div className="flex min-w-0 flex-1 flex-col">
+          <FileToolCard payload={fileToolPayload} />
+        </div>
+      </article>
+    );
+  }
+
   if (isPatchToolEvent && (event.tool?.command || event.body)) {
     return (
       <article className="py-2">
@@ -187,26 +187,6 @@ export const ActivityItem = memo(function ActivityItem({
             </pre>
           ) : null}
           <PatchViewer patchText={event.tool?.command || event.body || ''} />
-        </div>
-      </article>
-    );
-  }
-
-  if (isReadFileEvent && event.tool?.command) {
-    return (
-      <article className="py-2">
-        <div className="px-6">
-          <div className="space-y-2">
-            <div className="text-[13px] font-bold text-blue-400">
-              {event.tool.command}
-            </div>
-            {renderReadFileArgs(event.tool?.args)}
-            {event.body ? (
-              <pre className="max-h-96 overflow-y-auto whitespace-pre-wrap rounded-md bg-neutral-900/35 px-3 py-2 text-xs leading-relaxed text-neutral-300 scrollbar-thin">
-                {event.body}
-              </pre>
-            ) : null}
-          </div>
         </div>
       </article>
     );
@@ -287,6 +267,8 @@ export const ActivityItem = memo(function ActivityItem({
             <CommandToolCard payload={commandToolPayload} />
           ) : updatePlanPayload ? (
             <UpdatePlanCard payload={updatePlanPayload} />
+          ) : fileToolPayload ? (
+            <FileToolCard payload={fileToolPayload} />
           ) : isSystemEvent && event.body ? (
             <pre className={`mt-2 max-h-96 overflow-y-auto whitespace-pre-wrap rounded-md px-3 py-2 text-xs leading-relaxed scrollbar-thin ${visual.detail}`}>
               {event.body}
@@ -330,28 +312,6 @@ function buildParallelNestedEvent(event: ActivityEvent, idx: number, result: { n
       payload: result.response || undefined,
     },
   };
-}
-
-function renderReadFileArgs(args: Record<string, unknown> | null | undefined) {
-  if (!args) {
-    return null;
-  }
-
-  const filePath = typeof args.file_path === 'string' ? args.file_path : '';
-  const offset = typeof args.offset === 'number' ? args.offset : null;
-  const limit = typeof args.limit === 'number' ? args.limit : null;
-  const hasFields = Boolean(filePath) || offset !== null || limit !== null;
-  if (!hasFields) {
-    return null;
-  }
-
-  return (
-    <div className="rounded-md border border-neutral-800 bg-neutral-900/40 px-3 py-2 text-[11px] leading-relaxed text-neutral-300">
-      <div><span className="text-neutral-500">file_path:</span> {filePath || '-'}</div>
-      <div><span className="text-neutral-500">offset:</span> {offset ?? 1}</div>
-      <div><span className="text-neutral-500">limit:</span> {limit ?? 'default'}</div>
-    </div>
-  );
 }
 
 const ThoughtMessage = memo(function ThoughtMessage({

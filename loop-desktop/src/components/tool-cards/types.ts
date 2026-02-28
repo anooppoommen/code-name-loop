@@ -59,3 +59,12 @@ export interface CommandToolPayload {
   exitCode: string;
   executedAt: string;
 }
+
+export interface FileToolPayload {
+  toolName: string;
+  args: Record<string, unknown>;
+  output: string;
+  status: CommandToolStatus;
+  error: string;
+  executedAt: string;
+}

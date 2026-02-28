@@ -10,6 +10,7 @@ import type {
   RequestUserInputQuestion,
   UpdatePlanItem,
   UpdatePlanPayload,
+  FileToolPayload,
 } from './types';
 
 export function parseRequestUserInputPayload(event: ActivityEvent): RequestUserInputPayload | null {
@@ -131,6 +132,32 @@ export function parseCommandToolPayload(event: ActivityEvent): CommandToolPayloa
   };
 }
 
+export function parseFileToolPayload(event: ActivityEvent): FileToolPayload | null {
+  if (!event.tool || !isFileToolName(event.tool.name)) {
+    return null;
+  }
+
+  const payload = toolPayloadRecord(event);
+  let payloadOutput = '';
+  if (payload && typeof payload.output === 'string') {
+    payloadOutput = payload.output;
+  } else if (event.body) {
+    payloadOutput = event.body;
+  }
+
+  const payloadError = readString(payload?.error);
+  const error = payloadError || event.tool.error || '';
+
+  return {
+    toolName: event.tool.name,
+    args: event.tool.args || {},
+    output: payloadOutput.trimEnd(),
+    status: resolveCommandStatus(event, payloadError, false),
+    error,
+    executedAt: String(event.timestamp),
+  };
+}
+
 export function buildRequestUserInputReply(
   questions: RequestUserInputQuestion[],
   selectedByQuestion: Record<string, number>,
@@ -240,6 +267,14 @@ function toolNameMatches(toolName: string, canonical: string): boolean {
 
 function isCommandToolName(toolName: string): boolean {
   return toolNameMatches(toolName, 'shell') || toolNameMatches(toolName, 'exec_command');
+}
+
+function isFileToolName(toolName: string): boolean {
+  return (
+    toolNameMatches(toolName, 'read_file') ||
+    toolNameMatches(toolName, 'list_dir') ||
+    toolNameMatches(toolName, 'grep_files')
+  );
 }
 
 function asObject(value: unknown): Record<string, unknown> | null {
