@@ -76,6 +76,7 @@ func (pm *ProcessManager) ExecCommand(
 	cwd string,
 	env []string,
 	yieldTimeMs int64,
+	keepStdinOpen bool,
 ) (*ExecResult, error) {
 	if len(command) == 0 {
 		return nil, fmt.Errorf("command must not be empty")
@@ -92,9 +93,13 @@ func (pm *ProcessManager) ExecCommand(
 	}
 
 	output := &safeBuffer{}
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create stdin pipe: %w", err)
+	var stdin io.WriteCloser
+	var err error
+	if keepStdinOpen {
+		stdin, err = cmd.StdinPipe()
+		if err != nil {
+			return nil, fmt.Errorf("failed to create stdin pipe: %w", err)
+		}
 	}
 
 	cmd.Stdout = output
@@ -179,6 +184,9 @@ func (pm *ProcessManager) WriteStdin(
 
 	// Write input to stdin.
 	if input != "" {
+		if mp.stdin == nil {
+			return nil, fmt.Errorf("stdin is not available for this process; start with tty=true to send input")
+		}
 		if _, err := io.WriteString(mp.stdin, input); err != nil {
 			return nil, fmt.Errorf("failed to write to stdin: %w", err)
 		}

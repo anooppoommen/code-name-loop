@@ -239,12 +239,18 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 		for i, fc := range functionCalls {
 			toolAction := summarizeToolAction(fc, i+1, len(functionCalls))
 			emitStatus(toolAction, iteration)
+
+			argsStr := string(fc.Args)
+			if fc.Name != "apply_patch" {
+				argsStr = truncateEventText(argsStr, 2000)
+			}
+
 			ch <- TurnEvent{
 				Kind: EventToolCallStart,
 				ToolCall: &ToolCallEvent{
 					CallID: fc.CallID,
 					Name:   fc.Name,
-					Args:   truncateEventText(string(fc.Args), 2000),
+					Args:   argsStr,
 				},
 			}
 			s.emitUIEvent(ctx, models.UIEventKindToolStart,
@@ -252,7 +258,7 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 				map[string]any{
 					"call_id":   fc.CallID,
 					"tool_name": fc.Name,
-					"args":      truncateEventText(string(fc.Args), 2000),
+					"args":      argsStr,
 					"iteration": iteration,
 					"index":     i + 1,
 					"total":     len(functionCalls),
@@ -287,7 +293,12 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 			if result.Err == nil {
 				successCount++
 			}
-			resultText := truncateEventText(string(result.ResponseJSON), 4000)
+
+			resultText := string(result.ResponseJSON)
+			if result.Name != "apply_patch" {
+				resultText = truncateEventText(resultText, 4000)
+			}
+
 			errorText := errorString(result.Err)
 			ch <- TurnEvent{
 				Kind: EventToolResult,

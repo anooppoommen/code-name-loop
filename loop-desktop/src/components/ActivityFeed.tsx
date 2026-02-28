@@ -13,6 +13,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import type { RefObject } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { PatchViewer } from './PatchViewer';
 import type { ActivityEvent, ActivityKind } from '../types/ui';
 import { shortID } from '../utils/parsers';
 
@@ -270,7 +271,16 @@ export function ActivityFeed({ events, conversationId, containerRef }: ActivityF
                   <div className={`text-[15px] leading-relaxed ${visual.copy}`}>
                     <MarkdownBlock text={renderedText} />
 
-                    {isSystemEvent && event.kind !== 'thought' && event.body ? (
+                    {(event.tool?.name === 'apply_patch' || event.tool?.name?.endsWith(':apply_patch')) && (event.tool.command || event.body) ? (
+                      <div className="mt-2 text-xs">
+                        {event.body && (event.tool.phase === 'result' || event.tool.error) && event.body !== event.tool.command ? (
+                          <div className={`mb-2 whitespace-pre-wrap rounded-md px-3 py-2 text-xs leading-relaxed ${visual.detail}`}>
+                            {event.body}
+                          </div>
+                        ) : null}
+                        <PatchViewer patchText={event.tool.command || event.body || ''} />
+                      </div>
+                    ) : isSystemEvent && event.kind !== 'thought' && event.body ? (
                       <pre className={`mt-2 max-h-96 overflow-y-auto whitespace-pre-wrap rounded-md px-3 py-2 text-xs leading-relaxed scrollbar-thin ${visual.detail}`}>
                         {event.body}
                       </pre>

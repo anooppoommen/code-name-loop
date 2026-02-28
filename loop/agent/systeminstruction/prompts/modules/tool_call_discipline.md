@@ -16,6 +16,7 @@ Tool-call rules:
 - For local repo `exec_command` calls, include `workdir` from the provided workspace/repo context when available.
 - Prefer targeted commands over broad scans when the file/symbol is known.
 - Prefer `rg` for search/find/usages/TODO tasks before `cat`.
+- For `rg`, include an explicit path target (for example `.` or `path/to/file`) unless reading stdin is intentional.
 - If the request explicitly says "find TODO" in a named file, the first `exec_command` should be an `rg -n "TODO" <file>` style search.
 - Do not assume `exec_command` is always the right choice if a specialized filesystem/search tool is available in the current catalog.
 - If the user mentions existing local changes, the first patch-related `exec_command` should be `git status --short` (or equivalent `git status`) before file reads/patches.

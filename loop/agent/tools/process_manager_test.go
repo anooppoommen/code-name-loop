@@ -9,7 +9,7 @@ func TestProcessManager_ExecCommand_BasicEcho(t *testing.T) {
 	pm := NewProcessManager()
 	defer pm.Cleanup()
 
-	result, err := pm.ExecCommand([]string{"echo", "hello"}, "", nil, 5000)
+	result, err := pm.ExecCommand([]string{"echo", "hello"}, "", nil, 5000, false)
 	if err != nil {
 		t.Fatalf("ExecCommand failed: %v", err)
 	}
@@ -34,7 +34,7 @@ func TestProcessManager_ExecCommand_LongRunning(t *testing.T) {
 	defer pm.Cleanup()
 
 	// Start a long-running process with short yield time.
-	result, err := pm.ExecCommand([]string{"sleep", "10"}, "", nil, 100)
+	result, err := pm.ExecCommand([]string{"sleep", "10"}, "", nil, 100, false)
 	if err != nil {
 		t.Fatalf("ExecCommand failed: %v", err)
 	}
@@ -58,7 +58,7 @@ func TestProcessManager_WriteStdin(t *testing.T) {
 	defer pm.Cleanup()
 
 	// Start a cat process (reads stdin, writes to stdout).
-	result, err := pm.ExecCommand([]string{"cat"}, "", nil, 200)
+	result, err := pm.ExecCommand([]string{"cat"}, "", nil, 200, true)
 	if err != nil {
 		t.Fatalf("ExecCommand failed: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestProcessManager_ExecCommand_WorkDir(t *testing.T) {
 	pm := NewProcessManager()
 	defer pm.Cleanup()
 
-	result, err := pm.ExecCommand([]string{"pwd"}, "/tmp", nil, 5000)
+	result, err := pm.ExecCommand([]string{"pwd"}, "/tmp", nil, 5000, false)
 	if err != nil {
 		t.Fatalf("ExecCommand failed: %v", err)
 	}

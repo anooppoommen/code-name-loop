@@ -44,6 +44,7 @@ func TestExecCommand_LongRunningWithWriteStdin(t *testing.T) {
 		"cmd":           "cat",
 		"yield_time_ms": yieldMs,
 		"workdir":       dir,
+		"tty":           true,
 	})
 
 	execResult, err := handleExecCommand(context.Background(), args, pm, guard)
@@ -102,6 +103,36 @@ func TestExecCommand_LongRunningWithWriteStdin(t *testing.T) {
 
 	// Kill the process.
 	_ = pm.Kill(sessionIDStr)
+}
+
+func TestExecCommand_NonTTYClosesStdin(t *testing.T) {
+	pm := NewProcessManager()
+	defer pm.Cleanup()
+	dir := t.TempDir()
+	guard := newPathGuard(testWorkspace(dir))
+
+	yieldMs := int64(500)
+	args, _ := json.Marshal(map[string]any{
+		"cmd":           "cat",
+		"yield_time_ms": yieldMs,
+		"workdir":       dir,
+	})
+
+	execResult, err := handleExecCommand(context.Background(), args, pm, guard)
+	if err != nil {
+		t.Fatalf("handleExecCommand failed: %v", err)
+	}
+
+	var execResp map[string]any
+	json.Unmarshal(execResult, &execResp)
+	execOutput := execResp["output"].(string)
+
+	if strings.Contains(execOutput, "Process running with session ID") {
+		t.Fatalf("expected cat to exit with closed stdin, got %q", execOutput)
+	}
+	if !strings.Contains(execOutput, "Process exited with code 0") {
+		t.Fatalf("expected cat to exit cleanly on EOF, got %q", execOutput)
+	}
 }
 
 func TestExecCommand_EmptyCmd(t *testing.T) {

@@ -58,7 +58,7 @@ func NewExecCommandTool(pm *ProcessManager, ws *models.Workspace) *agent.ToolDef
 					},
 					"tty": {
 						Type:        genai.TypeBoolean,
-						Description: "Whether to allocate a TTY for the command. Defaults to false.",
+						Description: "Whether to keep stdin open for interactive commands. Defaults to false.",
 					},
 					"yield_time_ms": {
 						Type:        genai.TypeInteger,
@@ -134,7 +134,7 @@ func handleExecCommand(_ context.Context, args json.RawMessage, pm *ProcessManag
 		return nil, err
 	}
 
-	result, err := pm.ExecCommand(command, workdir, nil, yieldMs)
+	result, err := pm.ExecCommand(command, workdir, nil, yieldMs, a.Tty)
 	if err != nil {
 		return nil, err
 	}

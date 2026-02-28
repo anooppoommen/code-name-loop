@@ -17,6 +17,14 @@ export interface ActivityInput {
   tool?: ActivityEvent['tool'];
 }
 
+function isApplyPatch(toolName: string): boolean {
+  return toolName === 'apply_patch' || toolName.endsWith(':apply_patch');
+}
+
+function isExecCommand(toolName: string): boolean {
+  return toolName === 'exec_command' || toolName.endsWith(':exec_command');
+}
+
 export function parseStatusLine(statusText: string): ActivityInput | null {
   if (statusText.startsWith('thinking')) {
     // Thought bodies are rendered from dedicated thought delta events.
@@ -74,7 +82,7 @@ export function summarizeToolBody(toolName: string, resultText: string, errorTex
 
     const output = getString(parsed, ['output']);
     if (output) {
-      if (toolName === 'exec_command') {
+      if (isExecCommand(toolName)) {
         const wall = output.match(/Wall time:\s*([^\n]+)/)?.[1] ?? '';
         const exit = output.match(/Process exited with code\s+([^\n]+)/)?.[1] ?? '';
         const commandOutput = output.split('Output:\n')[1] ?? '';
@@ -159,7 +167,7 @@ export function historyRowsToActivities(items: unknown[]): ActivityEvent[] {
             id,
             kind: 'tool',
             title: `${toolName || 'tool'} started`,
-            body: trimForUI(command || args || text, 900) || undefined,
+            body: isApplyPatch(toolName) ? (command || args || text || undefined) : (trimForUI(command || args || text, 900) || undefined),
             timestamp,
             tool: {
               name: toolName || 'tool',
@@ -190,7 +198,7 @@ export function historyRowsToActivities(items: unknown[]): ActivityEvent[] {
               activityRows[existingIndex] = {
                 ...existing,
                 title: success ? `${toolName} completed${summary.title ? ` (${summary.title})` : ''}` : `${toolName} failed`,
-                body: summary.body || trimForUI(fallbackBody, 900) || undefined,
+                body: isApplyPatch(toolName) ? (summary.body || fallbackBody || undefined) : (summary.body || trimForUI(fallbackBody, 900) || undefined),
                 tool: {
                   ...(existing.tool ?? { name: toolName, phase: 'start' as const }),
                   name: toolName,
@@ -211,7 +219,7 @@ export function historyRowsToActivities(items: unknown[]): ActivityEvent[] {
             id,
             kind: 'tool',
             title: success ? `${toolName} completed${summary.title ? ` (${summary.title})` : ''}` : `${toolName} failed`,
-            body: summary.body || trimForUI(fallbackBody, 900) || undefined,
+            body: isApplyPatch(toolName) ? (summary.body || fallbackBody || undefined) : (summary.body || trimForUI(fallbackBody, 900) || undefined),
             timestamp,
             tool: {
               name: toolName,
@@ -391,13 +399,16 @@ export function parseToolCommand(toolName: string, argsText: string): string {
     if (toolName === 'shell') {
       return getString(parsed, ['command']);
     }
-    if (toolName === 'exec_command') {
+    if (isExecCommand(toolName)) {
       return getString(parsed, ['cmd']);
+    }
+    if (isApplyPatch(toolName)) {
+      return getString(parsed, ['input', 'patch']);
     }
   }
 
   // Fallback for already-summarized command text.
-  if (toolName === 'shell' || toolName === 'exec_command') {
+  if (toolName === 'shell' || isExecCommand(toolName) || isApplyPatch(toolName)) {
     return trimmed;
   }
 

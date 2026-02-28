@@ -78,7 +78,7 @@ func handleShell(_ context.Context, args json.RawMessage, pm *ProcessManager, gu
 		return nil, err
 	}
 	command := buildExecCommand(a.Command, "")
-	result, err := pm.ExecCommand(command, workdir, nil, timeoutMs)
+	result, err := pm.ExecCommand(command, workdir, nil, timeoutMs, false)
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute command: %w", err)
 	}
