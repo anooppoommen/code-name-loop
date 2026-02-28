@@ -15,6 +15,7 @@ type Store interface {
 	Workspaces() WorkspaceStore
 	Conversations() ConversationStore
 	Messages() MessageStore
+	UIEvents() UIEventStore
 
 	// Close releases all resources held by the store.
 	Close() error
@@ -61,4 +62,18 @@ type MessageStore interface {
 
 	// Delete removes a message by ID.
 	Delete(ctx context.Context, id models.MessageID) error
+}
+
+// UIEventStore persists UI-only timeline events that are NOT sent to the model.
+// Events are ordered by their per-conversation monotonic Seq, guaranteeing
+// deterministic interleaving with models.Message when building a timeline.
+type UIEventStore interface {
+	// Append persists a UIEvent, auto-assigning the next Seq for the conversation.
+	Append(ctx context.Context, evt *models.UIEvent) error
+
+	// GetByConversation returns all UIEvents for a conversation ordered by Seq ASC.
+	GetByConversation(ctx context.Context, convID models.ConversationID) ([]*models.UIEvent, error)
+
+	// GetByMessage returns all UIEvents associated with a specific message.
+	GetByMessage(ctx context.Context, msgID models.MessageID) ([]*models.UIEvent, error)
 }

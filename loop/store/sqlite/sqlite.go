@@ -26,6 +26,7 @@ type SQLiteStore struct {
 	workspaces    *sqliteWorkspaceStore
 	conversations *sqliteConversationStore
 	messages      *sqliteMessageStore
+	uiEvents      *sqliteUIEventStore
 }
 
 // New opens (or creates) a SQLite database at the given path,
@@ -82,6 +83,7 @@ func New(dbPath string) (store.Store, error) {
 	s.workspaces = &sqliteWorkspaceStore{writeDB: writeDB, readDB: readDB}
 	s.conversations = &sqliteConversationStore{writeDB: writeDB, readDB: readDB}
 	s.messages = &sqliteMessageStore{writeDB: writeDB, readDB: readDB}
+	s.uiEvents = &sqliteUIEventStore{writeDB: writeDB, readDB: readDB}
 
 	return s, nil
 }
@@ -89,6 +91,7 @@ func New(dbPath string) (store.Store, error) {
 func (s *SQLiteStore) Workspaces() store.WorkspaceStore       { return s.workspaces }
 func (s *SQLiteStore) Conversations() store.ConversationStore { return s.conversations }
 func (s *SQLiteStore) Messages() store.MessageStore           { return s.messages }
+func (s *SQLiteStore) UIEvents() store.UIEventStore           { return s.uiEvents }
 
 func (s *SQLiteStore) Close() error {
 	rerr := s.readDB.Close()

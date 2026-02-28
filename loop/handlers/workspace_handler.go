@@ -25,6 +25,7 @@ func (h *WorkspaceHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /workspaces", h.Create)
 	mux.HandleFunc("GET /workspaces", h.List)
 	mux.HandleFunc("GET /workspaces/{id}", h.Get)
+	mux.HandleFunc("DELETE /workspaces/{id}", h.Delete)
 }
 
 func (h *WorkspaceHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -72,4 +73,13 @@ func (h *WorkspaceHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	utils.WriteJSON(w, http.StatusOK, workspaces)
+}
+
+func (h *WorkspaceHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	id := models.WorkspaceID(r.PathValue("id"))
+	if err := h.store.Workspaces().Delete(r.Context(), id); err != nil {
+		utils.WriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

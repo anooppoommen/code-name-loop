@@ -4,10 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
-	"runtime"
+	"strconv"
 	"strings"
-	"time"
 
 	"loop/agent"
 	"loop/models"
@@ -27,13 +25,14 @@ type shellArgs struct {
 }
 
 // NewShellTool creates the shell_command tool.
-func NewShellTool(ws *models.Workspace) *agent.ToolDef {
+func NewShellTool(pm *ProcessManager, ws *models.Workspace) *agent.ToolDef {
 	guard := newPathGuard(ws)
 	return &agent.ToolDef{
 		Declaration: &genai.FunctionDeclaration{
 			Name: "shell",
 			Description: `Runs a shell command and returns its output.
-- Always set the workdir param when using the shell function. Do not use cd unless absolutely necessary.`,
+- Always set the workdir param when using the shell function. Do not use cd unless absolutely necessary.
+- If the command does not finish before timeout_ms, this tool returns an error plus session_id and partial combined stdout/stderr. Use write_stdin with chars="" and that session_id to poll more output.`,
 			Parameters: &genai.Schema{
 				Type: genai.TypeObject,
 				Properties: map[string]*genai.Schema{
@@ -54,12 +53,12 @@ func NewShellTool(ws *models.Workspace) *agent.ToolDef {
 			},
 		},
 		Handler: func(ctx context.Context, args json.RawMessage) (json.RawMessage, error) {
-			return handleShell(ctx, args, guard)
+			return handleShell(ctx, args, pm, guard)
 		},
 	}
 }
 
-func handleShell(ctx context.Context, args json.RawMessage, guard *pathGuard) (json.RawMessage, error) {
+func handleShell(_ context.Context, args json.RawMessage, pm *ProcessManager, guard *pathGuard) (json.RawMessage, error) {
 	var a shellArgs
 	if err := json.Unmarshal(args, &a); err != nil {
 		return nil, fmt.Errorf("failed to parse arguments: %w", err)
@@ -74,50 +73,32 @@ func handleShell(ctx context.Context, args json.RawMessage, guard *pathGuard) (j
 		timeoutMs = *a.TimeoutMs
 	}
 
-	timeout := time.Duration(timeoutMs) * time.Millisecond
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	shellCmd := buildShellCommand(a.Command)
-	cmd := exec.CommandContext(ctx, shellCmd[0], shellCmd[1:]...)
-
 	workdir, err := guard.requireAllowedWorkdir(a.Workdir)
 	if err != nil {
 		return nil, err
 	}
-	cmd.Dir = workdir
-
-	startTime := time.Now()
-	output, err := cmd.CombinedOutput()
-	wallTime := time.Since(startTime)
-
-	// Truncate large output.
-	if len(output) > shellMaxOutputBytes {
-		output = output[:shellMaxOutputBytes]
-	}
-
-	exitCode := 0
+	command := buildExecCommand(a.Command, "")
+	result, err := pm.ExecCommand(command, workdir, nil, timeoutMs)
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			exitCode = exitErr.ExitCode()
-		} else if ctx.Err() != nil {
-			return json.Marshal(map[string]any{
-				"error": fmt.Sprintf("command timed out after %dms", timeoutMs),
-			})
-		} else {
-			return nil, fmt.Errorf("failed to execute command: %w", err)
+		return nil, fmt.Errorf("failed to execute command: %w", err)
+	}
+	if len(result.Output) > shellMaxOutputBytes {
+		result.Output = result.Output[:shellMaxOutputBytes]
+	}
+	formatted := FormatExecResult(result)
+
+	// Keep long-running processes alive for follow-up debugging via write_stdin.
+	if result.ExitCode == nil && result.ProcessID != "" {
+		resp := map[string]any{
+			"error":     fmt.Sprintf("command timed out after %dms", timeoutMs),
+			"output":    formatted,
+			"next_step": "Use write_stdin with chars=\"\" to poll more combined stdout/stderr from this running process.",
 		}
+		if sid, convErr := strconv.Atoi(result.ProcessID); convErr == nil {
+			resp["session_id"] = sid
+		}
+		return json.Marshal(resp)
 	}
 
-	result := fmt.Sprintf("Wall time: %.4f seconds\nProcess exited with code %d\nOutput:\n%s",
-		wallTime.Seconds(), exitCode, string(output))
-
-	return json.Marshal(map[string]any{"output": result})
-}
-
-func buildShellCommand(command string) []string {
-	if runtime.GOOS == "windows" {
-		return []string{"powershell.exe", "-NoProfile", "-Command", command}
-	}
-	return []string{"bash", "-lc", command}
+	return json.Marshal(map[string]any{"output": formatted})
 }

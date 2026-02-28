@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
 
 func TestShell_EchoCommand(t *testing.T) {
+	pm := NewProcessManager()
+	defer pm.Cleanup()
 	dir := t.TempDir()
 	guard := newPathGuard(testWorkspace(dir))
 	args, _ := json.Marshal(map[string]any{
@@ -17,7 +20,7 @@ func TestShell_EchoCommand(t *testing.T) {
 		"workdir": dir,
 	})
 
-	result, err := handleShell(context.Background(), args, guard)
+	result, err := handleShell(context.Background(), args, pm, guard)
 	if err != nil {
 		t.Fatalf("handleShell failed: %v", err)
 	}
@@ -38,6 +41,8 @@ func TestShell_EchoCommand(t *testing.T) {
 }
 
 func TestShell_NonZeroExit(t *testing.T) {
+	pm := NewProcessManager()
+	defer pm.Cleanup()
 	dir := t.TempDir()
 	guard := newPathGuard(testWorkspace(dir))
 	args, _ := json.Marshal(map[string]any{
@@ -45,7 +50,7 @@ func TestShell_NonZeroExit(t *testing.T) {
 		"workdir": dir,
 	})
 
-	result, err := handleShell(context.Background(), args, guard)
+	result, err := handleShell(context.Background(), args, pm, guard)
 	if err != nil {
 		t.Fatalf("handleShell failed: %v", err)
 	}
@@ -60,6 +65,8 @@ func TestShell_NonZeroExit(t *testing.T) {
 }
 
 func TestShell_WorkDir(t *testing.T) {
+	pm := NewProcessManager()
+	defer pm.Cleanup()
 	dir := t.TempDir()
 	workdir := filepath.Join(dir, "nested")
 	if err := os.MkdirAll(workdir, 0o755); err != nil {
@@ -72,7 +79,7 @@ func TestShell_WorkDir(t *testing.T) {
 		"workdir": workdir,
 	})
 
-	result, err := handleShell(context.Background(), args, guard)
+	result, err := handleShell(context.Background(), args, pm, guard)
 	if err != nil {
 		t.Fatalf("handleShell failed: %v", err)
 	}
@@ -87,6 +94,8 @@ func TestShell_WorkDir(t *testing.T) {
 }
 
 func TestShell_EmptyCommand(t *testing.T) {
+	pm := NewProcessManager()
+	defer pm.Cleanup()
 	dir := t.TempDir()
 	guard := newPathGuard(testWorkspace(dir))
 	args, _ := json.Marshal(map[string]any{
@@ -94,8 +103,85 @@ func TestShell_EmptyCommand(t *testing.T) {
 		"workdir": dir,
 	})
 
-	_, err := handleShell(context.Background(), args, guard)
+	_, err := handleShell(context.Background(), args, pm, guard)
 	if err == nil {
 		t.Fatal("expected error for empty command")
+	}
+}
+
+func TestShell_TimeoutReturnsSessionForDebugging(t *testing.T) {
+	pm := NewProcessManager()
+	defer pm.Cleanup()
+	dir := t.TempDir()
+	guard := newPathGuard(testWorkspace(dir))
+	timeoutMs := int64(250)
+	args, _ := json.Marshal(map[string]any{
+		"command":    "echo begin; echo oops 1>&2; sleep 5",
+		"workdir":    dir,
+		"timeout_ms": timeoutMs,
+	})
+
+	result, err := handleShell(context.Background(), args, pm, guard)
+	if err != nil {
+		t.Fatalf("handleShell failed: %v", err)
+	}
+
+	var resp map[string]any
+	if err := json.Unmarshal(result, &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+
+	errText, ok := resp["error"].(string)
+	if !ok {
+		t.Fatalf("expected timeout error response, got: %s", string(result))
+	}
+	if !strings.Contains(errText, "timed out") {
+		t.Fatalf("expected timeout error, got: %q", errText)
+	}
+
+	output, ok := resp["output"].(string)
+	if !ok {
+		t.Fatalf("expected output in timeout response, got: %s", string(result))
+	}
+	if !strings.Contains(output, "begin") {
+		t.Fatalf("expected partial output to include command stdout, got: %q", output)
+	}
+	if !strings.Contains(output, "oops") {
+		t.Fatalf("expected partial output to include command stderr, got: %q", output)
+	}
+
+	sessionAny, ok := resp["session_id"]
+	if !ok {
+		t.Fatalf("expected session_id in timeout response, got: %s", string(result))
+	}
+	sessionIDFloat, ok := sessionAny.(float64)
+	if !ok {
+		t.Fatalf("expected numeric session_id, got: %#v", sessionAny)
+	}
+	sessionID := int(sessionIDFloat)
+
+	writeArgs, _ := json.Marshal(map[string]any{
+		"session_id":    sessionID,
+		"chars":         "",
+		"yield_time_ms": 50,
+	})
+	writeResult, err := handleWriteStdin(context.Background(), writeArgs, pm)
+	if err != nil {
+		t.Fatalf("handleWriteStdin failed: %v", err)
+	}
+	var writeResp map[string]any
+	if err := json.Unmarshal(writeResult, &writeResp); err != nil {
+		t.Fatalf("unmarshal write response: %v", err)
+	}
+	writeOutput, ok := writeResp["output"].(string)
+	if !ok {
+		t.Fatalf("expected output from write_stdin, got: %s", string(writeResult))
+	}
+	if !strings.Contains(writeOutput, "Process running with session ID") {
+		t.Fatalf("expected running session status in write_stdin output, got: %q", writeOutput)
+	}
+
+	if err := pm.Kill(strconv.Itoa(sessionID)); err != nil {
+		t.Fatalf("kill timed-out shell process: %v", err)
 	}
 }

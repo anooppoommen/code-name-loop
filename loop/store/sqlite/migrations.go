@@ -13,6 +13,7 @@ func migrate(db *sql.DB) error {
 		migrationPathGrants,
 		migrationConversations,
 		migrationMessages,
+		migrationUIEvents,
 	}
 	for i, m := range migrations {
 		if _, err := db.Exec(m); err != nil {
@@ -114,6 +115,28 @@ func migrateThreadFields(db *sql.DB) error {
 	}
 	return nil
 }
+
+const migrationUIEvents = `
+CREATE TABLE IF NOT EXISTS ui_events (
+    id              TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    message_id      TEXT NOT NULL DEFAULT '',
+    seq             INTEGER NOT NULL,
+    kind            TEXT NOT NULL,
+    text            TEXT NOT NULL DEFAULT '',
+    metadata_json   TEXT NOT NULL DEFAULT '{}',
+    created_at      DATETIME NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(conversation_id, seq)
+);
+
+-- Primary lookup index: all events for a conversation in order.
+CREATE INDEX IF NOT EXISTS idx_ui_events_conversation_seq
+    ON ui_events(conversation_id, seq);
+
+-- Secondary index: all events for a specific agent message.
+CREATE INDEX IF NOT EXISTS idx_ui_events_message
+    ON ui_events(message_id);
+`
 
 // isDuplicateColumn returns true when SQLite reports a duplicate column name error.
 func isDuplicateColumn(err error) bool {

@@ -40,6 +40,10 @@ type spawnThreadResult struct {
 	ContextStrategy      string `json:"context_strategy,omitempty"`
 }
 
+// UIEventEmitter is a function for persisting a UIEvent from within a tool.
+// It mirrors the signature of Session.emitUIEvent for injection.
+type UIEventEmitter func(kind models.UIEventKind, text string, msgID models.MessageID, metadata map[string]any)
+
 // NewSpawnThreadTool creates the spawn_thread tool definition.
 //
 // When the model calls this tool it forks the current conversation into a child
@@ -153,6 +157,9 @@ Use async mode when you can do other work while the thread runs, then call await
 		}
 		emitThreadStatus(statusEmitter, "[thread %s] spawned (%s, mode=%s, anchor=%s, title=%q)",
 			shortThreadID(string(childConv.ID)), strategy, mode, shortThreadID(string(anchorMsgID)), args.Title)
+		persistThreadUIEvent(s, parentConv.ID, anchorMsgID,
+			"thread "+shortThreadID(string(childConv.ID))+" spawned: "+args.Title,
+			map[string]any{"thread_id": string(childConv.ID), "status": "spawned", "title": args.Title, "mode": string(mode), "context_strategy": string(strategy)})
 
 		// ── Build child session ───────────────────────────────────────────────
 		childSession := agent.NewSession(
@@ -160,8 +167,11 @@ Use async mode when you can do other work while the thread runs, then call await
 			parentTools, parentDepth+1,
 		)
 
-		runChild := func(runCtx context.Context) {
+		runChild := func(runCtx context.Context, anchorMsgID models.MessageID) {
 			emitThreadStatus(statusEmitter, "[thread %s] started", shortThreadID(string(childConv.ID)))
+			persistThreadUIEvent(s, parentConv.ID, anchorMsgID,
+				"thread "+shortThreadID(string(childConv.ID))+" started",
+				map[string]any{"thread_id": string(childConv.ID), "status": "started"})
 			result, errMsg := driveChildSession(runCtx, childSession, args.Task, childConv.ID, statusEmitter)
 
 			// Persist outcome regardless of error.
@@ -171,10 +181,16 @@ Use async mode when you can do other work while the thread runs, then call await
 				childConv.ResultMessage = errMsg
 				emitThreadStatus(statusEmitter, "[thread %s] failed: %s",
 					shortThreadID(string(childConv.ID)), errMsg)
+				persistThreadUIEvent(s, parentConv.ID, anchorMsgID,
+					"thread "+shortThreadID(string(childConv.ID))+" failed: "+errMsg,
+					map[string]any{"thread_id": string(childConv.ID), "status": "failed", "error": errMsg})
 			} else {
 				childConv.ThreadStatus = models.ThreadStatusCompleted
 				emitThreadStatus(statusEmitter, "[thread %s] completed",
 					shortThreadID(string(childConv.ID)))
+				persistThreadUIEvent(s, parentConv.ID, anchorMsgID,
+					"thread "+shortThreadID(string(childConv.ID))+" completed",
+					map[string]any{"thread_id": string(childConv.ID), "status": "completed"})
 			}
 			if updateErr := s.Conversations().Update(context.Background(), childConv); updateErr != nil {
 				log.Printf("[spawn_thread] update child conv %s: %v", childConv.ID, updateErr)
@@ -184,7 +200,7 @@ Use async mode when you can do other work while the thread runs, then call await
 		switch mode {
 		case models.ThreadModeBlocking:
 			// Block the parent tool call until the child completes.
-			runChild(ctx)
+			runChild(ctx, anchorMsgID)
 			status := "completed"
 			if childConv.ThreadStatus == models.ThreadStatusFailed {
 				status = "failed"
@@ -201,7 +217,7 @@ Use async mode when you can do other work while the thread runs, then call await
 			})
 
 		default: // async
-			go runChild(context.Background())
+			go runChild(context.Background(), anchorMsgID)
 			emitThreadStatus(statusEmitter, "[thread %s] running in background", shortThreadID(string(childConv.ID)))
 			return marshalResult(spawnThreadResult{
 				ThreadID:             string(childConv.ID),
@@ -337,4 +353,26 @@ func shortThreadID(id string) string {
 		return id
 	}
 	return id[:8]
+}
+
+// persistThreadUIEvent writes a thread_status UIEvent to the parent conversation's
+// ui_events table. It is non-critical: errors are only logged.
+func persistThreadUIEvent(
+	s store.Store,
+	parentConvID models.ConversationID,
+	anchorMsgID models.MessageID,
+	text string,
+	metadata map[string]any,
+) {
+	evt := &models.UIEvent{
+		ID:             uuid.New().String(),
+		ConversationID: parentConvID,
+		MessageID:      anchorMsgID,
+		Kind:           models.UIEventKindThreadStatus,
+		Text:           text,
+		Metadata:       metadata,
+	}
+	if err := s.UIEvents().Append(context.Background(), evt); err != nil {
+		log.Printf("[spawn_thread] persist thread ui_event: %v", err)
+	}
 }

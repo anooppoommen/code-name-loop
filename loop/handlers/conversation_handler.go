@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -31,8 +32,10 @@ func NewConversationHandler(s store.Store, client agent.ModelClient, pm *tools.P
 func (h *ConversationHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /conversations", h.Create)
 	mux.HandleFunc("GET /conversations/{id}", h.Get)
+	mux.HandleFunc("PATCH /conversations/{id}", h.Update)
 	mux.HandleFunc("DELETE /conversations/{id}", h.Delete)
 	mux.HandleFunc("GET /conversations/{id}/messages", h.ListMessages)
+	mux.HandleFunc("GET /conversations/{id}/timeline", h.Timeline)
 	mux.HandleFunc("GET /workspaces/{wsID}/conversations", h.ListByWorkspace)
 	mux.HandleFunc("GET /conversations/{id}/threads", h.ListThreads)
 	mux.HandleFunc("POST /conversations/{id}/reply", h.Reply)
@@ -73,6 +76,38 @@ func (h *ConversationHandler) Get(w http.ResponseWriter, r *http.Request) {
 		utils.WriteError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	utils.WriteJSON(w, http.StatusOK, conv)
+}
+
+type updateConversationRequest struct {
+	Title string `json:"title"`
+}
+
+func (h *ConversationHandler) Update(w http.ResponseWriter, r *http.Request) {
+	id := models.ConversationID(r.PathValue("id"))
+
+	conv, err := h.store.Conversations().Get(r.Context(), id)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			utils.WriteError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		utils.WriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	var req updateConversationRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		utils.WriteError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	conv.Title = req.Title
+	if err := h.store.Conversations().Update(r.Context(), conv); err != nil {
+		utils.WriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
 	utils.WriteJSON(w, http.StatusOK, conv)
 }
 
@@ -166,6 +201,63 @@ func (h *ConversationHandler) ListMessages(w http.ResponseWriter, r *http.Reques
 	utils.WriteJSON(w, http.StatusOK, msgs)
 }
 
+// timelineItem is a single entry in the unified conversation timeline.
+// The Type field discriminates between a models.Message and a models.UIEvent.
+type timelineItem struct {
+	Type string    `json:"type"` // "message" | "ui_event"
+	Time time.Time `json:"time"`
+	// Only one of these will be non-nil, matching Type.
+	Message *models.Message `json:"message,omitempty"`
+	UIEvent *models.UIEvent `json:"ui_event,omitempty"`
+}
+
+// Timeline returns a single chronological array of messages and UIEvents for a conversation.
+// Items are sorted by their creation timestamp. Because message.seq and ui_event.seq are
+// both monotonic within their own tables, this combined sort produces a deterministic view.
+func (h *ConversationHandler) Timeline(w http.ResponseWriter, r *http.Request) {
+	id := models.ConversationID(r.PathValue("id"))
+
+	if _, err := h.store.Conversations().Get(r.Context(), id); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			utils.WriteError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		utils.WriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	msgs, err := h.store.Messages().GetRange(r.Context(), id, 1, 999999)
+	if err != nil {
+		utils.WriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	evts, err := h.store.UIEvents().GetByConversation(r.Context(), id)
+	if err != nil {
+		utils.WriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	items := make([]timelineItem, 0, len(msgs)+len(evts))
+	for _, m := range msgs {
+		items = append(items, timelineItem{Type: "message", Time: m.CreatedAt, Message: m})
+	}
+	for _, e := range evts {
+		items = append(items, timelineItem{Type: "ui_event", Time: e.CreatedAt, UIEvent: e})
+	}
+
+	// Sort strictly chronologically. When timestamps are equal (rare, sub-millisecond)
+	// messages sort before ui_events to maintain logical causality.
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].Time.Equal(items[j].Time) {
+			return items[i].Type < items[j].Type // "message" < "ui_event" lexicographically
+		}
+		return items[i].Time.Before(items[j].Time)
+	})
+
+	utils.WriteJSON(w, http.StatusOK, items)
+}
+
 // replyRequest is the JSON body for the Reply endpoint.
 type replyRequest struct {
 	Message string `json:"message"`
@@ -221,7 +313,7 @@ func (h *ConversationHandler) Reply(w http.ResponseWriter, r *http.Request) {
 
 	// Build the base tool list (without spawn_thread/await_thread initially).
 	baseTools := []*agent.ToolDef{
-		tools.NewShellTool(ws),
+		tools.NewShellTool(h.pm, ws),
 		tools.NewExecCommandTool(h.pm, ws),
 		tools.NewWriteStdinTool(h.pm),
 		tools.NewApplyPatchTool(ws),

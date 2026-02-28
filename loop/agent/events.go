@@ -63,6 +63,8 @@ type StreamDelta struct {
 type ToolCallEvent struct {
 	CallID string `json:"call_id"`
 	Name   string `json:"name"`
+	// Args is a summarized argument payload for UI display parity between live SSE and persisted timeline.
+	Args string `json:"args,omitempty"`
 }
 
 // ToolResultEvent represents the result of executing a tool call.

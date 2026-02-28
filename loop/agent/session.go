@@ -67,53 +67,77 @@ func (t *Turn) Run(ctx context.Context) <-chan TurnEvent {
 
 func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 	s := t.session
+	var agentMsgID models.MessageID // set after the current iteration's agent message is persisted
+
+	statusMeta := func(iteration int) map[string]any {
+		if iteration <= 0 {
+			return nil
+		}
+		return map[string]any{
+			"iteration": iteration,
+		}
+	}
+
+	emitStatus := func(text string, iteration int) {
+		ch <- TurnEvent{
+			Kind: EventStatus,
+			Status: &StatusEvent{
+				Text:      text,
+				Iteration: iteration,
+			},
+		}
+		s.emitUIEvent(ctx, models.UIEventKindStatus, text, agentMsgID, statusMeta(iteration))
+	}
+
+	emitError := func(err error, iteration int) {
+		if err == nil {
+			return
+		}
+		ch <- TurnEvent{
+			Kind:      EventError,
+			Error:     err,
+			ErrorText: err.Error(),
+		}
+		s.emitUIEvent(ctx, models.UIEventKindError, err.Error(), agentMsgID, statusMeta(iteration))
+	}
+
+	emitAbort := func(text string, iteration int) {
+		ch <- TurnEvent{Kind: EventTurnAborted, ErrorText: text}
+		s.emitUIEvent(ctx, models.UIEventKindAbort, text, agentMsgID, statusMeta(iteration))
+	}
 
 	// Emit TurnStarted.
 	ch <- TurnEvent{Kind: EventTurnStarted}
-	ch <- TurnEvent{
-		Kind: EventStatus,
-		Status: &StatusEvent{
-			Text: "turn started",
-		},
-	}
+	emitStatus("turn started", 0)
 
 	iteration := 0
 	maxIterations := s.maxToolCallIterations()
 
 	for {
 		iteration++
+		agentMsgID = ""
 
 		// Guard against runaway tool call loops.
 		if iteration > maxIterations {
-			ch <- TurnEvent{
-				Kind:      EventError,
-				Error:     fmt.Errorf("max tool call iterations (%d) exceeded", maxIterations),
-				ErrorText: fmt.Sprintf("max tool call iterations (%d) exceeded", maxIterations),
-			}
+			emitError(fmt.Errorf("max tool call iterations (%d) exceeded", maxIterations), iteration)
 			return
 		}
 
 		// Check cancellation — emit TurnAborted instead of Error.
 		if ctx.Err() != nil {
-			ch <- TurnEvent{Kind: EventTurnAborted, ErrorText: ctx.Err().Error()}
+			emitAbort(ctx.Err().Error(), iteration)
 			return
 		}
 
 		// Step 1: Build conversation history.
 		history, err := t.buildHistory(ctx)
 		if err != nil {
-			ch <- TurnEvent{Kind: EventError, Error: err, ErrorText: err.Error()}
+			emitError(err, iteration)
 			return
 		}
 
 		// Step 2: Stream model response.
-		ch <- TurnEvent{
-			Kind: EventStatus,
-			Status: &StatusEvent{
-				Text:      "model call started",
-				Iteration: iteration,
-			},
-		}
+		emitStatus("model call started", iteration)
 		config := &GenerateContentConfig{
 			SystemInstruction: s.SystemPrompt,
 			Tools:             BuildToolsForModel(s.Tools),
@@ -131,26 +155,20 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 				ch <- event
 				if event.Delta != nil && event.Delta.IsThought {
 					thoughtChunkCount++
+					if strings.TrimSpace(event.Delta.Text) != "" {
+						s.emitUIEvent(ctx, models.UIEventKindThought, event.Delta.Text, agentMsgID, map[string]any{
+							"iteration":   iteration,
+							"chunk_index": thoughtChunkCount,
+						})
+					}
 					thoughtCharsSinceStatus += len(strings.TrimSpace(event.Delta.Text))
 
 					if summary := extractThoughtSummary(event.Delta.Text); summary != "" && summary != lastThoughtSummary {
 						lastThoughtSummary = summary
-						ch <- TurnEvent{
-							Kind: EventStatus,
-							Status: &StatusEvent{
-								Text:      "thinking: " + summary,
-								Iteration: iteration,
-							},
-						}
+						emitStatus("thinking: "+summary, iteration)
 						thoughtCharsSinceStatus = 0
 					} else if thoughtCharsSinceStatus >= thoughtStatusMinChars || thoughtChunkCount%thoughtStatusChunkInterval == 0 {
-						ch <- TurnEvent{
-							Kind: EventStatus,
-							Status: &StatusEvent{
-								Text:      fmt.Sprintf("thinking... (%d thought updates)", thoughtChunkCount),
-								Iteration: iteration,
-							},
-						}
+						emitStatus(fmt.Sprintf("thinking... (%d thought updates)", thoughtChunkCount), iteration)
 						thoughtCharsSinceStatus = 0
 					}
 				}
@@ -158,7 +176,7 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 			case EventMessageDone:
 				msg, ok := event.Message.(*models.Message)
 				if !ok {
-					ch <- TurnEvent{Kind: EventError, Error: fmt.Errorf("unexpected message type"), ErrorText: "unexpected message type"}
+					emitError(fmt.Errorf("unexpected message type"), iteration)
 					return
 				}
 				agentMsg = msg
@@ -166,10 +184,17 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 			case EventError:
 				// Check if this was a cancellation that manifested as a stream error.
 				if ctx.Err() != nil {
-					ch <- TurnEvent{Kind: EventTurnAborted, ErrorText: ctx.Err().Error()}
+					emitAbort(ctx.Err().Error(), iteration)
 					return
 				}
-				ch <- event
+				msg := strings.TrimSpace(event.ErrorText)
+				if msg == "" && event.Error != nil {
+					msg = event.Error.Error()
+				}
+				if msg == "" {
+					msg = "model stream failed"
+				}
+				emitError(fmt.Errorf("%s", msg), iteration)
 				return
 			}
 		}
@@ -177,10 +202,10 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 		if agentMsg == nil {
 			// If context was cancelled during streaming, report as abort.
 			if ctx.Err() != nil {
-				ch <- TurnEvent{Kind: EventTurnAborted, ErrorText: ctx.Err().Error()}
+				emitAbort(ctx.Err().Error(), iteration)
 				return
 			}
-			ch <- TurnEvent{Kind: EventError, Error: fmt.Errorf("no response from model"), ErrorText: "no response from model"}
+			emitError(fmt.Errorf("no response from model"), iteration)
 			return
 		}
 
@@ -192,49 +217,47 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 		agentMsg.State = models.MessageStateCompleted
 
 		if err := s.Store.Messages().Append(ctx, agentMsg); err != nil {
-			ch <- TurnEvent{Kind: EventError, Error: err, ErrorText: err.Error()}
+			emitError(err, iteration)
 			return
 		}
+		// Record the persisted message ID so subsequent UIEvents reference it.
+		agentMsgID = agentMsg.ID
 
 		ch <- TurnEvent{Kind: EventMessageDone, Message: agentMsg}
 
 		// Step 4: Check for function calls.
 		functionCalls := extractFunctionCalls(agentMsg)
 		if len(functionCalls) == 0 {
-			ch <- TurnEvent{
-				Kind: EventStatus,
-				Status: &StatusEvent{
-					Text:      "model produced final response",
-					Iteration: iteration,
-				},
-			}
+			emitStatus("model produced final response", iteration)
+			emitStatus("turn complete", iteration)
 			ch <- TurnEvent{Kind: EventTurnComplete}
 			return
 		}
-		ch <- TurnEvent{
-			Kind: EventStatus,
-			Status: &StatusEvent{
-				Text:      fmt.Sprintf("executing %d tool call(s): %s", len(functionCalls), summarizeToolList(functionCalls)),
-				Iteration: iteration,
-			},
-		}
+		emitStatus(fmt.Sprintf("executing %d tool call(s): %s", len(functionCalls), summarizeToolList(functionCalls)), iteration)
 
 		// Step 5: Execute tool calls.
 		for i, fc := range functionCalls {
-			ch <- TurnEvent{
-				Kind: EventStatus,
-				Status: &StatusEvent{
-					Text:      summarizeToolAction(fc, i+1, len(functionCalls)),
-					Iteration: iteration,
-				},
-			}
+			toolAction := summarizeToolAction(fc, i+1, len(functionCalls))
+			emitStatus(toolAction, iteration)
 			ch <- TurnEvent{
 				Kind: EventToolCallStart,
 				ToolCall: &ToolCallEvent{
 					CallID: fc.CallID,
 					Name:   fc.Name,
+					Args:   truncateEventText(string(fc.Args), 2000),
 				},
 			}
+			s.emitUIEvent(ctx, models.UIEventKindToolStart,
+				toolAction, agentMsgID,
+				map[string]any{
+					"call_id":   fc.CallID,
+					"tool_name": fc.Name,
+					"args":      truncateEventText(string(fc.Args), 2000),
+					"iteration": iteration,
+					"index":     i + 1,
+					"total":     len(functionCalls),
+				},
+			)
 		}
 
 		registry := NewToolRegistry(s.Tools)
@@ -264,23 +287,33 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 			if result.Err == nil {
 				successCount++
 			}
+			resultText := truncateEventText(string(result.ResponseJSON), 4000)
+			errorText := errorString(result.Err)
 			ch <- TurnEvent{
 				Kind: EventToolResult,
 				ToolResult: &ToolResultEvent{
 					CallID:  result.CallID,
 					Name:    result.Name,
 					Success: result.Err == nil,
-					Result:  truncateEventText(string(result.ResponseJSON), 4000),
-					Error:   errorString(result.Err),
+					Result:  resultText,
+					Error:   errorText,
 				},
 			}
-			ch <- TurnEvent{
-				Kind: EventStatus,
-				Status: &StatusEvent{
-					Text:      summarizeToolResultStatus(result, i+1, len(results)),
-					Iteration: iteration,
+			statusText := summarizeToolResultStatus(result, i+1, len(results))
+			s.emitUIEvent(ctx, models.UIEventKindToolResult,
+				statusText, agentMsgID,
+				map[string]any{
+					"call_id":   result.CallID,
+					"tool_name": result.Name,
+					"success":   result.Err == nil,
+					"error":     errorText,
+					"result":    resultText,
+					"iteration": iteration,
+					"index":     i + 1,
+					"total":     len(results),
 				},
-			}
+			)
+			emitStatus(statusText, iteration)
 		}
 
 		toolMsg := &models.Message{
@@ -292,19 +325,13 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 		}
 
 		if err := s.Store.Messages().Append(ctx, toolMsg); err != nil {
-			ch <- TurnEvent{Kind: EventError, Error: err, ErrorText: err.Error()}
+			emitError(err, iteration)
 			return
 		}
 
 		log.Printf("[turn] tool call cycle complete (%d/%d), %d results sent back to model",
 			iteration, maxIterations, len(results))
-		ch <- TurnEvent{
-			Kind: EventStatus,
-			Status: &StatusEvent{
-				Text:      fmt.Sprintf("tool call cycle complete (%d success, %d failed)", successCount, len(results)-successCount),
-				Iteration: iteration,
-			},
-		}
+		emitStatus(fmt.Sprintf("tool call cycle complete (%d success, %d failed)", successCount, len(results)-successCount), iteration)
 	}
 }
 
@@ -656,6 +683,29 @@ func (s *Session) maxToolCallIterations() int {
 		return DefaultMaxToolCallIterations
 	}
 	return s.MaxToolCallIterations
+}
+
+// emitUIEvent persists a single UIEvent to the store.
+// It is non-critical: errors are logged but do not fail the turn.
+// msgID may be empty for events that precede the first persisted agent message
+// in a given iteration (e.g. thought deltas before the agent message is saved).
+func (s *Session) emitUIEvent(
+	ctx context.Context,
+	kind models.UIEventKind,
+	text string,
+	msgID models.MessageID,
+	metadata map[string]any,
+) {
+	evt := &models.UIEvent{
+		ConversationID: s.Conversation.ID,
+		MessageID:      msgID,
+		Kind:           kind,
+		Text:           text,
+		Metadata:       metadata,
+	}
+	if err := s.Store.UIEvents().Append(ctx, evt); err != nil {
+		log.Printf("[session] emitUIEvent %s: %v", kind, err)
+	}
 }
 
 // HandleUserMessage is the main entry point for user interaction.
