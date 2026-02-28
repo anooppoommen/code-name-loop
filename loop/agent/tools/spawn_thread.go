@@ -53,7 +53,6 @@ func NewSpawnThreadTool(
 	workspace *models.Workspace,
 	parentConv *models.Conversation,
 	parentTools []*agent.ToolDef,
-	systemPrompt string,
 	parentDepth int,
 ) *agent.ToolDef {
 	decl := &genai.FunctionDeclaration{
@@ -135,7 +134,7 @@ Use async mode when you can do other work while the thread runs, then call await
 		// ── Build child session ───────────────────────────────────────────────
 		childSession := agent.NewSession(
 			s, client, workspace, childConv,
-			systemPrompt, parentTools, parentDepth+1,
+			parentTools, parentDepth+1,
 		)
 
 		runChild := func(runCtx context.Context) {

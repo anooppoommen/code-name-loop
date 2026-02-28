@@ -117,7 +117,7 @@ func TestSpawnThreadBlocking_CompletesWithResult(t *testing.T) {
 
 	client := &mockClientForSpawn{responses: [][]agent.TurnEvent{makeTextEvent("child answer")}}
 
-	tool := tools.NewSpawnThreadTool(s, client, ws, conv, nil, "", 0)
+	tool := tools.NewSpawnThreadTool(s, client, ws, conv, nil, 0)
 	args, _ := json.Marshal(map[string]string{
 		"title":            "sub-task",
 		"task":             "do something",
@@ -167,7 +167,7 @@ func TestSpawnThreadAsync_ReturnsImmediately(t *testing.T) {
 	// Slow client — should not block the tool call.
 	slowClient := &slowSpawnClient{delay: 200 * time.Millisecond, text: "async answer"}
 
-	tool := tools.NewSpawnThreadTool(s, slowClient, ws, conv, nil, "", 0)
+	tool := tools.NewSpawnThreadTool(s, slowClient, ws, conv, nil, 0)
 	args, _ := json.Marshal(map[string]string{
 		"title":            "async-task",
 		"task":             "run slowly",
@@ -204,7 +204,7 @@ func TestSpawnThreadAsync_BackgroundWritesResult(t *testing.T) {
 
 	client := &slowSpawnClient{delay: 50 * time.Millisecond, text: "background result"}
 
-	tool := tools.NewSpawnThreadTool(s, client, ws, conv, nil, "", 0)
+	tool := tools.NewSpawnThreadTool(s, client, ws, conv, nil, 0)
 	args, _ := json.Marshal(map[string]string{
 		"title": "bg", "task": "go do it", "context_strategy": "summary", "mode": "async",
 	})
@@ -234,7 +234,7 @@ func TestSpawnThreadDepthGuard(t *testing.T) {
 	ctx := context.Background()
 
 	// Depth == MaxThreadDepth: should be rejected.
-	tool := tools.NewSpawnThreadTool(s, nil, ws, conv, nil, "", tools.MaxThreadDepth)
+	tool := tools.NewSpawnThreadTool(s, nil, ws, conv, nil, tools.MaxThreadDepth)
 	args, _ := json.Marshal(map[string]string{
 		"title": "deep", "task": "x", "context_strategy": "full_chain", "mode": "blocking",
 	})
@@ -259,7 +259,7 @@ func TestSpawnThreadParallelBlocking_NThreads(t *testing.T) {
 
 	makeToolForAnswer := func(answer string) *agent.ToolDef {
 		cl := &mockClientForSpawn{responses: [][]agent.TurnEvent{makeTextEvent(answer)}}
-		return tools.NewSpawnThreadTool(s, cl, ws, conv, nil, "", 0)
+		return tools.NewSpawnThreadTool(s, cl, ws, conv, nil, 0)
 	}
 
 	type call struct {
@@ -319,7 +319,7 @@ func TestSpawnThreadChildToolError_DoesNotCrashParent(t *testing.T) {
 		{{Kind: agent.EventError, ErrorText: "model exploded"}},
 	}}
 
-	tool := tools.NewSpawnThreadTool(s, errClient, ws, conv, nil, "", 0)
+	tool := tools.NewSpawnThreadTool(s, errClient, ws, conv, nil, 0)
 	args, _ := json.Marshal(map[string]string{
 		"title": "err", "task": "crash", "context_strategy": "summary", "mode": "blocking",
 	})
@@ -352,7 +352,7 @@ func TestSpawnThreadCancellation_PropagatedToChild(t *testing.T) {
 
 	// Very slow client — will be cancelled mid-way.
 	slowCl := &slowSpawnClient{delay: 500 * time.Millisecond, text: "never"}
-	tool := tools.NewSpawnThreadTool(s, slowCl, ws, conv, nil, "", 0)
+	tool := tools.NewSpawnThreadTool(s, slowCl, ws, conv, nil, 0)
 	args, _ := json.Marshal(map[string]string{
 		"title": "cancel", "task": "go slow", "context_strategy": "summary", "mode": "blocking",
 	})
@@ -382,7 +382,7 @@ func TestSpawnThreadNestedDepth1CanSpawnDepth2(t *testing.T) {
 
 	// depth=1 should succeed (< MaxThreadDepth=2).
 	client := &mockClientForSpawn{responses: [][]agent.TurnEvent{makeTextEvent("grandchild done")}}
-	tool := tools.NewSpawnThreadTool(s, client, ws, conv, nil, "", 1)
+	tool := tools.NewSpawnThreadTool(s, client, ws, conv, nil, 1)
 	args, _ := json.Marshal(map[string]string{
 		"title": "grandchild", "task": "deep task", "context_strategy": "summary", "mode": "blocking",
 	})
@@ -538,7 +538,7 @@ func TestIntegration_ParentSpawnsAsyncThenAwaits(t *testing.T) {
 
 	// Async child takes 80ms to complete.
 	asyncClient := &slowSpawnClient{delay: 80 * time.Millisecond, text: "async done"}
-	spawnTool := tools.NewSpawnThreadTool(s, asyncClient, ws, conv, nil, "", 0)
+	spawnTool := tools.NewSpawnThreadTool(s, asyncClient, ws, conv, nil, 0)
 	awaitTool := tools.NewAwaitThreadTool(s)
 
 	// 1. Spawn async.

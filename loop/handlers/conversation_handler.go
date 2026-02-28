@@ -95,8 +95,7 @@ func (h *ConversationHandler) ListThreads(w http.ResponseWriter, r *http.Request
 
 // replyRequest is the JSON body for the Reply endpoint.
 type replyRequest struct {
-	Message      string `json:"message"`
-	SystemPrompt string `json:"system_prompt,omitempty"`
+	Message string `json:"message"`
 }
 
 // Reply handles user messages and streams the agent's response using SSE.
@@ -151,7 +150,7 @@ func (h *ConversationHandler) Reply(w http.ResponseWriter, r *http.Request) {
 	// the same capabilities as the parent (including spawn_thread for nesting).
 	// We assemble the full list first, then construct spawn_thread with it.
 	agentTools := append(baseTools,
-		tools.NewSpawnThreadTool(h.store, h.client, ws, conv, baseTools, req.SystemPrompt, 0),
+		tools.NewSpawnThreadTool(h.store, h.client, ws, conv, baseTools, 0),
 		tools.NewAwaitThreadTool(h.store),
 	)
 
@@ -161,7 +160,6 @@ func (h *ConversationHandler) Reply(w http.ResponseWriter, r *http.Request) {
 		h.client,
 		ws,
 		conv,
-		req.SystemPrompt,
 		agentTools,
 		0,
 	)

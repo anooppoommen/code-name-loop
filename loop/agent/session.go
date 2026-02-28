@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"loop/agent/systeminstruction"
 	"loop/models"
 	"loop/store"
 )
@@ -290,7 +291,6 @@ func NewSession(
 	client ModelClient,
 	workspace *models.Workspace,
 	conversation *models.Conversation,
-	systemPrompt string,
 	tools []*ToolDef,
 	depth int,
 ) *Session {
@@ -299,7 +299,7 @@ func NewSession(
 		Client:       client,
 		Workspace:    workspace,
 		Conversation: conversation,
-		SystemPrompt: systemPrompt,
+		SystemPrompt: systeminstruction.Get(),
 		Tools:        tools,
 		Depth:        depth,
 	}

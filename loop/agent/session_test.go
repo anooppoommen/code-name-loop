@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -200,7 +201,7 @@ func TestSessionSimpleTextResponse(t *testing.T) {
 
 	mock := &mockModelClient{responses: [][]agent.TurnEvent{makeTextResponse("Hello!")}}
 
-	session := agent.NewSession(s, mock, ws, conv, "You are helpful.", nil, 0)
+	session := agent.NewSession(s, mock, ws, conv, nil, 0)
 	events, cancel, err := session.HandleUserMessage(ctx, "Hi")
 	if err != nil {
 		t.Fatalf("HandleUserMessage: %v", err)
@@ -251,7 +252,7 @@ func TestSessionToolCallCycle(t *testing.T) {
 		},
 	}
 
-	session := agent.NewSession(s, mock, ws, conv, "", []*agent.ToolDef{simpleTool("read_file", `{"content":"hello world"}`)}, 0)
+	session := agent.NewSession(s, mock, ws, conv, []*agent.ToolDef{simpleTool("read_file", `{"content":"hello world"}`)}, 0)
 
 	events, cancel, err := session.HandleUserMessage(ctx, "Read /tmp/test.txt")
 	if err != nil {
@@ -305,7 +306,7 @@ func TestSessionParallelToolCalls(t *testing.T) {
 		},
 	}
 
-	session := agent.NewSession(s, mock, ws, conv, "", []*agent.ToolDef{
+	session := agent.NewSession(s, mock, ws, conv, []*agent.ToolDef{
 		simpleTool("a", `{"ok":"a"}`),
 		simpleTool("b", `{"ok":"b"}`),
 	}, 0)
@@ -345,7 +346,7 @@ func TestSessionMultiTurnToolCycle(t *testing.T) {
 		},
 	}
 
-	session := agent.NewSession(s, mock, ws, conv, "", []*agent.ToolDef{
+	session := agent.NewSession(s, mock, ws, conv, []*agent.ToolDef{
 		simpleTool("s1", `{"ok":1}`),
 		simpleTool("s2", `{"ok":2}`),
 	}, 0)
@@ -402,7 +403,7 @@ func TestSessionContextCancellation(t *testing.T) {
 		},
 	}}
 
-	session := agent.NewSession(s, mock, ws, conv, "", tools, 0)
+	session := agent.NewSession(s, mock, ws, conv, tools, 0)
 	events, cancel, _ := session.HandleUserMessage(ctx, "Run slow")
 
 	go func() {
@@ -426,7 +427,7 @@ func TestSessionCancellationEmitsAbortNotError(t *testing.T) {
 		response: makeTextResponse("Slow response"),
 	}
 
-	session := agent.NewSession(s, slowMock, ws, conv, "", nil, 0)
+	session := agent.NewSession(s, slowMock, ws, conv, nil, 0)
 	events, cancel, err := session.HandleUserMessage(ctx, "Hello")
 	if err != nil {
 		t.Fatalf("HandleUserMessage: %v", err)
@@ -488,7 +489,7 @@ func TestSessionAbortBeforeSpawn(t *testing.T) {
 		secondResponse: makeTextResponse("Second response"),
 	}
 
-	session := agent.NewSession(s, blockingMock, ws, conv, "", nil, 0)
+	session := agent.NewSession(s, blockingMock, ws, conv, nil, 0)
 
 	// Start first turn.
 	events1, _, _ := session.HandleUserMessage(ctx, "First")
@@ -552,7 +553,7 @@ func TestSessionModelError(t *testing.T) {
 		},
 	}
 
-	session := agent.NewSession(s, mock, ws, conv, "", nil, 0)
+	session := agent.NewSession(s, mock, ws, conv, nil, 0)
 	events, cancel, _ := session.HandleUserMessage(ctx, "Hello")
 	defer cancel()
 
@@ -596,7 +597,7 @@ func TestSessionToolHandlerError(t *testing.T) {
 		},
 	}}
 
-	session := agent.NewSession(s, mock, ws, conv, "", tools, 0)
+	session := agent.NewSession(s, mock, ws, conv, tools, 0)
 	events, cancel, _ := session.HandleUserMessage(ctx, "Run buggy")
 	defer cancel()
 	allEvents := collectEvents(events)
@@ -631,7 +632,7 @@ func TestSessionNoToolsRegistered(t *testing.T) {
 		},
 	}
 
-	session := agent.NewSession(s, mock, ws, conv, "", nil, 0)
+	session := agent.NewSession(s, mock, ws, conv, nil, 0)
 	events, cancel, _ := session.HandleUserMessage(ctx, "Call something")
 	defer cancel()
 	allEvents := collectEvents(events)
@@ -667,7 +668,7 @@ func TestSessionMaxToolCallIterations(t *testing.T) {
 
 	mock := &mockModelClient{responses: infiniteResponses}
 
-	session := agent.NewSession(s, mock, ws, conv, "", []*agent.ToolDef{simpleTool("loop_tool", `{"ok":true}`)}, 0)
+	session := agent.NewSession(s, mock, ws, conv, []*agent.ToolDef{simpleTool("loop_tool", `{"ok":true}`)}, 0)
 
 	events, cancel, _ := session.HandleUserMessage(ctx, "Loop forever")
 	defer cancel()
@@ -700,7 +701,7 @@ func TestSessionEmitsTurnStarted(t *testing.T) {
 
 	mock := &mockModelClient{responses: [][]agent.TurnEvent{makeTextResponse("ok")}}
 
-	session := agent.NewSession(s, mock, ws, conv, "", nil, 0)
+	session := agent.NewSession(s, mock, ws, conv, nil, 0)
 	events, cancel, _ := session.HandleUserMessage(ctx, "Hi")
 	defer cancel()
 	allEvents := collectEvents(events)
@@ -735,7 +736,7 @@ func TestSessionSystemPrompt(t *testing.T) {
 		},
 	}
 
-	session := agent.NewSession(s, mock, ws, conv, "You are a coding assistant.", nil, 0)
+	session := agent.NewSession(s, mock, ws, conv, nil, 0)
 	events, cancel, _ := session.HandleUserMessage(ctx, "hi")
 	defer cancel()
 	collectEvents(events)
@@ -743,8 +744,11 @@ func TestSessionSystemPrompt(t *testing.T) {
 	if capturedConfig == nil {
 		t.Fatal("config not captured")
 	}
-	if capturedConfig.SystemInstruction != "You are a coding assistant." {
-		t.Errorf("system prompt = %q", capturedConfig.SystemInstruction)
+	if capturedConfig.SystemInstruction == "" {
+		t.Errorf("expected system prompt to be populated, got empty string")
+	}
+	if !strings.Contains(capturedConfig.SystemInstruction, "Output Contract") {
+		t.Errorf("system prompt does not match expected assembled instruction, got %q", capturedConfig.SystemInstruction)
 	}
 }
 
@@ -768,7 +772,7 @@ func TestSessionDeltaStreaming(t *testing.T) {
 		}},
 	}
 
-	session := agent.NewSession(s, mock, ws, conv, "", nil, 0)
+	session := agent.NewSession(s, mock, ws, conv, nil, 0)
 	events, cancel, _ := session.HandleUserMessage(ctx, "Hi")
 	defer cancel()
 	allEvents := collectEvents(events)
@@ -805,7 +809,7 @@ func TestSessionMultipleUserMessages(t *testing.T) {
 		},
 	}
 
-	session := agent.NewSession(s, mock, ws, conv, "", nil, 0)
+	session := agent.NewSession(s, mock, ws, conv, nil, 0)
 
 	events1, cancel1, _ := session.HandleUserMessage(ctx, "First")
 	collectEvents(events1)
@@ -857,7 +861,7 @@ func TestSessionThreadHistoryComposition(t *testing.T) {
 		captureCallback: func(h []*models.Message) { capturedHistory = h },
 	}
 
-	session := agent.NewSession(s, mock, ws, thread, "", nil, 0)
+	session := agent.NewSession(s, mock, ws, thread, nil, 0)
 	events, cancel, _ := session.HandleUserMessage(ctx, "Thread question")
 	defer cancel()
 	collectEvents(events)
@@ -882,7 +886,7 @@ func TestSessionEmptyUserMessage(t *testing.T) {
 
 	mock := &mockModelClient{responses: [][]agent.TurnEvent{makeTextResponse("I see empty input")}}
 
-	session := agent.NewSession(s, mock, ws, conv, "", nil, 0)
+	session := agent.NewSession(s, mock, ws, conv, nil, 0)
 	events, cancel, err := session.HandleUserMessage(ctx, "")
 	if err != nil {
 		t.Fatalf("HandleUserMessage: %v", err)
@@ -907,7 +911,7 @@ func TestSessionMessageIDsUnique(t *testing.T) {
 		},
 	}
 
-	session := agent.NewSession(s, mock, ws, conv, "", []*agent.ToolDef{simpleTool("t", `{}`)}, 0)
+	session := agent.NewSession(s, mock, ws, conv, []*agent.ToolDef{simpleTool("t", `{}`)}, 0)
 
 	events, cancel, _ := session.HandleUserMessage(ctx, "Go")
 	defer cancel()
@@ -931,7 +935,7 @@ func TestSessionNoResponseFromModel(t *testing.T) {
 	// Model returns empty stream (no events = no agentMsg).
 	mock := &mockModelClient{responses: [][]agent.TurnEvent{{}}}
 
-	session := agent.NewSession(s, mock, ws, conv, "", nil, 0)
+	session := agent.NewSession(s, mock, ws, conv, nil, 0)
 	events, cancel, _ := session.HandleUserMessage(ctx, "Hello")
 	defer cancel()
 
@@ -958,7 +962,7 @@ func TestSessionEventOrder(t *testing.T) {
 		},
 	}
 
-	session := agent.NewSession(s, mock, ws, conv, "", []*agent.ToolDef{simpleTool("t", `{}`)}, 0)
+	session := agent.NewSession(s, mock, ws, conv, []*agent.ToolDef{simpleTool("t", `{}`)}, 0)
 
 	events, cancel, _ := session.HandleUserMessage(ctx, "Go")
 	defer cancel()
@@ -1009,7 +1013,7 @@ func TestSessionHistoryGrowsEachIteration(t *testing.T) {
 		},
 	}
 
-	session := agent.NewSession(s, captureMock, ws, conv, "", []*agent.ToolDef{simpleTool("t", `{}`)}, 0)
+	session := agent.NewSession(s, captureMock, ws, conv, []*agent.ToolDef{simpleTool("t", `{}`)}, 0)
 
 	events, cancel, _ := session.HandleUserMessage(ctx, "Go")
 	defer cancel()

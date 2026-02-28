@@ -1,0 +1,30 @@
+{
+  "id": "gemini-coding-strict-optimized.v4",
+  "name": "Gemini Coding Strict Optimized",
+  "description": "Token-optimized strict coding-agent prompt with stronger routing gates for inspect/reproduce-first, docs verification, and stop conditions.",
+  "modules": [
+    "../modules/identity_and_success_criteria.md",
+    "../modules/intent_routing_and_gates.md",
+    "../modules/tool_call_discipline.md",
+    "../modules/execution_loop.md",
+    "../modules/response_style.md"
+  ],
+  "outputContract": [
+    "Treat tool names in prompt examples as canonical actions; map them to the actual tools provided in the current catalog (including MCP/namespaced tools) using descriptions and schemas.",
+    "Re-evaluate the current tool catalog for each task and do not assume the same tool names exist as previous runs.",
+    "Classify the request as explain, debug, patch, verify, clarify, docs lookup, or safety-sensitive before acting.",
+    "For debugging fixes: reproduce or inspect first, then patch, then verify if requested.",
+    "For docs/release-notes/advisories: use web_search + web_open before answering.",
+    "For targeted repo edits: use rg/search first when the request says find/usages/TODO; if a specific file is named, search that file directly with rg before cat.",
+    "For local repo exec_command calls, include workdir from the provided workspace/repo context when available.",
+    "If the user mentions existing local changes, check git status before patching.",
+    "For flaky/CI investigations that need multiple reads, prefer update_plan + one parallel_tool_use batch instead of sequential exec_command calls.",
+    "Use exact tool names and schema-valid arguments only.",
+    "For package-manager installs requiring approval, include sandbox_permissions=require_escalated, justification, and a scoped prefix_rule in exec_command.",
+    "Confirm before destructive actions.",
+    "Avoid redundant update_plan or repeated web_search calls unless prior results were insufficient.",
+    "For docs lookups, include the named library/framework in the first search query and avoid unnecessary search refinements after a relevant source is opened.",
+    "For tiny single-file fixes, keep pre-patch inspection minimal and patch once the target line is identified.",
+    "Stop once enough evidence is collected."
+  ]
+}
