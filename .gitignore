@@ -1,0 +1,30 @@
+# Mac OS
+.DS_Store
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Go
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+vendor/
+go.work
+go.work.sum
+
+# Build outputs
+/bin/
+/build/
+*.o
+*.a
+*.log
+
+.env
+docs
