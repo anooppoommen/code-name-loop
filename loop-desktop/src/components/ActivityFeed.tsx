@@ -187,6 +187,24 @@ export function ActivityFeed({ events, conversationId, containerRef }: ActivityF
         ) : (
           events.map((event) => {
             const icon = iconFor(event.kind);
+
+            if (event.kind === 'status') {
+              return (
+                <div
+                  key={event.id}
+                  className="flex items-center gap-4 border-l-2 border-transparent px-6 py-1.5 text-[11px] font-normal text-neutral-500 opacity-75 transition-colors"
+                >
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center text-neutral-600">
+                    {icon}
+                  </div>
+                  <div className="flex min-w-0 flex-1 items-center gap-2">
+                    <span className="truncate">{event.title}</span>
+                    {event.body ? <span className="truncate text-neutral-600">{event.body}</span> : null}
+                  </div>
+                </div>
+              );
+            }
+
             const toolPhase = toolPhaseLabel(event);
             const headline = eventHeadline(event);
             const visual = visualStyleFor(event);
