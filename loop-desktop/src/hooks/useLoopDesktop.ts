@@ -102,6 +102,8 @@ export interface LoopDesktopController {
   setHideLifecycle: (value: boolean) => void;
   thinkingLevel: ThinkingLevel;
   setThinkingLevel: (value: ThinkingLevel) => void;
+  currentStatus: string;
+  setCurrentStatus: (value: string) => void;
 
   dismissNotice: (id: string) => void;
 
@@ -142,6 +144,7 @@ export function useLoopDesktop(): LoopDesktopController {
   const [isLoadingWorkspaces, setIsLoadingWorkspaces] = useState(false);
   const [sendingConversations, setSendingConversations] = useState<Record<string, boolean>>({});
   const isSending = !!sendingConversations[selectedConversationId];
+  const [currentStatus, setCurrentStatus] = useState<string>('');
   const [notices, setNotices] = useState<NoticeToast[]>([]);
 
   const activeStreamsRef = useRef<Record<string, StreamHandle>>({});
@@ -294,6 +297,7 @@ export function useLoopDesktop(): LoopDesktopController {
       } else {
         setSendingConversations({});
       }
+      setCurrentStatus('');
 
       if (closeStream && conversationId) {
         const stream = activeStreamsRef.current[conversationId];
@@ -311,6 +315,7 @@ export function useLoopDesktop(): LoopDesktopController {
     draftAssistantIdRef.current = null;
     draftThoughtIdRef.current = null;
     openToolEventIDsRef.current = {};
+    setCurrentStatus('');
   }, []);
 
   const visibleActivities = useMemo(() => {
@@ -503,6 +508,8 @@ export function useLoopDesktop(): LoopDesktopController {
       draftAssistantIdRef.current = null;
       draftThoughtIdRef.current = null;
       openToolEventIDsRef.current = {};
+      setCurrentStatus('');
+      setCurrentStatus('');
     },
     [backendUrl, clearNotices, pushActivity, pushNotice],
   );
@@ -794,6 +801,7 @@ export function useLoopDesktop(): LoopDesktopController {
           return;
         }
         lastStatusRef.current = statusText;
+        setCurrentStatus(statusText);
 
         const parsed = parseStatusLine(statusText);
         if (parsed?.kind === 'lifecycle' && parsed.title.startsWith('Executing ')) {
@@ -1230,6 +1238,8 @@ export function useLoopDesktop(): LoopDesktopController {
     setHideLifecycle,
     thinkingLevel,
     setThinkingLevel,
+    currentStatus,
+    setCurrentStatus,
 
     refreshWorkspaces,
     refreshConversations,

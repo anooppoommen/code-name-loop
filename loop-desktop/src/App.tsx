@@ -127,7 +127,6 @@ export default function App() {
         <AppHeader
           workspaceName={app.selectedWorkspace?.name ?? 'No workspace selected'}
           conversationTitle={app.selectedConversation?.title ?? ''}
-          isSending={app.isSending}
           isSidebarOpen={isSidebarOpen}
           onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
         />
@@ -147,6 +146,20 @@ export default function App() {
             </div>
 
             <div className="mx-auto w-full max-w-[720px] shrink-0">
+              <AnimatePresence>
+                {app.isSending && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: 10 }}
+                    className="px-5 pb-1 text-left text-[11px] font-medium"
+                  >
+                    <span className="animate-googleStatus bg-[linear-gradient(110deg,transparent_25%,rgba(255,255,255,0.7)_50%,transparent_75%)] bg-[length:200%_auto] bg-clip-text text-transparent drop-shadow-sm">
+                      {app.currentStatus || "Thinking..."}
+                    </span>
+                  </motion.div>
+                )}
+              </AnimatePresence>
               <Composer
                 messageInput={app.messageInput}
                 onMessageInputChange={app.setMessageInput}
