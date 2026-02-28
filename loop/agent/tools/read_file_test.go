@@ -117,3 +117,48 @@ func TestReadFile_CRLF(t *testing.T) {
 		t.Error("output should not contain \\r")
 	}
 }
+
+func TestReadFile_RespectsGitIgnoreByDefault(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+	writeGitignore(t, dir, "secret.txt\n")
+	guard := newPathGuard(testWorkspace(dir))
+
+	path := filepath.Join(dir, "secret.txt")
+	os.WriteFile(path, []byte("top-secret\n"), 0o644)
+
+	args, _ := json.Marshal(map[string]any{"file_path": path})
+	_, err := handleReadFile(context.Background(), args, guard)
+	if err == nil {
+		t.Fatal("expected read_file to reject .gitignore-excluded path by default")
+	}
+	if !strings.Contains(err.Error(), ".gitignore") {
+		t.Fatalf("expected .gitignore error, got %v", err)
+	}
+}
+
+func TestReadFile_AllowsIgnoredWhenExplicit(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+	writeGitignore(t, dir, "secret.txt\n")
+	guard := newPathGuard(testWorkspace(dir))
+
+	path := filepath.Join(dir, "secret.txt")
+	os.WriteFile(path, []byte("top-secret\n"), 0o644)
+
+	args, _ := json.Marshal(map[string]any{
+		"file_path":       path,
+		"include_ignored": true,
+	})
+	result, err := handleReadFile(context.Background(), args, guard)
+	if err != nil {
+		t.Fatalf("unexpected error with include_ignored=true: %v", err)
+	}
+
+	var resp map[string]any
+	json.Unmarshal(result, &resp)
+	output := resp["output"].(string)
+	if !strings.Contains(output, "top-secret") {
+		t.Fatalf("expected ignored file contents, got %q", output)
+	}
+}

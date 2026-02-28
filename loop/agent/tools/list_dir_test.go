@@ -120,3 +120,59 @@ func TestListDir_Sorted(t *testing.T) {
 		t.Errorf("entries should be sorted: a(%d) < m(%d) < z(%d)", aIdx, mIdx, zIdx)
 	}
 }
+
+func TestListDir_RespectsGitIgnoreByDefault(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+	writeGitignore(t, dir, "ignored.txt\nignored_dir/\n")
+	guard := newPathGuard(testWorkspace(dir))
+
+	os.WriteFile(filepath.Join(dir, "visible.txt"), []byte("v"), 0o644)
+	os.WriteFile(filepath.Join(dir, "ignored.txt"), []byte("i"), 0o644)
+	os.MkdirAll(filepath.Join(dir, "ignored_dir"), 0o755)
+	os.WriteFile(filepath.Join(dir, "ignored_dir", "inside.txt"), []byte("x"), 0o644)
+
+	args, _ := json.Marshal(map[string]any{"dir_path": dir, "depth": 2, "limit": 50})
+	result, err := handleListDir(context.Background(), args, guard)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var resp map[string]any
+	json.Unmarshal(result, &resp)
+	output := resp["output"].(string)
+	if strings.Contains(output, "ignored.txt") || strings.Contains(output, "ignored_dir/") {
+		t.Fatalf("ignored paths should be excluded by default, got %q", output)
+	}
+	if !strings.Contains(output, "visible.txt") {
+		t.Fatalf("expected visible file in output, got %q", output)
+	}
+}
+
+func TestListDir_AllowsIgnoredWhenExplicit(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+	writeGitignore(t, dir, "ignored_dir/\n")
+	guard := newPathGuard(testWorkspace(dir))
+
+	os.MkdirAll(filepath.Join(dir, "ignored_dir"), 0o755)
+	os.WriteFile(filepath.Join(dir, "ignored_dir", "inside.txt"), []byte("x"), 0o644)
+
+	args, _ := json.Marshal(map[string]any{
+		"dir_path":        dir,
+		"depth":           2,
+		"limit":           50,
+		"include_ignored": true,
+	})
+	result, err := handleListDir(context.Background(), args, guard)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var resp map[string]any
+	json.Unmarshal(result, &resp)
+	output := resp["output"].(string)
+	if !strings.Contains(output, "ignored_dir/") {
+		t.Fatalf("expected ignored directory in output when include_ignored=true, got %q", output)
+	}
+}

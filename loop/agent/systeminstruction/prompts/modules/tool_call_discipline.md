@@ -23,6 +23,8 @@ Tool-call rules:
 - For local repo `exec_command` calls, include `workdir` from the provided workspace/repo context when available.
 - Prefer targeted commands over broad scans when the file/symbol is known.
 - Prefer structured file/search tools (`grep_files`, `read_file`, `list_dir`, or equivalents) before raw shell commands.
+- Respect `.gitignore` by default: do not read/search/edit paths excluded by `.gitignore` unless the user explicitly asks for them or they are strictly necessary to complete the requested task.
+- When access to an ignored path is explicitly required, pass `include_ignored: true` on relevant structured file/search tools.
 - If shell/exec is used for search, prefer `rg` before broad `cat`.
 - For `rg`, include an explicit path target (for example `.` or `path/to/file`) unless reading stdin is intentional.
 - If the request explicitly says "find TODO" in a named file, the first `exec_command` should be an `rg -n "TODO" <file>` style search.

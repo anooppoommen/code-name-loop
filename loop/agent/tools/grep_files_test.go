@@ -90,3 +90,55 @@ func TestGrepFiles_ParseResultsRespectsLimit(t *testing.T) {
 		t.Fatalf("expected 2 results (limit), got %d", len(results))
 	}
 }
+
+func TestGrepFiles_RespectsGitIgnoreByDefault(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+	writeGitignore(t, dir, "ignored.txt\n")
+	guard := newPathGuard(testWorkspace(dir))
+
+	os.WriteFile(filepath.Join(dir, "ignored.txt"), []byte("alpha"), 0o644)
+
+	args, _ := json.Marshal(map[string]any{
+		"pattern": "alpha",
+		"path":    dir,
+	})
+	result, err := handleGrepFiles(context.Background(), args, guard)
+	if err != nil {
+		t.Fatalf("handleGrepFiles failed: %v", err)
+	}
+
+	var resp map[string]any
+	json.Unmarshal(result, &resp)
+	output := resp["output"].(string)
+	if output != "No matches found." {
+		t.Fatalf("expected ignored file to be skipped by default, got %q", output)
+	}
+}
+
+func TestGrepFiles_AllowsIgnoredWhenExplicit(t *testing.T) {
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+	writeGitignore(t, dir, "ignored.txt\n")
+	guard := newPathGuard(testWorkspace(dir))
+
+	path := filepath.Join(dir, "ignored.txt")
+	os.WriteFile(path, []byte("alpha"), 0o644)
+
+	args, _ := json.Marshal(map[string]any{
+		"pattern":         "alpha",
+		"path":            path,
+		"include_ignored": true,
+	})
+	result, err := handleGrepFiles(context.Background(), args, guard)
+	if err != nil {
+		t.Fatalf("handleGrepFiles failed: %v", err)
+	}
+
+	var resp map[string]any
+	json.Unmarshal(result, &resp)
+	output := resp["output"].(string)
+	if !strings.Contains(output, "ignored.txt") {
+		t.Fatalf("expected explicit ignored search to succeed, got %q", output)
+	}
+}

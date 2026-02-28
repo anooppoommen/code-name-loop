@@ -24,10 +24,11 @@ const (
 )
 
 type listDirArgs struct {
-	DirPath string `json:"dir_path"`
-	Offset  *int   `json:"offset,omitempty"`
-	Limit   *int   `json:"limit,omitempty"`
-	Depth   *int   `json:"depth,omitempty"`
+	DirPath        string `json:"dir_path"`
+	Offset         *int   `json:"offset,omitempty"`
+	Limit          *int   `json:"limit,omitempty"`
+	Depth          *int   `json:"depth,omitempty"`
+	IncludeIgnored *bool  `json:"include_ignored,omitempty"`
 }
 
 // NewListDirTool creates the list_dir tool.
@@ -55,6 +56,10 @@ func NewListDirTool(ws *models.Workspace) *agent.ToolDef {
 					"depth": {
 						Type:        genai.TypeInteger,
 						Description: "The maximum directory depth to traverse. Must be 1 or greater.",
+					},
+					"include_ignored": {
+						Type:        genai.TypeBoolean,
+						Description: "Set true only when the user explicitly asks to list .gitignore-excluded paths.",
 					},
 				},
 				Required: []string{"dir_path"},
@@ -87,7 +92,7 @@ const (
 	kindOther
 )
 
-func handleListDir(_ context.Context, args json.RawMessage, guard *pathGuard) (json.RawMessage, error) {
+func handleListDir(ctx context.Context, args json.RawMessage, guard *pathGuard) (json.RawMessage, error) {
 	var a listDirArgs
 	if err := json.Unmarshal(args, &a); err != nil {
 		return nil, fmt.Errorf("failed to parse arguments: %w", err)
@@ -103,6 +108,10 @@ func handleListDir(_ context.Context, args json.RawMessage, guard *pathGuard) (j
 	}
 	dirPath, err := guard.requireAllowedPath(dirPath)
 	if err != nil {
+		return nil, err
+	}
+	allowIgnored := a.IncludeIgnored != nil && *a.IncludeIgnored
+	if err := guard.rejectIfGitIgnored(ctx, dirPath, allowIgnored); err != nil {
 		return nil, err
 	}
 
@@ -130,7 +139,7 @@ func handleListDir(_ context.Context, args json.RawMessage, guard *pathGuard) (j
 		return nil, fmt.Errorf("depth must be greater than zero")
 	}
 
-	entries, err := collectEntries(dirPath, "", depth)
+	entries, err := collectEntries(ctx, guard, dirPath, "", depth, allowIgnored)
 	if err != nil {
 		return nil, err
 	}
@@ -171,7 +180,7 @@ func handleListDir(_ context.Context, args json.RawMessage, guard *pathGuard) (j
 	return json.Marshal(map[string]any{"output": strings.Join(output, "\n")})
 }
 
-func collectEntries(dirPath string, relPrefix string, depth int) ([]dirEntry, error) {
+func collectEntries(ctx context.Context, guard *pathGuard, dirPath string, relPrefix string, depth int, allowIgnored bool) ([]dirEntry, error) {
 	type queueItem struct {
 		dir    string
 		prefix string
@@ -197,6 +206,12 @@ func collectEntries(dirPath string, relPrefix string, depth int) ([]dirEntry, er
 
 		for _, de := range dirEntries {
 			name := de.Name()
+			absolutePath := filepath.Join(item.dir, name)
+			if !allowIgnored {
+				if err := guard.rejectIfGitIgnored(ctx, absolutePath, false); err != nil {
+					continue
+				}
+			}
 			var relPath string
 			if item.prefix == "" {
 				relPath = name

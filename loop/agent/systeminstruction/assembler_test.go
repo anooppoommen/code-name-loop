@@ -24,4 +24,7 @@ func TestGet(t *testing.T) {
 	if !strings.Contains(prompt, "Capability ladder") {
 		t.Error("expected prompt to contain capability ladder guidance")
 	}
+	if !strings.Contains(prompt, ".gitignore") {
+		t.Error("expected prompt to contain .gitignore exclusion guidance")
+	}
 }

@@ -155,11 +155,12 @@ func (c *Client) StreamMessage(ctx context.Context, history []*models.Message, c
 	go func() {
 		defer close(ch)
 
-		contents := MessagesToContents(history)
+		contents := MessagesToModelContents(history)
 		genaiConfig := c.buildGenaiConfig(config)
 
 		// Use the streaming API: returns iter.Seq2[*GenerateContentResponse, error].
 		var accumulatedParts []*genai.Part
+		var usage *genai.GenerateContentResponseUsageMetadata
 
 		for resp, err := range c.genai.Models.GenerateContentStream(ctx, c.model, contents, genaiConfig) {
 			// Check context cancellation first.
@@ -175,6 +176,10 @@ func (c *Client) StreamMessage(ctx context.Context, history []*models.Message, c
 
 			if resp == nil || len(resp.Candidates) == 0 {
 				continue
+			}
+
+			if resp.UsageMetadata != nil {
+				usage = resp.UsageMetadata
 			}
 
 			candidate := resp.Candidates[0]
@@ -214,6 +219,14 @@ func (c *Client) StreamMessage(ctx context.Context, history []*models.Message, c
 		}
 		msg := ContentToMessage(finalContent)
 		msg.State = models.MessageStateCompleted
+
+		if usage != nil {
+			msg.Metadata = map[string]any{
+				"tokens_input":  usage.PromptTokenCount,
+				"tokens_output": usage.CandidatesTokenCount,
+				"tokens_cached": usage.CachedContentTokenCount,
+			}
+		}
 
 		ch <- TurnEvent{Kind: EventMessageDone, Message: msg}
 	}()

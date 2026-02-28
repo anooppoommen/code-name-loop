@@ -22,9 +22,10 @@ const (
 )
 
 type readFileArgs struct {
-	FilePath string `json:"file_path"`
-	Offset   *int   `json:"offset,omitempty"`
-	Limit    *int   `json:"limit,omitempty"`
+	FilePath       string `json:"file_path"`
+	Offset         *int   `json:"offset,omitempty"`
+	Limit          *int   `json:"limit,omitempty"`
+	IncludeIgnored *bool  `json:"include_ignored,omitempty"`
 }
 
 // NewReadFileTool creates the read_file tool (slice mode).
@@ -49,6 +50,10 @@ func NewReadFileTool(ws *models.Workspace) *agent.ToolDef {
 						Type:        genai.TypeInteger,
 						Description: "The maximum number of lines to return.",
 					},
+					"include_ignored": {
+						Type:        genai.TypeBoolean,
+						Description: "Set true only when the user explicitly asks to access a .gitignore-excluded file.",
+					},
 				},
 				Required: []string{"file_path"},
 			},
@@ -64,7 +69,7 @@ func NewReadFileTool(ws *models.Workspace) *agent.ToolDef {
 	}
 }
 
-func handleReadFile(_ context.Context, args json.RawMessage, guard *pathGuard) (json.RawMessage, error) {
+func handleReadFile(ctx context.Context, args json.RawMessage, guard *pathGuard) (json.RawMessage, error) {
 	var a readFileArgs
 	if err := json.Unmarshal(args, &a); err != nil {
 		return nil, fmt.Errorf("failed to parse arguments: %w", err)
@@ -97,6 +102,10 @@ func handleReadFile(_ context.Context, args json.RawMessage, guard *pathGuard) (
 
 	filePath, err := guard.requireAllowedPath(filePath)
 	if err != nil {
+		return nil, err
+	}
+	allowIgnored := a.IncludeIgnored != nil && *a.IncludeIgnored
+	if err := guard.rejectIfGitIgnored(ctx, filePath, allowIgnored); err != nil {
 		return nil, err
 	}
 

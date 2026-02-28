@@ -43,7 +43,7 @@ func main() {
 	mux.HandleFunc("GET /health", handlers.HandleHealth)
 
 	// Register domain handlers.
-	handlers.NewWorkspaceHandler(s).RegisterRoutes(mux)
+	handlers.NewWorkspaceHandler(s, cfg.Model).RegisterRoutes(mux)
 	handlers.NewConversationHandler(s, geminiClient, pm).RegisterRoutes(mux)
 
 	// Apply middleware and start server.

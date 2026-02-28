@@ -6,6 +6,7 @@ import { Composer } from './components/Composer';
 import { Sidebar } from './components/Sidebar';
 import { ToastStack } from './components/ToastStack';
 import { useLoopDesktop } from './hooks/useLoopDesktop';
+import { Powerline } from './components/Powerline';
 
 const MOBILE_SIDEBAR_BREAKPOINT_PX = 920;
 
@@ -177,6 +178,12 @@ export default function App() {
             </div>
           </div>
         </div>
+        
+        <Powerline
+          backendUrl={app.backendUrl}
+          workspaceId={app.selectedWorkspaceId}
+          conversationId={app.selectedConversationId}
+        />
       </main>
     </div>
   );

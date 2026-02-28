@@ -1,6 +1,7 @@
 package agent_test
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"testing"
 
@@ -340,5 +341,111 @@ func TestContentToMessageSkipsStructurallyEmptyPart(t *testing.T) {
 	}
 	if msg.Parts[0].Kind != models.PartFunctionCall {
 		t.Fatalf("kind = %q, want %q", msg.Parts[0].Kind, models.PartFunctionCall)
+	}
+}
+
+func TestMessagesToModelContents_PrunesHistoryPayloads(t *testing.T) {
+	blobData := base64.StdEncoding.EncodeToString([]byte("image-bytes"))
+	history := []*models.Message{
+		{
+			SentBy: models.SentByUser,
+			Parts: []models.MessagePart{
+				{Kind: models.PartText, Text: &models.TextPart{Text: "look at this screenshot"}},
+				{
+					Kind: models.PartInlineBlob,
+					InlineBlob: &models.InlineBlobPart{
+						MIMEType: "image/png",
+						Data:     blobData,
+					},
+				},
+			},
+		},
+		{
+			SentBy: models.SentByAgent,
+			Parts: []models.MessagePart{
+				{
+					Kind:             models.PartThought,
+					Thought:          &models.ThoughtPart{Text: "long internal reasoning"},
+					ThoughtSignature: []byte{0x01, 0x02},
+				},
+				{
+					Kind: models.PartFunctionCall,
+					FunctionCall: &models.FunctionCallPart{
+						CallID:   "call-1",
+						Name:     "list_dir",
+						ArgsJSON: json.RawMessage(`{"dir_path":"."}`),
+					},
+				},
+			},
+		},
+		{
+			SentBy: models.SentByTool,
+			Parts: []models.MessagePart{
+				{
+					Kind: models.PartFunctionResponse,
+					FunctionResponse: &models.FunctionResponsePart{
+						CallID:       "call-1",
+						Name:         "list_dir",
+						ResponseJSON: json.RawMessage(`{"output":"ok"}`),
+					},
+				},
+			},
+		},
+	}
+
+	contents := agent.MessagesToModelContents(history)
+	if len(contents) != 3 {
+		t.Fatalf("contents count = %d, want 3", len(contents))
+	}
+
+	for _, c := range contents {
+		for _, p := range c.Parts {
+			if p.InlineData != nil {
+				t.Fatalf("historical inline blob should be omitted from model history")
+			}
+		}
+	}
+
+	for _, p := range contents[1].Parts {
+		if p.Thought {
+			t.Fatalf("thought parts should be omitted from model history payload")
+		}
+	}
+}
+
+func TestMessagesToModelContents_KeepTailInlineBlob(t *testing.T) {
+	blobData := base64.StdEncoding.EncodeToString([]byte("image-bytes"))
+	history := []*models.Message{
+		{
+			SentBy: models.SentByUser,
+			Parts: []models.MessagePart{
+				{Kind: models.PartText, Text: &models.TextPart{Text: "latest screenshot"}},
+				{
+					Kind: models.PartInlineBlob,
+					InlineBlob: &models.InlineBlobPart{
+						MIMEType: "image/png",
+						Data:     blobData,
+					},
+				},
+			},
+		},
+	}
+
+	contents := agent.MessagesToModelContents(history)
+	if len(contents) != 1 {
+		t.Fatalf("contents count = %d, want 1", len(contents))
+	}
+
+	foundInline := false
+	for _, p := range contents[0].Parts {
+		if p.InlineData != nil {
+			foundInline = true
+			if p.InlineData.MIMEType != "image/png" {
+				t.Fatalf("inline MIME type = %q, want image/png", p.InlineData.MIMEType)
+			}
+		}
+	}
+	if !foundInline {
+		t.Fatalf("tail inline blob should be preserved")
 	}
 }

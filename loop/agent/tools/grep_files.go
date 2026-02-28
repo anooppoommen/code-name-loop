@@ -23,10 +23,11 @@ const (
 )
 
 type grepFilesArgs struct {
-	Pattern string `json:"pattern"`
-	Include string `json:"include,omitempty"`
-	Path    string `json:"path,omitempty"`
-	Limit   *int   `json:"limit,omitempty"`
+	Pattern        string `json:"pattern"`
+	Include        string `json:"include,omitempty"`
+	Path           string `json:"path,omitempty"`
+	Limit          *int   `json:"limit,omitempty"`
+	IncludeIgnored *bool  `json:"include_ignored,omitempty"`
 }
 
 // NewGrepFilesTool creates the grep_files tool.
@@ -54,6 +55,10 @@ func NewGrepFilesTool(ws *models.Workspace) *agent.ToolDef {
 					"limit": {
 						Type:        genai.TypeInteger,
 						Description: "Maximum number of file paths to return (defaults to 100).",
+					},
+					"include_ignored": {
+						Type:        genai.TypeBoolean,
+						Description: "Set true only when the user explicitly asks to search .gitignore-excluded paths.",
 					},
 				},
 				Required: []string{"pattern"},
@@ -104,6 +109,10 @@ func handleGrepFiles(ctx context.Context, args json.RawMessage, guard *pathGuard
 	if err != nil {
 		return nil, err
 	}
+	allowIgnored := a.IncludeIgnored != nil && *a.IncludeIgnored
+	if err := guard.rejectIfGitIgnored(ctx, searchPath, allowIgnored); err != nil {
+		return nil, err
+	}
 
 	// Verify path exists.
 	if _, err := os.Stat(searchPath); err != nil {
@@ -112,7 +121,7 @@ func handleGrepFiles(ctx context.Context, args json.RawMessage, guard *pathGuard
 
 	include := strings.TrimSpace(a.Include)
 
-	results, err := runRgSearch(ctx, pattern, include, searchPath, limit)
+	results, err := runRgSearch(ctx, pattern, include, searchPath, limit, guard, allowIgnored)
 	if err != nil {
 		return nil, err
 	}
@@ -130,7 +139,7 @@ func handleGrepFiles(ctx context.Context, args json.RawMessage, guard *pathGuard
 	})
 }
 
-func runRgSearch(ctx context.Context, pattern string, include string, searchPath string, limit int) ([]string, error) {
+func runRgSearch(ctx context.Context, pattern string, include string, searchPath string, limit int, guard *pathGuard, allowIgnored bool) ([]string, error) {
 	ctx, cancel := context.WithTimeout(ctx, grepCommandTimeout)
 	defer cancel()
 
@@ -158,15 +167,15 @@ func runRgSearch(ctx context.Context, pattern string, include string, searchPath
 		}
 		// rg not found — try grep fallback.
 		if isNotFound(err) {
-			return runGrepFallback(ctx, pattern, include, searchPath, limit)
+			return runGrepFallback(ctx, pattern, include, searchPath, limit, guard, allowIgnored)
 		}
 		return nil, fmt.Errorf("rg failed: %w", err)
 	}
 
-	return parseSearchResults(output, limit), nil
+	return filterIgnoredResults(ctx, parseSearchResults(output, limit), guard, allowIgnored), nil
 }
 
-func runGrepFallback(ctx context.Context, pattern string, include string, searchPath string, limit int) ([]string, error) {
+func runGrepFallback(ctx context.Context, pattern string, include string, searchPath string, limit int, guard *pathGuard, allowIgnored bool) ([]string, error) {
 	args := []string{"-rl", pattern}
 	if include != "" {
 		args = append(args, "--include", include)
@@ -182,7 +191,7 @@ func runGrepFallback(ctx context.Context, pattern string, include string, search
 		return nil, fmt.Errorf("grep failed: %w", err)
 	}
 
-	return parseSearchResults(output, limit), nil
+	return filterIgnoredResults(ctx, parseSearchResults(output, limit), guard, allowIgnored), nil
 }
 
 func parseSearchResults(output []byte, limit int) []string {
@@ -203,4 +212,23 @@ func parseSearchResults(output []byte, limit int) []string {
 func isNotFound(err error) bool {
 	return strings.Contains(err.Error(), "executable file not found") ||
 		strings.Contains(err.Error(), "no such file or directory")
+}
+
+func filterIgnoredResults(ctx context.Context, paths []string, guard *pathGuard, allowIgnored bool) []string {
+	if allowIgnored || len(paths) == 0 {
+		return paths
+	}
+
+	filtered := make([]string, 0, len(paths))
+	for _, p := range paths {
+		canon, err := guard.requireAllowedPath(p)
+		if err != nil {
+			continue
+		}
+		if err := guard.rejectIfGitIgnored(ctx, canon, false); err != nil {
+			continue
+		}
+		filtered = append(filtered, p)
+	}
+	return filtered
 }

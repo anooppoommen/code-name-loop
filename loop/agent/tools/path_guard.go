@@ -1,8 +1,10 @@
 package tools
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -10,9 +12,10 @@ import (
 )
 
 type pathGuard struct {
-	workspaceRoot string
-	allowedRoots  []string
-	initErr       error
+	workspaceRoot  string
+	allowedRoots   []string
+	gitIgnoreCache map[string]bool
+	initErr        error
 }
 
 func newPathGuard(ws *models.Workspace) *pathGuard {
@@ -38,6 +41,7 @@ func newPathGuard(ws *models.Workspace) *pathGuard {
 	}
 	g.workspaceRoot = canonRoot
 	g.allowedRoots = append(g.allowedRoots, canonRoot)
+	g.gitIgnoreCache = make(map[string]bool)
 
 	for _, grant := range ws.PathGrants {
 		grantPath := strings.TrimSpace(grant.CanonicalPath)
@@ -103,6 +107,68 @@ func (g *pathGuard) resolveForPatch(path string) (string, error) {
 	return g.requireAllowedPath(candidate)
 }
 
+func (g *pathGuard) rejectIfGitIgnored(ctx context.Context, path string, allowIgnored bool) error {
+	if allowIgnored {
+		return nil
+	}
+	if g.initErr != nil {
+		return g.initErr
+	}
+	if strings.TrimSpace(path) == "" {
+		return nil
+	}
+	canonPath, err := canonicalizePath(path)
+	if err != nil {
+		return fmt.Errorf("invalid path %q: %w", path, err)
+	}
+
+	ignored, err := g.isGitIgnored(ctx, canonPath)
+	if err != nil {
+		return err
+	}
+	if ignored {
+		return fmt.Errorf("path %q is excluded by .gitignore; include it only when absolutely necessary", canonPath)
+	}
+	return nil
+}
+
+func (g *pathGuard) isGitIgnored(ctx context.Context, canonPath string) (bool, error) {
+	if g.initErr != nil {
+		return false, g.initErr
+	}
+
+	// .gitignore applicability is scoped to the workspace root.
+	if !isWithinRoot(canonPath, g.workspaceRoot) {
+		return false, nil
+	}
+
+	if ignored, ok := g.gitIgnoreCache[canonPath]; ok {
+		return ignored, nil
+	}
+
+	rel, err := filepath.Rel(g.workspaceRoot, canonPath)
+	if err != nil || rel == "." {
+		return false, nil
+	}
+
+	cmd := exec.CommandContext(ctx, "git", "-C", g.workspaceRoot, "check-ignore", "--quiet", "--no-index", "--", filepath.ToSlash(rel))
+	err = cmd.Run()
+	switch {
+	case err == nil:
+		g.gitIgnoreCache[canonPath] = true
+		return true, nil
+	case isExitCode(err, 1):
+		g.gitIgnoreCache[canonPath] = false
+		return false, nil
+	case isExitCode(err, 128), isNotFound(err):
+		// Not a git repo or git unavailable: do not block.
+		g.gitIgnoreCache[canonPath] = false
+		return false, nil
+	default:
+		return false, nil
+	}
+}
+
 func canonicalizePath(path string) (string, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
@@ -158,4 +224,12 @@ func dedupeStrings(in []string) []string {
 		out = append(out, s)
 	}
 	return out
+}
+
+func isExitCode(err error, code int) bool {
+	exitErr, ok := err.(*exec.ExitError)
+	if !ok {
+		return false
+	}
+	return exitErr.ExitCode() == code
 }

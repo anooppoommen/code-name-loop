@@ -10,15 +10,59 @@ import (
 	"loop/models"
 )
 
+type partEncodeOptions struct {
+	includeThoughtPart bool
+	includeThoughtText bool
+	includeInlineBlob  bool
+}
+
+var defaultPartEncodeOptions = partEncodeOptions{
+	includeThoughtPart: true,
+	includeThoughtText: true,
+	includeInlineBlob:  true,
+}
+
 // MessagesToContents converts a slice of domain messages into Gemini API
 // Content objects, preserving part ordering, thought signatures, and the
 // parallel tool-call invariant (all calls before responses).
 func MessagesToContents(messages []*models.Message) []*genai.Content {
+	return messagesToContentsWithOptions(messages, func(_ int, _ *models.Message) partEncodeOptions {
+		return defaultPartEncodeOptions
+	})
+}
+
+// MessagesToModelContents converts persisted history into model request
+// contents with token-efficient pruning:
+//   - Thought parts are omitted from upstream payload.
+//   - Inline blobs are included only on the tail message.
+//
+// This keeps required protocol data while avoiding repeated large payloads.
+func MessagesToModelContents(messages []*models.Message) []*genai.Content {
+	lastIdx := len(messages) - 1
+	return messagesToContentsWithOptions(messages, func(idx int, _ *models.Message) partEncodeOptions {
+		return partEncodeOptions{
+			includeThoughtPart: false,
+			includeThoughtText: false,
+			includeInlineBlob:  idx == lastIdx,
+		}
+	})
+}
+
+func messagesToContentsWithOptions(messages []*models.Message, partOpts func(idx int, msg *models.Message) partEncodeOptions) []*genai.Content {
 	var contents []*genai.Content
-	for _, msg := range messages {
+	for i, msg := range messages {
+		if msg == nil {
+			continue
+		}
+
+		parts := partsToGenAIWithOptions(msg.Parts, partOpts(i, msg))
+		if len(parts) == 0 {
+			continue
+		}
+
 		content := &genai.Content{
 			Role:  senderToRole(msg.SentBy),
-			Parts: partsToGenAI(msg.Parts),
+			Parts: parts,
 		}
 		contents = append(contents, content)
 	}
@@ -66,9 +110,13 @@ func roleToSender(role string) models.Sender {
 // ----- Part conversion: domain → genai -----
 
 func partsToGenAI(parts []models.MessagePart) []*genai.Part {
+	return partsToGenAIWithOptions(parts, defaultPartEncodeOptions)
+}
+
+func partsToGenAIWithOptions(parts []models.MessagePart, opts partEncodeOptions) []*genai.Part {
 	var gparts []*genai.Part
 	for _, p := range parts {
-		gp := partToGenAI(p)
+		gp := partToGenAIWithOptions(p, opts)
 		if gp != nil {
 			gparts = append(gparts, gp)
 		}
@@ -77,6 +125,10 @@ func partsToGenAI(parts []models.MessagePart) []*genai.Part {
 }
 
 func partToGenAI(p models.MessagePart) *genai.Part {
+	return partToGenAIWithOptions(p, defaultPartEncodeOptions)
+}
+
+func partToGenAIWithOptions(p models.MessagePart, opts partEncodeOptions) *genai.Part {
 	var gp *genai.Part
 
 	switch p.Kind {
@@ -86,9 +138,16 @@ func partToGenAI(p models.MessagePart) *genai.Part {
 		}
 
 	case models.PartThought:
+		if !opts.includeThoughtPart {
+			break
+		}
 		if p.Thought != nil {
+			thoughtText := p.Thought.Text
+			if !opts.includeThoughtText {
+				thoughtText = ""
+			}
 			gp = &genai.Part{
-				Text:    p.Thought.Text,
+				Text:    thoughtText,
 				Thought: true,
 			}
 		}
@@ -134,6 +193,9 @@ func partToGenAI(p models.MessagePart) *genai.Part {
 		}
 
 	case models.PartInlineBlob:
+		if !opts.includeInlineBlob {
+			break
+		}
 		if p.InlineBlob != nil && p.InlineBlob.Data != "" {
 			b, err := base64.StdEncoding.DecodeString(p.InlineBlob.Data)
 			if err == nil {
