@@ -33,13 +33,13 @@ func NewReadFileTool(ws *models.Workspace) *agent.ToolDef {
 	return &agent.ToolDef{
 		Declaration: &genai.FunctionDeclaration{
 			Name:        "read_file",
-			Description: "Reads a local file with 1-indexed line numbers, supporting slice mode.",
+			Description: "Reads a local file with 1-indexed line numbers, supporting slice mode. Prefer this over shell cat/sed for direct file inspection.",
 			Parameters: &genai.Schema{
 				Type: genai.TypeObject,
 				Properties: map[string]*genai.Schema{
 					"file_path": {
 						Type:        genai.TypeString,
-						Description: "Absolute path to the file.",
+						Description: "Absolute path or workspace-relative path to the file.",
 					},
 					"offset": {
 						Type:        genai.TypeInteger,
@@ -56,6 +56,10 @@ func NewReadFileTool(ws *models.Workspace) *agent.ToolDef {
 		Handler: func(ctx context.Context, args json.RawMessage) (json.RawMessage, error) {
 			return handleReadFile(ctx, args, guard)
 		},
+		Intents: []string{
+			"Use for targeted file reads instead of shell cat/sed",
+			"Use offset/limit to keep context tight and token-efficient",
+		},
 	}
 }
 
@@ -69,8 +73,9 @@ func handleReadFile(_ context.Context, args json.RawMessage, guard *pathGuard) (
 		return nil, fmt.Errorf("file_path is required")
 	}
 
-	if !filepath.IsAbs(a.FilePath) {
-		return nil, fmt.Errorf("file_path must be an absolute path")
+	filePath := a.FilePath
+	if !filepath.IsAbs(filePath) {
+		filePath = filepath.Join(guard.workspaceRoot, filePath)
 	}
 
 	offset := readFileDefaultOffset
@@ -89,7 +94,7 @@ func handleReadFile(_ context.Context, args json.RawMessage, guard *pathGuard) (
 		return nil, fmt.Errorf("limit must be greater than zero")
 	}
 
-	filePath, err := guard.requireAllowedPath(a.FilePath)
+	filePath, err := guard.requireAllowedPath(filePath)
 	if err != nil {
 		return nil, err
 	}

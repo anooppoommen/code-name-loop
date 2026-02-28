@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { RefObject } from 'react';
 import type { LoopStreamPacket } from '../electron';
 import { attachReplyStream, chooseFolder, getActiveReplyStream, openReplyStream, requestJson } from '../lib/loopClient';
-import type { ActivityEvent, ConversationSummary, WorkspaceSummary } from '../types/ui';
+import type { ActivityEvent, ConversationSummary, ThinkingLevel, WorkspaceSummary } from '../types/ui';
 import {
   type ActivityInput,
   historyRowsToActivities,
@@ -26,6 +26,19 @@ import {
 } from '../utils/parsers';
 
 const STORAGE_KEY = 'loop-desktop-settings-v3';
+const DEFAULT_THINKING_LEVEL: ThinkingLevel = 'medium';
+const THINKING_LEVELS: readonly ThinkingLevel[] = ['minimal', 'low', 'medium', 'high'];
+
+function normalizeThinkingLevel(value: unknown): ThinkingLevel {
+  if (typeof value !== 'string') {
+    return DEFAULT_THINKING_LEVEL;
+  }
+  const normalized = value.trim().toLowerCase();
+  if (THINKING_LEVELS.includes(normalized as ThinkingLevel)) {
+    return normalized as ThinkingLevel;
+  }
+  return DEFAULT_THINKING_LEVEL;
+}
 
 function rowsFromUnknown(payload: unknown): unknown[] {
   if (Array.isArray(payload)) {
@@ -87,6 +100,8 @@ export interface LoopDesktopController {
   notices: NoticeToast[];
   hideLifecycle: boolean;
   setHideLifecycle: (value: boolean) => void;
+  thinkingLevel: ThinkingLevel;
+  setThinkingLevel: (value: ThinkingLevel) => void;
 
   dismissNotice: (id: string) => void;
 
@@ -104,6 +119,8 @@ export interface LoopDesktopController {
 
   sendMessage: () => Promise<void>;
   cancelStream: () => Promise<void>;
+  applyToolResponseSuggestion: (text: string) => void;
+  sendToolResponseSuggestion: (text: string) => Promise<void>;
 }
 
 export function useLoopDesktop(): LoopDesktopController {
@@ -113,7 +130,9 @@ export function useLoopDesktop(): LoopDesktopController {
   const [workspacePath, setWorkspacePath] = useState('');
   const [workspaceName, setWorkspaceName] = useState('');
 
-  const [hideLifecycle, setHideLifecycle] = useState(false);
+  const [hideLifecycle, setHideLifecycle] = useState(true);
+  const [draftThinkingLevel, setDraftThinkingLevel] = useState<ThinkingLevel>(DEFAULT_THINKING_LEVEL);
+  const [thinkingLevelsByConversation, setThinkingLevelsByConversation] = useState<Record<string, ThinkingLevel>>({});
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [selectedConversationId, setSelectedConversationId] = useState('');
 
@@ -121,10 +140,11 @@ export function useLoopDesktop(): LoopDesktopController {
 
   const [messageInput, setMessageInput] = useState('');
   const [isLoadingWorkspaces, setIsLoadingWorkspaces] = useState(false);
-  const [isSending, setIsSending] = useState(false);
+  const [sendingConversations, setSendingConversations] = useState<Record<string, boolean>>({});
+  const isSending = !!sendingConversations[selectedConversationId];
   const [notices, setNotices] = useState<NoticeToast[]>([]);
 
-  const streamRef = useRef<StreamHandle | null>(null);
+  const activeStreamsRef = useRef<Record<string, StreamHandle>>({});
   const feedScrollRef = useRef<HTMLDivElement | null>(null);
   const draftAssistantIdRef = useRef<string | null>(null);
   const draftThoughtIdRef = useRef<string | null>(null);
@@ -140,6 +160,28 @@ export function useLoopDesktop(): LoopDesktopController {
   const selectedConversation = useMemo(
     () => conversations.find((conversation) => conversation.id === selectedConversationId) ?? null,
     [conversations, selectedConversationId],
+  );
+
+  const thinkingLevel = useMemo<ThinkingLevel>(() => {
+    if (!selectedConversationId) {
+      return draftThinkingLevel;
+    }
+    return thinkingLevelsByConversation[selectedConversationId] ?? DEFAULT_THINKING_LEVEL;
+  }, [draftThinkingLevel, selectedConversationId, thinkingLevelsByConversation]);
+
+  const setThinkingLevel = useCallback(
+    (value: ThinkingLevel): void => {
+      const normalized = normalizeThinkingLevel(value);
+      if (!selectedConversationId) {
+        setDraftThinkingLevel(normalized);
+        return;
+      }
+      setThinkingLevelsByConversation((prev) => ({
+        ...prev,
+        [selectedConversationId]: normalized,
+      }));
+    },
+    [selectedConversationId],
   );
 
   const pushNotice = useCallback((tone: NoticeTone, message: string): void => {
@@ -231,14 +273,34 @@ export function useLoopDesktop(): LoopDesktopController {
     draftThoughtIdRef.current = null;
   }, []);
 
-  const finalizeTurn = useCallback(
-    (closeStream: boolean): void => {
-      settleDrafts();
-      setIsSending(false);
+  const settleThoughtDraft = useCallback((): void => {
+    const draftID = draftThoughtIdRef.current;
+    if (!draftID) {
+      return;
+    }
 
-      if (closeStream && streamRef.current) {
-        streamRef.current.dispose();
-        streamRef.current = null;
+    mutateActivity(draftID, (event) => ({ ...event, streaming: false }));
+    draftThoughtIdRef.current = null;
+  }, [mutateActivity]);
+
+  const finalizeTurn = useCallback(
+    (closeStream: boolean, conversationId?: string): void => {
+      if (!conversationId || conversationId === selectedConversationIdRef.current) {
+        settleDrafts();
+      }
+
+      if (conversationId) {
+        setSendingConversations((prev) => ({ ...prev, [conversationId]: false }));
+      } else {
+        setSendingConversations({});
+      }
+
+      if (closeStream && conversationId) {
+        const stream = activeStreamsRef.current[conversationId];
+        if (stream) {
+          stream.dispose();
+          delete activeStreamsRef.current[conversationId];
+        }
       }
     },
     [settleDrafts],
@@ -269,6 +331,8 @@ export function useLoopDesktop(): LoopDesktopController {
         selectedConversationId?: string;
         workspacePath?: string;
         hideLifecycle?: boolean;
+        draftThinkingLevel?: ThinkingLevel;
+        thinkingLevelsByConversation?: Record<string, unknown>;
       };
 
       if (parsed.backendUrl) {
@@ -286,6 +350,19 @@ export function useLoopDesktop(): LoopDesktopController {
       if (typeof parsed.hideLifecycle === 'boolean') {
         setHideLifecycle(parsed.hideLifecycle);
       }
+      if (parsed.draftThinkingLevel) {
+        setDraftThinkingLevel(normalizeThinkingLevel(parsed.draftThinkingLevel));
+      }
+      if (parsed.thinkingLevelsByConversation && typeof parsed.thinkingLevelsByConversation === 'object') {
+        const normalized: Record<string, ThinkingLevel> = {};
+        for (const [conversationID, level] of Object.entries(parsed.thinkingLevelsByConversation)) {
+          if (!conversationID) {
+            continue;
+          }
+          normalized[conversationID] = normalizeThinkingLevel(level);
+        }
+        setThinkingLevelsByConversation(normalized);
+      }
     } catch {
       // Ignore invalid local storage state.
     }
@@ -300,9 +377,19 @@ export function useLoopDesktop(): LoopDesktopController {
         selectedConversationId,
         workspacePath,
         hideLifecycle,
+        draftThinkingLevel,
+        thinkingLevelsByConversation,
       }),
     );
-  }, [backendUrl, selectedWorkspaceId, selectedConversationId, workspacePath, hideLifecycle]);
+  }, [
+    backendUrl,
+    selectedWorkspaceId,
+    selectedConversationId,
+    workspacePath,
+    hideLifecycle,
+    draftThinkingLevel,
+    thinkingLevelsByConversation,
+  ]);
 
   const refreshWorkspaces = useCallback(async (): Promise<void> => {
     setIsLoadingWorkspaces(true);
@@ -329,6 +416,7 @@ export function useLoopDesktop(): LoopDesktopController {
       setSelectedWorkspaceId('');
       setConversations([]);
       setSelectedConversationId('');
+      setThinkingLevelsByConversation({});
       return;
     }
 
@@ -442,11 +530,13 @@ export function useLoopDesktop(): LoopDesktopController {
 
   useEffect(() => {
     return () => {
-      if (streamRef.current) {
-        // Keep active runs alive across renderer reloads; only detach this UI listener.
-        streamRef.current.dispose();
-        streamRef.current = null;
+      for (const key in activeStreamsRef.current) {
+        const stream = activeStreamsRef.current[key];
+        if (stream) {
+          stream.dispose();
+        }
       }
+      activeStreamsRef.current = {};
     };
   }, []);
 
@@ -620,6 +710,14 @@ export function useLoopDesktop(): LoopDesktopController {
       }
 
       setConversations((prev) => prev.filter((conversation) => conversation.id !== conversationId));
+      setThinkingLevelsByConversation((prev) => {
+        if (!(conversationId in prev)) {
+          return prev;
+        }
+        const next = { ...prev };
+        delete next[conversationId];
+        return next;
+      });
       pushNotice('success', `Deleted conversation "${displayName}".`);
       await refreshConversationsByWorkspace(selectedWorkspaceId, selectedConversationId === '' && !wasSelected);
     },
@@ -683,7 +781,7 @@ export function useLoopDesktop(): LoopDesktopController {
   );
 
   const handleTurnEvent = useCallback(
-    (eventName: string, data: unknown): void => {
+    (eventName: string, data: unknown, conversationId: string): void => {
       const eventRecord = asRecord(data);
       const kind = getString(eventRecord, ['kind']) || eventName;
 
@@ -698,6 +796,10 @@ export function useLoopDesktop(): LoopDesktopController {
         lastStatusRef.current = statusText;
 
         const parsed = parseStatusLine(statusText);
+        if (parsed?.kind === 'lifecycle' && parsed.title.startsWith('Executing ')) {
+          // Match history grouping: once tool execution begins, next thought chunk starts a new row.
+          settleThoughtDraft();
+        }
         if (parsed && parsed.kind !== 'tool') {
           pushActivity(parsed);
         }
@@ -717,6 +819,9 @@ export function useLoopDesktop(): LoopDesktopController {
       }
 
       if (kind === 'tool_call_start') {
+        // Start a fresh thought segment after this tool boundary.
+        settleThoughtDraft();
+
         const toolCall = asRecord(getField(eventRecord, ['tool_call']));
         const toolName = getString(toolCall, ['name']) || 'unknown tool';
         const callID = getString(toolCall, ['call_id']);
@@ -740,6 +845,9 @@ export function useLoopDesktop(): LoopDesktopController {
       }
 
       if (kind === 'tool_result') {
+        // Defensive split for streams that may emit result without a prior start event.
+        settleThoughtDraft();
+
         const toolResult = asRecord(getField(eventRecord, ['tool_result']));
         const toolName = getString(toolResult, ['name']) || 'unknown tool';
         const success = getBoolean(toolResult, ['success']);
@@ -747,6 +855,7 @@ export function useLoopDesktop(): LoopDesktopController {
         const errorText = getString(toolResult, ['error']);
         const callID = getString(toolResult, ['call_id']);
         const summary = summarizeToolBody(toolName, resultText, errorText);
+        const parsedPayload = parseToolResultPayload(resultText);
         const openEventID = callID ? openToolEventIDsRef.current[callID] : '';
 
         if (openEventID) {
@@ -764,6 +873,7 @@ export function useLoopDesktop(): LoopDesktopController {
               success,
               resultSummary: summary.title,
               error: errorText || undefined,
+              payload: parsedPayload,
             },
             streaming: false,
           }));
@@ -782,6 +892,7 @@ export function useLoopDesktop(): LoopDesktopController {
               success,
               resultSummary: summary.title,
               error: errorText || undefined,
+              payload: parsedPayload,
             },
           });
         }
@@ -840,7 +951,7 @@ export function useLoopDesktop(): LoopDesktopController {
         const errorText = getString(eventRecord, ['error']) || 'Agent returned an error event.';
         pushActivity({ kind: 'error', title: 'Model execution error', body: errorText });
         openToolEventIDsRef.current = {};
-        finalizeTurn(false);
+        finalizeTurn(false, conversationId);
         return;
       }
 
@@ -855,34 +966,35 @@ export function useLoopDesktop(): LoopDesktopController {
           body: getString(eventRecord, ['error']) || undefined,
         });
         openToolEventIDsRef.current = {};
-        finalizeTurn(false);
+        finalizeTurn(false, conversationId);
         return;
       }
 
       if (kind === 'turn_complete') {
         openToolEventIDsRef.current = {};
-        finalizeTurn(false);
+        finalizeTurn(false, conversationId);
         return;
       }
 
       pushActivity({ kind: 'status', title: `Event: ${kind}` });
     },
-    [appendStreamingText, finalizeTurn, mutateActivity, pushActivity],
+    [appendStreamingText, finalizeTurn, mutateActivity, pushActivity, settleThoughtDraft],
   );
 
   const handleStreamPacket = useCallback(
-    (packet: LoopStreamPacket): void => {
-      if (!streamRef.current || packet.streamId !== streamRef.current.streamId) {
+    (packet: LoopStreamPacket, conversationId: string): void => {
+      const stream = activeStreamsRef.current[conversationId];
+      if (!stream || packet.streamId !== stream.streamId) {
         return;
       }
 
-      const isViewingStreamConversation = streamRef.current.conversationId === selectedConversationIdRef.current;
+      const isViewingStreamConversation = conversationId === selectedConversationIdRef.current;
 
       if (packet.type === 'event') {
         if (!isViewingStreamConversation) {
           return;
         }
-        handleTurnEvent(packet.eventName ?? 'message', packet.data);
+        handleTurnEvent(packet.eventName ?? 'message', packet.data, conversationId);
         return;
       }
 
@@ -891,7 +1003,7 @@ export function useLoopDesktop(): LoopDesktopController {
           pushActivity({ kind: 'error', title: 'Stream transport error', body: packet.error ?? '' });
         }
         openToolEventIDsRef.current = {};
-        finalizeTurn(true);
+        finalizeTurn(true, conversationId);
         return;
       }
 
@@ -900,85 +1012,126 @@ export function useLoopDesktop(): LoopDesktopController {
           pushActivity({ kind: 'lifecycle', title: 'Turn canceled', body: packet.error });
         }
         openToolEventIDsRef.current = {};
-        finalizeTurn(true);
+        finalizeTurn(true, conversationId);
         return;
       }
 
       if (packet.type === 'done') {
         openToolEventIDsRef.current = {};
-        finalizeTurn(true);
+        finalizeTurn(true, conversationId);
       }
     },
     [finalizeTurn, handleTurnEvent, pushActivity],
   );
 
-  const sendMessage = useCallback(async (): Promise<void> => {
-    const text = messageInput.trim();
-    if (!text || isSending) {
-      return;
-    }
+  const sendMessageText = useCallback(
+    async (messageText: string, clearComposer: boolean): Promise<void> => {
+      const text = messageText.trim();
+      if (!text || (selectedConversationId && sendingConversations[selectedConversationId])) {
+        return;
+      }
+      const selectedThinkingLevel = normalizeThinkingLevel(thinkingLevel);
 
-    const conversationId = await ensureConversationId(text);
-    if (!conversationId) {
-      return;
-    }
+      const conversationId = await ensureConversationId(text);
+      if (!conversationId) {
+        return;
+      }
+      setThinkingLevelsByConversation((prev) => ({
+        ...prev,
+        [conversationId]: selectedThinkingLevel,
+      }));
 
-    clearNotices();
-    setIsSending(true);
-    lastStatusRef.current = '';
-    draftAssistantIdRef.current = null;
-    draftThoughtIdRef.current = null;
-    openToolEventIDsRef.current = {};
+      clearNotices();
+      setSendingConversations((prev) => ({ ...prev, [conversationId]: true }));
+      lastStatusRef.current = '';
+      draftAssistantIdRef.current = null;
+      draftThoughtIdRef.current = null;
+      openToolEventIDsRef.current = {};
 
-    pushActivity({ kind: 'user', title: 'User prompt', body: text });
-    pushActivity({ kind: 'lifecycle', title: 'Turn started' });
-    setMessageInput('');
-    const requestedStreamID = crypto.randomUUID();
-    streamRef.current = {
-      streamId: requestedStreamID,
-      conversationId,
-      cancel: async () => { },
-      dispose: () => { },
-    };
-
-    const stream = await openReplyStream(
-      {
+      pushActivity({ kind: 'user', title: 'User prompt', body: text });
+      pushActivity({ kind: 'lifecycle', title: 'Turn started' });
+      if (clearComposer) {
+        setMessageInput('');
+      }
+      const requestedStreamID = crypto.randomUUID();
+      activeStreamsRef.current[conversationId] = {
         streamId: requestedStreamID,
-        baseUrl: backendUrl,
         conversationId,
-        message: text,
-      },
-      (packet) => {
-        handleStreamPacket(packet);
-      },
-    ).catch((error: unknown) => {
-      pushActivity({
-        kind: 'error',
-        title: 'Unable to start stream',
-        body: error instanceof Error ? error.message : 'Unknown stream error',
-      });
-      finalizeTurn(true);
-      return null;
-    });
+        cancel: async () => { },
+        dispose: () => { },
+      };
 
+      const stream = await openReplyStream(
+        {
+          streamId: requestedStreamID,
+          baseUrl: backendUrl,
+          conversationId,
+          message: text,
+          thinkingLevel: selectedThinkingLevel,
+        },
+        (packet) => {
+          handleStreamPacket(packet, conversationId);
+        },
+      ).catch((error: unknown) => {
+        pushActivity({
+          kind: 'error',
+          title: 'Unable to start stream',
+          body: error instanceof Error ? error.message : 'Unknown stream error',
+        });
+        finalizeTurn(true, conversationId);
+        return null;
+      });
+
+      if (!stream) {
+        return;
+      }
+
+      activeStreamsRef.current[conversationId] = {
+        ...stream,
+        conversationId,
+      };
+    },
+    [
+      backendUrl,
+      clearNotices,
+      ensureConversationId,
+      finalizeTurn,
+      handleStreamPacket,
+      pushActivity,
+      selectedConversationId,
+      sendingConversations,
+      thinkingLevel,
+    ],
+  );
+
+  const sendMessage = useCallback(async (): Promise<void> => {
+    await sendMessageText(messageInput, true);
+  }, [messageInput, sendMessageText]);
+
+  const applyToolResponseSuggestion = useCallback((text: string): void => {
+    const trimmed = text.trim();
+    if (!trimmed) {
+      return;
+    }
+    setMessageInput(trimmed);
+  }, []);
+
+  const sendToolResponseSuggestion = useCallback(async (text: string): Promise<void> => {
+    if (!text.trim()) {
+      return;
+    }
+    await sendMessageText(text, false);
+  }, [sendMessageText]);
+
+  const cancelStream = useCallback(async (): Promise<void> => {
+    const stream = activeStreamsRef.current[selectedConversationId];
     if (!stream) {
       return;
     }
 
-    streamRef.current = {
-      ...stream,
-      conversationId,
-    };
-  }, [backendUrl, clearNotices, ensureConversationId, finalizeTurn, handleStreamPacket, isSending, messageInput, pushActivity]);
-
-  const cancelStream = useCallback(async (): Promise<void> => {
-    if (!streamRef.current) {
-      return;
-    }
-
-    await streamRef.current.cancel();
+    await stream.cancel();
     pushActivity({ kind: 'lifecycle', title: 'Turn cancel requested' });
-  }, [pushActivity]);
+  }, [pushActivity, selectedConversationId]);
 
   const selectWorkspace = useCallback(
     (workspaceId: string): void => {
@@ -1012,7 +1165,7 @@ export function useLoopDesktop(): LoopDesktopController {
   }, [refreshConversationsByWorkspace, selectedWorkspaceId]);
 
   useEffect(() => {
-    if (!selectedConversationId || streamRef.current) {
+    if (!selectedConversationId || activeStreamsRef.current[selectedConversationId]) {
       return;
     }
 
@@ -1022,19 +1175,19 @@ export function useLoopDesktop(): LoopDesktopController {
         baseUrl: backendUrl,
         conversationId: selectedConversationId,
       });
-      if (disposed || !active.ok || !active.streamId || streamRef.current) {
+      if (disposed || !active.ok || !active.streamId || activeStreamsRef.current[selectedConversationId]) {
         return;
       }
 
       const attached = attachReplyStream(active.streamId, (packet) => {
-        handleStreamPacket(packet);
+        handleStreamPacket(packet, selectedConversationId);
       });
 
-      streamRef.current = {
+      activeStreamsRef.current[selectedConversationId] = {
         ...attached,
         conversationId: selectedConversationId,
       };
-      setIsSending(true);
+      setSendingConversations((prev) => ({ ...prev, [selectedConversationId]: true }));
       pushActivity({
         kind: 'lifecycle',
         title: 'Reconnected to active run',
@@ -1075,6 +1228,8 @@ export function useLoopDesktop(): LoopDesktopController {
     dismissNotice,
     hideLifecycle,
     setHideLifecycle,
+    thinkingLevel,
+    setThinkingLevel,
 
     refreshWorkspaces,
     refreshConversations,
@@ -1090,5 +1245,7 @@ export function useLoopDesktop(): LoopDesktopController {
 
     sendMessage,
     cancelStream,
+    applyToolResponseSuggestion,
+    sendToolResponseSuggestion,
   };
 }

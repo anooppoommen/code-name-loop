@@ -55,15 +55,26 @@ func TestReadFile_OffsetExceedsLength(t *testing.T) {
 	}
 }
 
-func TestReadFile_RequiresAbsolutePath(t *testing.T) {
-	guard := newPathGuard(testWorkspace(t.TempDir()))
+func TestReadFile_AcceptsWorkspaceRelativePath(t *testing.T) {
+	dir := t.TempDir()
+	guard := newPathGuard(testWorkspace(dir))
+	path := filepath.Join(dir, "relative.txt")
+	os.WriteFile(path, []byte("hello\n"), 0o644)
+
 	args, _ := json.Marshal(map[string]any{
-		"file_path": "relative/path.txt",
+		"file_path": "relative.txt",
 	})
 
-	_, err := handleReadFile(context.Background(), args, guard)
-	if err == nil {
-		t.Fatal("expected error for relative path")
+	result, err := handleReadFile(context.Background(), args, guard)
+	if err != nil {
+		t.Fatalf("unexpected error for workspace-relative path: %v", err)
+	}
+
+	var resp map[string]any
+	json.Unmarshal(result, &resp)
+	output := resp["output"].(string)
+	if !strings.Contains(output, "L1: hello") {
+		t.Fatalf("expected file contents in output, got %q", output)
 	}
 }
 

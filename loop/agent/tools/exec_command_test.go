@@ -150,3 +150,19 @@ func TestExecCommand_EmptyCmd(t *testing.T) {
 		t.Fatal("expected error for empty cmd")
 	}
 }
+
+func TestExecCommand_BlocksWorkspaceMutationCommands(t *testing.T) {
+	pm := NewProcessManager()
+	dir := t.TempDir()
+	guard := newPathGuard(testWorkspace(dir))
+
+	args, _ := json.Marshal(map[string]any{
+		"cmd":     "cat << 'EOF' > patch.diff\nx\nEOF",
+		"workdir": dir,
+	})
+
+	_, err := handleExecCommand(context.Background(), args, pm, guard)
+	if err == nil {
+		t.Fatal("expected write-style command to be blocked")
+	}
+}

@@ -260,14 +260,15 @@ func (h *ConversationHandler) Timeline(w http.ResponseWriter, r *http.Request) {
 
 // replyRequest is the JSON body for the Reply endpoint.
 type replyRequest struct {
-	Message string `json:"message"`
+	Message       string `json:"message"`
+	ThinkingLevel string `json:"thinking_level,omitempty"`
 }
 
 // Reply handles user messages and streams the agent's response using SSE.
 // This is the primary user-facing endpoint for interacting with the agent.
 //
 // Request: POST /conversations/{id}/reply
-// Body:    {"message": "user text", "system_prompt": "optional"}
+// Body:    {"message": "user text", "thinking_level": "optional minimal|low|medium|high"}
 // Response: text/event-stream (SSE)
 func (h *ConversationHandler) Reply(w http.ResponseWriter, r *http.Request) {
 	convID := models.ConversationID(r.PathValue("id"))
@@ -292,6 +293,11 @@ func (h *ConversationHandler) Reply(w http.ResponseWriter, r *http.Request) {
 		utils.WriteError(w, http.StatusBadRequest, "message is required")
 		return
 	}
+	thinkingLevel, err := agent.ParseThinkingLevel(req.ThinkingLevel)
+	if err != nil {
+		utils.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	// Load the conversation.
 	conv, err := h.store.Conversations().Get(r.Context(), convID)
@@ -313,14 +319,16 @@ func (h *ConversationHandler) Reply(w http.ResponseWriter, r *http.Request) {
 
 	// Build the base tool list (without spawn_thread/await_thread initially).
 	baseTools := []*agent.ToolDef{
-		tools.NewShellTool(h.pm, ws),
 		tools.NewExecCommandTool(h.pm, ws),
 		tools.NewWriteStdinTool(h.pm),
 		tools.NewApplyPatchTool(ws),
 		tools.NewReadFileTool(ws),
 		tools.NewListDirTool(ws),
 		tools.NewGrepFilesTool(ws),
+		tools.NewUpdatePlanTool(),
+		tools.NewRequestUserInputTool(),
 	}
+	baseTools = append(baseTools, tools.NewParallelToolUseTool(func() []*agent.ToolDef { return baseTools }))
 
 	// spawn_thread passes the full tool list to child sessions so they have
 	// the same capabilities as the parent (including spawn_thread for nesting).
@@ -339,6 +347,8 @@ func (h *ConversationHandler) Reply(w http.ResponseWriter, r *http.Request) {
 		agentTools,
 		0,
 	)
+	session.ThinkingLevel = strings.ToLower(string(thinkingLevel))
+	session.IncludeThoughts = true
 
 	// Start the turn.
 	events, cancel, err := session.HandleUserMessage(r.Context(), req.Message)

@@ -36,13 +36,13 @@ func NewListDirTool(ws *models.Workspace) *agent.ToolDef {
 	return &agent.ToolDef{
 		Declaration: &genai.FunctionDeclaration{
 			Name:        "list_dir",
-			Description: "Lists entries in a local directory with 1-indexed entry numbers and simple type labels.",
+			Description: "Lists entries in a local directory with 1-indexed entry numbers and simple type labels. Prefer this over shell ls/find for quick structure inspection.",
 			Parameters: &genai.Schema{
 				Type: genai.TypeObject,
 				Properties: map[string]*genai.Schema{
 					"dir_path": {
 						Type:        genai.TypeString,
-						Description: "Absolute path to the directory to list.",
+						Description: "Absolute path or workspace-relative path to the directory to list.",
 					},
 					"offset": {
 						Type:        genai.TypeInteger,
@@ -62,6 +62,10 @@ func NewListDirTool(ws *models.Workspace) *agent.ToolDef {
 		},
 		Handler: func(ctx context.Context, args json.RawMessage) (json.RawMessage, error) {
 			return handleListDir(ctx, args, guard)
+		},
+		Intents: []string{
+			"Use for directory discovery before targeted reads",
+			"Prefer depth-limited listing to avoid broad shell scans",
 		},
 	}
 }
@@ -92,10 +96,11 @@ func handleListDir(_ context.Context, args json.RawMessage, guard *pathGuard) (j
 		return nil, fmt.Errorf("dir_path is required")
 	}
 
-	if !filepath.IsAbs(a.DirPath) {
-		return nil, fmt.Errorf("dir_path must be an absolute path")
+	dirPath := a.DirPath
+	if !filepath.IsAbs(dirPath) {
+		dirPath = filepath.Join(guard.workspaceRoot, dirPath)
 	}
-	dirPath, err := guard.requireAllowedPath(a.DirPath)
+	dirPath, err := guard.requireAllowedPath(dirPath)
 	if err != nil {
 		return nil, err
 	}

@@ -18,11 +18,35 @@ export interface ActivityInput {
 }
 
 function isApplyPatch(toolName: string): boolean {
-  return toolName === 'apply_patch' || toolName.endsWith(':apply_patch');
+  return toolNameMatches(toolName, 'apply_patch');
 }
 
 function isExecCommand(toolName: string): boolean {
-  return toolName === 'exec_command' || toolName.endsWith(':exec_command');
+  return toolNameMatches(toolName, 'exec_command');
+}
+
+function isRequestUserInput(toolName: string): boolean {
+  return toolNameMatches(toolName, 'request_user_input');
+}
+
+function isUpdatePlan(toolName: string): boolean {
+  return toolNameMatches(toolName, 'update_plan');
+}
+
+function isParallelToolUse(toolName: string): boolean {
+  return toolNameMatches(toolName, 'parallel_tool_use');
+}
+
+function isReadFile(toolName: string): boolean {
+  return toolNameMatches(toolName, 'read_file');
+}
+
+function toolNameMatches(toolName: string, canonical: string): boolean {
+  return (
+    toolName === canonical ||
+    toolName.endsWith(`:${canonical}`) ||
+    toolName.endsWith(`.${canonical}`)
+  );
 }
 
 export function parseStatusLine(statusText: string): ActivityInput | null {
@@ -78,6 +102,45 @@ export function summarizeToolBody(toolName: string, resultText: string, errorTex
     const embeddedError = getString(parsed, ['error']);
     if (embeddedError) {
       return { title: 'error', body: trimForUI(embeddedError, 500) };
+    }
+
+    if (isRequestUserInput(toolName)) {
+      const questions = getArray(parsed, ['questions']);
+      const reason = getString(parsed, ['reason']);
+      const parts: string[] = [];
+      if (questions.length > 0) {
+        parts.push(`${questions.length} question${questions.length === 1 ? '' : 's'} waiting for user input.`);
+      }
+      if (reason) {
+        parts.push(reason);
+      }
+      return {
+        title: 'input required',
+        body: trimForUI(parts.join('\n') || 'User input required.', 900),
+      };
+    }
+
+    if (isUpdatePlan(toolName)) {
+      const planLines = summarizePlanRows(parsed);
+      return {
+        title: 'plan updated',
+        body: trimForUI(planLines || 'Plan updated.', 900),
+      };
+    }
+
+    if (isParallelToolUse(toolName)) {
+      const summary = summarizeParallelRows(parsed);
+      return {
+        title: 'parallel run',
+        body: trimForUI(summary || 'Parallel tool run completed.', 900),
+      };
+    }
+
+    if (isReadFile(toolName)) {
+      return {
+        title: 'file read',
+        body: '', // We don't want to show the file contents
+      };
     }
 
     const output = getString(parsed, ['output']);
@@ -190,6 +253,7 @@ export function historyRowsToActivities(items: unknown[]): ActivityEvent[] {
           const summary = summarizeToolBody(toolName, resultText, errorMsg);
           const fallbackBody = success ? text : errorMsg || text;
           const mergedCommand = parseToolCommand(toolName, getString(metadata, ['args']));
+          const parsedPayload = parseToolResultPayload(resultText);
 
           const existingIndex = callId ? openToolByCallID.get(callId) : undefined;
           if (existingIndex !== undefined) {
@@ -208,6 +272,7 @@ export function historyRowsToActivities(items: unknown[]): ActivityEvent[] {
                   resultSummary: summary.title || undefined,
                   error: errorMsg || undefined,
                   command: existing.tool?.command || mergedCommand || undefined,
+                  payload: parsedPayload,
                 },
               };
               openToolByCallID.delete(callId);
@@ -229,6 +294,7 @@ export function historyRowsToActivities(items: unknown[]): ActivityEvent[] {
               resultSummary: summary.title || undefined,
               error: errorMsg || undefined,
               command: mergedCommand || undefined,
+              payload: parsedPayload,
             },
           });
           break;
@@ -297,10 +363,36 @@ function appendThoughtChunk(
     return;
   }
 
-  const prev = activityRows[activityRows.length - 1];
-  if (prev && prev.kind === 'thought') {
-    prev.body = `${prev.body ?? ''}${normalized}`;
-    prev.timestamp = input.timestamp;
+  // Look backwards for the most recent thought event in this sequence.
+  // We skip over 'status', 'lifecycle', 'thread', 'error' and 'tool' (start) events
+  // to group thoughts from the same turn together.
+  let target: ActivityEvent | null = null;
+  for (let i = activityRows.length - 1; i >= 0; i--) {
+    const row = activityRows[i];
+    if (row.kind === 'thought') {
+      target = row;
+      break;
+    }
+    // A tool start/result marks a new thought segment boundary.
+    if (row.kind === 'tool') {
+      break;
+    }
+    // Stop looking if we see a structural break like a user message, assistant message, or tool result.
+    if (row.kind === 'user' || row.kind === 'assistant') {
+      break;
+    }
+    // Break if we see turn boundary events
+    if (row.kind === 'lifecycle' && (row.title === 'Turn completed' || row.title === 'Turn aborted')) {
+      break;
+    }
+    if (row.kind === 'status' && row.title?.startsWith('turn started')) {
+      break;
+    }
+  }
+
+  if (target) {
+    target.body = `${target.body ?? ''}${normalized}`;
+    target.timestamp = Math.max(target.timestamp, input.timestamp);
     return;
   }
 
@@ -365,6 +457,7 @@ function toolMessageToActivities(msg: Record<string, unknown> | null, uiEventCal
     const rawResult = getField(response, ['ResponseJSON', 'response_json']);
     const resultText = rawValueToString(rawResult);
     const summary = summarizeToolBody(toolName, resultText, '');
+    const parsedPayload = parseToolResultPayload(resultText);
     const failed = summary.title === 'error';
 
     events.push({
@@ -381,6 +474,7 @@ function toolMessageToActivities(msg: Record<string, unknown> | null, uiEventCal
         resultSummary: summary.title || undefined,
         error: failed ? summary.body : undefined,
         command: undefined,
+        payload: parsedPayload,
       },
     });
   });
@@ -405,14 +499,108 @@ export function parseToolCommand(toolName: string, argsText: string): string {
     if (isApplyPatch(toolName)) {
       return getString(parsed, ['input', 'patch']);
     }
+    if (isParallelToolUse(toolName)) {
+      const toolUses = getArray(parsed, ['tool_uses']);
+      if (toolUses.length > 0) {
+        return `${toolUses.length} parallel tool call(s)`;
+      }
+    }
+    if (isReadFile(toolName)) {
+      const filePath = getString(parsed, ['file_path']);
+      const offset = typeof parsed.offset === 'number' ? parsed.offset : 1;
+      const limit = typeof parsed.limit === 'number' ? parsed.limit : 0;
+      if (limit > 0) {
+        return `Reading ${filePath} (lines ${offset}-${offset + limit - 1})`;
+      }
+      return `Reading ${filePath} (starting at line ${offset})`;
+    }
   }
 
   // Fallback for already-summarized command text.
-  if (toolName === 'shell' || isExecCommand(toolName) || isApplyPatch(toolName)) {
+  if (toolName === 'shell' || isExecCommand(toolName) || isApplyPatch(toolName) || isReadFile(toolName)) {
     return trimmed;
   }
 
   return '';
+}
+
+function summarizePlanRows(parsed: Record<string, unknown> | null): string {
+  const plan = getArray(parsed, ['plan']);
+  if (plan.length === 0) {
+    return '';
+  }
+
+  const lines: string[] = [];
+  for (const item of plan) {
+    const record = asRecord(item);
+    if (!record) {
+      continue;
+    }
+    const step = getString(record, ['step']);
+    const status = getString(record, ['status']);
+    if (!step) {
+      continue;
+    }
+    lines.push(`${statusToGlyph(status)} ${step}`);
+  }
+  return lines.join('\n');
+}
+
+function summarizeParallelRows(parsed: Record<string, unknown> | null): string {
+  const results = getArray(parsed, ['results']);
+  const successCount = getNumber(parsed, ['success_count']);
+  const failureCount = getNumber(parsed, ['failure_count']);
+
+  const lines: string[] = [];
+  if (successCount !== null || failureCount !== null) {
+    lines.push(
+      `success ${successCount ?? 0} · failed ${failureCount ?? 0}`,
+    );
+  }
+
+  for (const item of results.slice(0, 6)) {
+    const record = asRecord(item);
+    if (!record) {
+      continue;
+    }
+    const name = getString(record, ['name']) || 'tool';
+    const success = getBoolean(record, ['success']);
+    const err = getString(record, ['error']);
+    lines.push(`${success ? 'ok' : 'error'} ${name}${err ? `: ${err}` : ''}`);
+  }
+
+  if (results.length > 6) {
+    lines.push(`...and ${results.length - 6} more`);
+  }
+
+  return lines.join('\n');
+}
+
+function statusToGlyph(status: string): string {
+  const normalized = status.toLowerCase();
+  if (normalized === 'completed') {
+    return '[x]';
+  }
+  if (normalized === 'in_progress') {
+    return '[~]';
+  }
+  return '[ ]';
+}
+
+function getArray(record: Record<string, unknown> | null, keys: string[]): unknown[] {
+  const value = getField(record, keys);
+  if (Array.isArray(value)) {
+    return value;
+  }
+  return [];
+}
+
+function getNumber(record: Record<string, unknown> | null, keys: string[]): number | null {
+  const value = getField(record, keys);
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  return null;
 }
 
 function rawValueToString(value: unknown): string {

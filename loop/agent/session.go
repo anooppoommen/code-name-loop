@@ -138,9 +138,16 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 
 		// Step 2: Stream model response.
 		emitStatus("model call started", iteration)
+		thinkingLevel, err := ParseThinkingLevel(s.ThinkingLevel)
+		if err != nil {
+			thinkingLevel = DefaultThinkingLevel
+		}
+		includeThoughts := s.IncludeThoughts
 		config := &GenerateContentConfig{
 			SystemInstruction: s.SystemPrompt,
 			Tools:             BuildToolsForModel(s.Tools),
+			IncludeThoughts:   &includeThoughts,
+			ThinkingLevel:     &thinkingLevel,
 		}
 
 		var agentMsg *models.Message
@@ -588,6 +595,18 @@ func summarizeToolArgs(name string, args json.RawMessage) string {
 		if threadID != "" {
 			return fmt.Sprintf("thread=%s blocking=%s", shortThreadID(threadID), blocking)
 		}
+	case "update_plan":
+		if plan, ok := m["plan"].([]any); ok {
+			return fmt.Sprintf("steps=%d", len(plan))
+		}
+	case "request_user_input":
+		if questions, ok := m["questions"].([]any); ok {
+			return fmt.Sprintf("questions=%d", len(questions))
+		}
+	case "parallel_tool_use":
+		if toolUses, ok := m["tool_uses"].([]any); ok {
+			return fmt.Sprintf("tool_uses=%d", len(toolUses))
+		}
 	}
 
 	return ""
@@ -618,6 +637,15 @@ func summarizeToolOutput(raw json.RawMessage) string {
 	}
 	if out, ok := m["output"].(string); ok && strings.TrimSpace(out) != "" {
 		return truncateEventText(firstLine(out), 120)
+	}
+	if successCount, ok := m["success_count"].(float64); ok {
+		if failureCount, ok2 := m["failure_count"].(float64); ok2 {
+			return fmt.Sprintf("success=%d failed=%d", int(successCount), int(failureCount))
+		}
+		return fmt.Sprintf("success=%d", int(successCount))
+	}
+	if questions, ok := m["questions"].([]any); ok {
+		return fmt.Sprintf("questions=%d", len(questions))
 	}
 	return ""
 }
@@ -657,6 +685,11 @@ type Session struct {
 	Conversation *models.Conversation
 	SystemPrompt string
 	Tools        []*ToolDef
+	// IncludeThoughts controls whether thought parts are requested from the model.
+	IncludeThoughts bool
+	// ThinkingLevel is the user-selected level for this session/turn.
+	// Allowed values: minimal, low, medium, high.
+	ThinkingLevel string
 	// Depth is the nesting level of this session (0 = root).
 	Depth int
 	// MaxToolCallIterations caps tool-call cycles for this session.
@@ -684,6 +717,8 @@ func NewSession(
 		Conversation:          conversation,
 		SystemPrompt:          systeminstruction.Get(),
 		Tools:                 tools,
+		IncludeThoughts:       true,
+		ThinkingLevel:         "medium",
 		Depth:                 depth,
 		MaxToolCallIterations: DefaultMaxToolCallIterations,
 	}

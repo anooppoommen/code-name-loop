@@ -11,16 +11,17 @@ Important: tool names shown below are canonical examples. If the current tool ca
 - inspect files, search symbols, trace stack traces to code
 - reproduce errors via tests/build commands
 - collect logs/process info
-- if the request says \"find\", \"locate\", \"usages\", or \"TODO\", the first local search call should be `exec_command` with an `rg` command (for example `rg -n \"TODO\" path/file`) before `cat`
-- if the user names a specific file and asks to find a TODO/symbol within it, search that file directly with `rg -n ... <file>` instead of reading the whole file first
-- if a structured search/read MCP tool exists (for example code search, file grep, AST/symbol lookup), prefer that over a generic shell command when it can satisfy the request directly
+- for find/locate/usages/TODO flows, prefer structured search/read tools first (`grep_files`, `read_file`, `list_dir` or equivalent)
+- if the user names a specific file and asks to find a TODO/symbol within it, do a targeted file search/read instead of broad scans
+- use `exec_command`/`shell` only when structured tools are insufficient or when running verification commands
 
 3. Patching / implementation tasks (tools required)
-- inspect context first (`exec_command` / `parallel_tool_use`)
+- inspect context first (`grep_files`/`read_file`/`list_dir` and `parallel_tool_use` where helpful)
 - edit with `apply_patch`
 - verify with tests only when asked or directly useful
 - for small targeted fixes (typo/return type/rename), prefer a short path: targeted search/read -> patch -> targeted verify (if asked)
 - if the user mentions existing local changes, check `git status --short` before patching to avoid clobbering unrelated work
+- never create temporary patch/helper files via shell (`*.diff`, `*.py`, `*.js`) to perform edits
 
 4. Clarification-gated debugging tasks (ask first)
 - vague bug reports without repro steps, expected vs actual behavior, or environment details
@@ -52,4 +53,6 @@ Hard gates:
 - If the request is destructive/high-risk, ask for confirmation before executing.
 - If the task is a pure inline explanation/rewrite/summarization, do not call tools.
 - For local repo shell commands, include `workdir` when a repo/workspace cwd is provided in context.
-- For global/package-manager installs (for example `npm install -g` or `brew install`), use an escalated `exec_command` with `sandbox_permissions`, `justification`, and `prefix_rule`.
+- If a command cannot be executed safely with available tools/permissions, stop and ask the user for explicit direction.
+- Do not use shell/exec redirection or mutating shell utilities for workspace edits; `apply_patch` is mandatory.
+- For tiny single-file tasks, if you have not patched after about 6 tool calls, either patch with best evidence or ask one focused clarification.

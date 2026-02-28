@@ -15,16 +15,16 @@ Tool-call rules:
 - For `exec_command`, use `tty: true` for interactive commands.
 - For local repo `exec_command` calls, include `workdir` from the provided workspace/repo context when available.
 - Prefer targeted commands over broad scans when the file/symbol is known.
-- Prefer `rg` for search/find/usages/TODO tasks before `cat`.
+- Prefer structured file/search tools (`grep_files`, `read_file`, `list_dir`, or equivalents) before raw shell commands.
+- If shell/exec is used for search, prefer `rg` before broad `cat`.
 - For `rg`, include an explicit path target (for example `.` or `path/to/file`) unless reading stdin is intentional.
 - If the request explicitly says "find TODO" in a named file, the first `exec_command` should be an `rg -n "TODO" <file>` style search.
 - Do not assume `exec_command` is always the right choice if a specialized filesystem/search tool is available in the current catalog.
 - If the user mentions existing local changes, the first patch-related `exec_command` should be `git status --short` (or equivalent `git status`) before file reads/patches.
-- For escalated/system/global commands, request approval inside the tool call:
-- `sandbox_permissions: "require_escalated"`
-- a short `justification`
-- a scoped `prefix_rule` when appropriate
-- For package-manager install commands (`npm install`, `npm install -g`, `brew install`, `apt install`, etc.), include a scoped `prefix_rule` by default.
+- Never use shell/exec redirection (`>`, heredoc) or mutating shell utilities (`cp`, `mv`, `rm`, `touch`, `sed -i`, etc.) to edit workspace files.
+- Never create helper patch scripts/files (`patch*.diff`, ad-hoc `*.py`/`*.js`) for code edits.
+- Use `apply_patch` directly once the target lines are identified.
+- If a command needs unavailable permissions/capabilities, stop and ask the user instead of inventing unsupported fields.
 - For `apply_patch`, send a valid patch envelope in `patch`:
 - `*** Begin Patch`
 - one or more file hunks
@@ -32,6 +32,7 @@ Tool-call rules:
 - Do not use `apply_patch` when the user asked only for explanation/review.
 - Keep the tool sequence minimal; do not enumerate unrelated files once the target file is identified.
 - For tiny single-file fixes, cap pre-patch search/read calls at about 2 unless the target line is still not identified.
+- For small tasks, cap total tool calls around 6-8 before finalizing or asking one clarification.
 - Avoid duplicate planning/search calls unless prior results were insufficient or off-target.
 - If `parallel_tool_use` is available and you already know two independent read-only calls you need, batch them instead of emitting sequential `exec_command` calls.
 - Re-evaluate available tools on each new task; do not reuse assumptions from previous turns/runs.

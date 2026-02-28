@@ -24,8 +24,8 @@ function broadcastStreamPacket(packet) {
 
 function createWindow() {
   const mainWindow = new BrowserWindow({
-    width: 1520,
-    height: 980,
+    width: 1080,
+    height: 760,
     minWidth: 1080,
     minHeight: 760,
     backgroundColor: '#0b1310',
@@ -94,7 +94,7 @@ function parseSseBlock(block) {
   return { eventName, data };
 }
 
-async function streamReplyToRenderer(streamId, baseUrl, conversationId, message) {
+async function streamReplyToRenderer(streamId, baseUrl, conversationId, message, thinkingLevel) {
   const endpoint = buildAbsoluteUrl(baseUrl, `/conversations/${conversationId}/reply`);
   const controller = new AbortController();
   const convKey = conversationKey(baseUrl, conversationId);
@@ -108,7 +108,10 @@ async function streamReplyToRenderer(streamId, baseUrl, conversationId, message)
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({
+        message,
+        thinking_level: thinkingLevel || 'medium',
+      }),
       signal: controller.signal,
     });
 
@@ -249,7 +252,7 @@ ipcMain.handle('loop-api:request', async (_event, request) => {
 });
 
 ipcMain.handle('loop-api:start-stream', async (event, payload) => {
-  const { baseUrl, conversationId, message, streamId: clientStreamId } = payload || {};
+  const { baseUrl, conversationId, message, streamId: clientStreamId, thinkingLevel } = payload || {};
 
   if (!baseUrl || !conversationId || !message) {
     return {
@@ -270,7 +273,7 @@ ipcMain.handle('loop-api:start-stream', async (event, payload) => {
   }
 
   const streamId = clientStreamId || crypto.randomUUID();
-  void streamReplyToRenderer(streamId, baseUrl, conversationId, message);
+  void streamReplyToRenderer(streamId, baseUrl, conversationId, message, thinkingLevel);
 
   return {
     ok: true,

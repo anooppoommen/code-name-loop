@@ -1,4 +1,5 @@
 export type ActivityKind = 'user' | 'assistant' | 'thought' | 'status' | 'tool' | 'error' | 'lifecycle' | 'thread';
+export type ThinkingLevel = 'minimal' | 'low' | 'medium' | 'high';
 
 export type ToolPhase = 'start' | 'result';
 
@@ -10,6 +11,7 @@ export interface ToolActivityMeta {
   resultSummary?: string;
   error?: string;
   command?: string;
+  payload?: Record<string, unknown> | null;
 }
 
 export interface ActivityEvent {

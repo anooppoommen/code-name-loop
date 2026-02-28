@@ -7,14 +7,19 @@ package agent
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"google.golang.org/genai"
 
 	"loop/models"
 )
 
-// DefaultModel is the Gemini model used when none is specified.
-const DefaultModel = "gemini-3.1-pro-preview"
+const (
+	// DefaultModel is the Gemini model used when none is specified.
+	DefaultModel           = "gemini-3.1-pro-preview"
+	defaultIncludeThoughts = true
+	DefaultThinkingLevel   = genai.ThinkingLevelMedium
+)
 
 // Client wraps the Gemini GenAI client.
 type Client struct {
@@ -67,13 +72,31 @@ type GenerateContentConfig struct {
 	Temperature *float32
 	// Tools are the genai tool declarations available to the model.
 	Tools []*genai.Tool
+	// IncludeThoughts controls whether thought parts should be returned.
+	// If nil, the client default is used.
+	IncludeThoughts *bool
+	// ThinkingLevel controls the model's thought budget profile.
+	// If nil, the client default is used.
+	ThinkingLevel *genai.ThinkingLevel
 }
 
 func (c *Client) buildGenaiConfig(config *GenerateContentConfig) *genai.GenerateContentConfig {
+	includeThoughts := defaultIncludeThoughts
+	thinkingLevel := DefaultThinkingLevel
+	if config != nil {
+		if config.IncludeThoughts != nil {
+			includeThoughts = *config.IncludeThoughts
+		}
+		if config.ThinkingLevel != nil {
+			thinkingLevel = *config.ThinkingLevel
+		}
+	}
+
 	if config == nil {
 		return &genai.GenerateContentConfig{
 			ThinkingConfig: &genai.ThinkingConfig{
-				IncludeThoughts: true,
+				IncludeThoughts: includeThoughts,
+				ThinkingLevel:   thinkingLevel,
 			},
 		}
 	}
@@ -91,13 +114,32 @@ func (c *Client) buildGenaiConfig(config *GenerateContentConfig) *genai.Generate
 	if len(config.Tools) > 0 {
 		genaiConfig.Tools = config.Tools
 	}
-	// Always request thought parts when supported so they can be streamed and
-	// persisted as PartThought entries in conversation history.
+	// Apply per-turn thinking configuration with sensible defaults.
 	genaiConfig.ThinkingConfig = &genai.ThinkingConfig{
-		IncludeThoughts: true,
+		IncludeThoughts: includeThoughts,
+		ThinkingLevel:   thinkingLevel,
 	}
 
 	return genaiConfig
+}
+
+// ParseThinkingLevel normalizes user-facing thinking level values.
+// Accepted values: minimal, low, medium, high. Empty defaults to medium.
+func ParseThinkingLevel(raw string) (genai.ThinkingLevel, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "":
+		return DefaultThinkingLevel, nil
+	case "minimal":
+		return genai.ThinkingLevelMinimal, nil
+	case "low":
+		return genai.ThinkingLevelLow, nil
+	case "medium":
+		return genai.ThinkingLevelMedium, nil
+	case "high":
+		return genai.ThinkingLevelHigh, nil
+	default:
+		return "", fmt.Errorf("invalid thinking level %q (allowed: minimal, low, medium, high)", raw)
+	}
 }
 
 // StreamMessage sends the conversation history to Gemini using the streaming

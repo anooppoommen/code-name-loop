@@ -78,12 +78,23 @@ func TestListDir_Pagination(t *testing.T) {
 	}
 }
 
-func TestListDir_RequiresAbsolutePath(t *testing.T) {
-	guard := newPathGuard(testWorkspace(t.TempDir()))
+func TestListDir_AcceptsWorkspaceRelativePath(t *testing.T) {
+	dir := t.TempDir()
+	guard := newPathGuard(testWorkspace(dir))
+	if err := os.MkdirAll(filepath.Join(dir, "relative"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
 	args, _ := json.Marshal(map[string]any{"dir_path": "relative"})
-	_, err := handleListDir(context.Background(), args, guard)
-	if err == nil {
-		t.Fatal("expected error for relative path")
+	result, err := handleListDir(context.Background(), args, guard)
+	if err != nil {
+		t.Fatalf("unexpected error for relative path: %v", err)
+	}
+
+	var resp map[string]any
+	json.Unmarshal(result, &resp)
+	output := resp["output"].(string)
+	if !strings.Contains(output, "Absolute path: ") {
+		t.Fatalf("expected absolute path header, got %q", output)
 	}
 }
 

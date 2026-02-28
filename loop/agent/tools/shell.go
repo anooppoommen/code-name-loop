@@ -30,8 +30,9 @@ func NewShellTool(pm *ProcessManager, ws *models.Workspace) *agent.ToolDef {
 	return &agent.ToolDef{
 		Declaration: &genai.FunctionDeclaration{
 			Name: "shell",
-			Description: `Runs a shell command and returns its output.
+			Description: `Runs a read/diagnostic shell command and returns its output.
 - Always set the workdir param when using the shell function. Do not use cd unless absolutely necessary.
+- Do not use shell to create/edit/delete workspace files. Use apply_patch for all workspace file edits.
 - If the command does not finish before timeout_ms, this tool returns an error plus session_id and partial combined stdout/stderr. Use write_stdin with chars="" and that session_id to poll more output.`,
 			Parameters: &genai.Schema{
 				Type: genai.TypeObject,
@@ -55,6 +56,11 @@ func NewShellTool(pm *ProcessManager, ws *models.Workspace) *agent.ToolDef {
 		Handler: func(ctx context.Context, args json.RawMessage) (json.RawMessage, error) {
 			return handleShell(ctx, args, pm, guard)
 		},
+		Intents: []string{
+			"Use for quick read-only diagnostics when exec_command is not required",
+			"Use for verification commands (build/test/lint) after patching if needed",
+			"Never use for writing workspace files; apply_patch is mandatory for edits",
+		},
 	}
 }
 
@@ -66,6 +72,9 @@ func handleShell(_ context.Context, args json.RawMessage, pm *ProcessManager, gu
 
 	if strings.TrimSpace(a.Command) == "" {
 		return nil, fmt.Errorf("command must not be empty")
+	}
+	if err := validateWorkspaceEditPolicy(a.Command); err != nil {
+		return nil, err
 	}
 
 	timeoutMs := int64(shellDefaultTimeoutMs)

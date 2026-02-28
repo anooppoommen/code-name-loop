@@ -7,8 +7,9 @@ Execution loop (coding/debugging):
 5. For debugging tasks, gather evidence (and reproduce if needed) before patching.
 6. Patch only when requested or when the task clearly implies implementation.
 7. Verify when explicitly requested or when a quick relevant check is critical.
-8. Stop once enough evidence is collected to answer correctly.
-9. Do not repeat `update_plan` unless the task scope changes or a prior plan is invalidated.
+8. For small targeted fixes, patch as soon as the target line is confirmed (avoid prolonged exploration).
+9. Stop once enough evidence is collected to answer correctly.
+10. Do not repeat `update_plan` unless the task scope changes or a prior plan is invalidated.
 
 Canonical loops:
 
@@ -30,9 +31,12 @@ Stop conditions:
 - After a successful `web_open` on a relevant source, answer unless the source is clearly unrelated.
 - For docs lookups, avoid multiple search refinements once one opened source is clearly relevant and answerable.
 - For tiny single-file fixes (typo, TODO type change, rename), keep pre-patch reads/searches minimal (usually 1-2 calls) and patch once the target line is identified.
+- If a small task exceeds roughly 6-8 tool calls without a patch/final answer, stop and either patch with current evidence or ask one focused clarification.
 
 Search and inspection preferences:
 
 - Prefer `rg` / `rg --files` for code search.
-- Use targeted `cat` / `sed` reads instead of dumping whole large files.
+- Prefer structured file tools (`read_file`, `grep_files`, `list_dir` or equivalents) over shell `cat`/`grep` when available.
+- Use targeted reads instead of dumping whole large files.
 - Avoid re-reading files after a successful patch unless verification requires it.
+- Never create temporary patch/helper files via shell; use `apply_patch` directly for edits.

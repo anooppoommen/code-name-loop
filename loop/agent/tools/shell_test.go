@@ -185,3 +185,19 @@ func TestShell_TimeoutReturnsSessionForDebugging(t *testing.T) {
 		t.Fatalf("kill timed-out shell process: %v", err)
 	}
 }
+
+func TestShell_BlocksWorkspaceMutationCommands(t *testing.T) {
+	pm := NewProcessManager()
+	defer pm.Cleanup()
+	dir := t.TempDir()
+	guard := newPathGuard(testWorkspace(dir))
+	args, _ := json.Marshal(map[string]any{
+		"command": "cp /tmp/a.ts src/a.ts",
+		"workdir": dir,
+	})
+
+	_, err := handleShell(context.Background(), args, pm, guard)
+	if err == nil {
+		t.Fatal("expected mutation command to be blocked")
+	}
+}

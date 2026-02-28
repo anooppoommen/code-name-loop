@@ -40,7 +40,7 @@ func NewExecCommandTool(pm *ProcessManager, ws *models.Workspace) *agent.ToolDef
 	return &agent.ToolDef{
 		Declaration: &genai.FunctionDeclaration{
 			Name:        "exec_command",
-			Description: "Runs a command in a shell, returning output or a session ID for ongoing interaction.",
+			Description: "Runs a read/diagnostic shell command, returning output or a session ID for interactive follow-up. Do not use this tool to create/edit/delete workspace files; use apply_patch for code/file changes.",
 			Parameters: &genai.Schema{
 				Type: genai.TypeObject,
 				Properties: map[string]*genai.Schema{
@@ -74,6 +74,11 @@ func NewExecCommandTool(pm *ProcessManager, ws *models.Workspace) *agent.ToolDef
 		},
 		Handler: func(ctx context.Context, args json.RawMessage) (json.RawMessage, error) {
 			return handleExecCommand(ctx, args, pm, guard)
+		},
+		Intents: []string{
+			"Use for read-only repo inspection, diagnostics, and verification commands (tests/build/lint)",
+			"Do not use for file edits or temporary patch scripts; use apply_patch for workspace changes",
+			"Prefer structured file/search tools for simple reads when available",
 		},
 	}
 }
@@ -121,6 +126,9 @@ func handleExecCommand(_ context.Context, args json.RawMessage, pm *ProcessManag
 
 	if strings.TrimSpace(a.Cmd) == "" {
 		return nil, fmt.Errorf("cmd must not be empty")
+	}
+	if err := validateWorkspaceEditPolicy(a.Cmd); err != nil {
+		return nil, err
 	}
 
 	yieldMs := int64(defaultExecYieldTimeMs)

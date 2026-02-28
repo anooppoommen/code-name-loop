@@ -754,6 +754,44 @@ func TestSessionSystemPrompt(t *testing.T) {
 	}
 }
 
+func TestSessionThinkingLevelAppliedToModelConfig(t *testing.T) {
+	s := newTestStore(t)
+	ws, conv := seedConversation(t, s)
+	ctx := context.Background()
+
+	var capturedConfig *agent.GenerateContentConfig
+	mock := &configCaptureMock{
+		inner: &mockModelClient{responses: [][]agent.TurnEvent{makeTextResponse("ok")}},
+		captureCallback: func(config *agent.GenerateContentConfig) {
+			capturedConfig = config
+		},
+	}
+
+	session := agent.NewSession(s, mock, ws, conv, nil, 0)
+	session.ThinkingLevel = "high"
+	session.IncludeThoughts = true
+
+	events, cancel, _ := session.HandleUserMessage(ctx, "hi")
+	defer cancel()
+	collectEvents(events)
+
+	if capturedConfig == nil {
+		t.Fatal("config not captured")
+	}
+	if capturedConfig.ThinkingLevel == nil {
+		t.Fatal("expected thinking level to be set")
+	}
+	if string(*capturedConfig.ThinkingLevel) != "HIGH" {
+		t.Fatalf("expected thinking level HIGH, got %q", *capturedConfig.ThinkingLevel)
+	}
+	if capturedConfig.IncludeThoughts == nil {
+		t.Fatal("expected include thoughts to be set")
+	}
+	if !*capturedConfig.IncludeThoughts {
+		t.Fatal("expected include thoughts=true")
+	}
+}
+
 // ─────────────────────────────────────────────────────────────────
 // Session Tests — Streaming Deltas
 // ─────────────────────────────────────────────────────────────────

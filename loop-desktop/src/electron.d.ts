@@ -17,6 +17,7 @@ export interface LoopStreamStartRequest {
   baseUrl: string;
   conversationId: string;
   message: string;
+  thinkingLevel?: 'minimal' | 'low' | 'medium' | 'high';
 }
 
 export interface LoopStreamStartResponse {

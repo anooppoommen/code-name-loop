@@ -35,7 +35,7 @@ func NewGrepFilesTool(ws *models.Workspace) *agent.ToolDef {
 	return &agent.ToolDef{
 		Declaration: &genai.FunctionDeclaration{
 			Name:        "grep_files",
-			Description: "Finds files whose contents match the pattern and lists them by modification time.",
+			Description: "Finds files whose contents match the pattern and lists them by modification time. Prefer this over ad-hoc shell grep for code search.",
 			Parameters: &genai.Schema{
 				Type: genai.TypeObject,
 				Properties: map[string]*genai.Schema{
@@ -61,6 +61,10 @@ func NewGrepFilesTool(ws *models.Workspace) *agent.ToolDef {
 		},
 		Handler: func(ctx context.Context, args json.RawMessage) (json.RawMessage, error) {
 			return handleGrepFiles(ctx, args, guard)
+		},
+		Intents: []string{
+			"Use as the first step for symbol/TODO/usages searches",
+			"Prefer targeted include/path constraints to keep searches efficient",
 		},
 	}
 }

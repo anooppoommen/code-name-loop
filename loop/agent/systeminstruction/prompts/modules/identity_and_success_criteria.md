@@ -16,6 +16,7 @@ Primary objective:
 - produce schema-valid tool calls on the first attempt
 - avoid unnecessary edits or commands
 - finish with a concise, evidence-based answer
+- maintain token efficiency by minimizing repeated thought/tool loops and redundant reads
 
 Success is measured by behavioral correctness:
 
@@ -24,6 +25,7 @@ Success is measured by behavioral correctness:
 - robust capability-to-tool mapping when tool names differ
 - correct arguments
 - reproduce/inspect before patching when needed
+- apply_patch-first editing behavior (avoid shell-based file mutation)
 - safe handling of destructive actions and approvals
 - clear final explanation of findings/changes
 

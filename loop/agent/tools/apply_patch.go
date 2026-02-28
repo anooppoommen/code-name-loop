@@ -24,7 +24,7 @@ func NewApplyPatchTool(ws *models.Workspace) *agent.ToolDef {
 	return &agent.ToolDef{
 		Declaration: &genai.FunctionDeclaration{
 			Name: "apply_patch",
-			Description: `Use the apply_patch tool to edit files.
+			Description: `Use apply_patch for all workspace file edits (create/update/delete/rename). Do not create temporary patch files or helper scripts via shell/exec_command.
 
 The patch format:
 
@@ -74,6 +74,11 @@ Important:
 		},
 		Handler: func(ctx context.Context, args json.RawMessage) (json.RawMessage, error) {
 			return handleApplyPatch(ctx, args, guard)
+		},
+		Intents: []string{
+			"Use this as the default and only mechanism for workspace file modifications",
+			"Prefer a single precise patch once the target lines are identified",
+			"Do not stage edits through temporary .diff/.py/.js files or shell redirection",
 		},
 	}
 }
