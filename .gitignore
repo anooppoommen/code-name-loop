@@ -29,7 +29,10 @@ go.work.sum
 .env
 docs
 
-calendar-app-loop
+calendar-app-loop-rich
 *.db
 *.db-shm
 *.db-wal
+
+node_modules/
+.run/

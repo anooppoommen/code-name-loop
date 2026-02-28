@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -226,6 +228,94 @@ func TestSpawnThreadAsync_BackgroundWritesResult(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Error("async thread never reached completed status")
+}
+
+func TestSpawnThreadEmitsThreadStatusUpdates(t *testing.T) {
+	s := newThreadTestStore(t)
+	ws, conv := seedWorkspaceAndConv(t, s)
+	ctx := context.Background()
+
+	parentMsg := &models.Message{ID: "msg-1", ConversationID: conv.ID, SentBy: models.SentByUser,
+		State: models.MessageStateCompleted, Parts: []models.MessagePart{{Kind: models.PartText, Text: &models.TextPart{Text: "hello"}}}}
+	s.Messages().Append(ctx, parentMsg)
+	conv, _ = s.Conversations().Get(ctx, conv.ID)
+
+	client := &mockClientForSpawn{responses: [][]agent.TurnEvent{makeTextEvent("status answer")}}
+
+	var mu sync.Mutex
+	var updates []string
+	emitter := func(msg string) {
+		mu.Lock()
+		updates = append(updates, msg)
+		mu.Unlock()
+	}
+
+	tool := tools.NewSpawnThreadTool(s, client, ws, conv, nil, 0, emitter)
+	args, _ := json.Marshal(map[string]string{
+		"title":            "status-check",
+		"task":             "do something",
+		"context_strategy": "summary",
+		"mode":             "blocking",
+	})
+
+	if _, err := tool.Handler(ctx, args); err != nil {
+		t.Fatalf("unexpected handler error: %v", err)
+	}
+
+	mu.Lock()
+	joined := strings.Join(updates, "\n")
+	mu.Unlock()
+
+	if !strings.Contains(joined, "spawned") {
+		t.Fatalf("expected spawned status update, got:\n%s", joined)
+	}
+	if !strings.Contains(joined, "completed") {
+		t.Fatalf("expected completed status update, got:\n%s", joined)
+	}
+}
+
+func TestSpawnThreadFullChain_UsesLatestParentHeadWhenCapturedConvIsStale(t *testing.T) {
+	s := newThreadTestStore(t)
+	ws, conv := seedWorkspaceAndConv(t, s)
+	ctx := context.Background()
+
+	// Construct tool before parent conversation gets any messages.
+	// This leaves conv.HeadMessageID stale/empty in-memory.
+	client := &mockClientForSpawn{responses: [][]agent.TurnEvent{makeTextEvent("child answer")}}
+	tool := tools.NewSpawnThreadTool(s, client, ws, conv, nil, 0)
+
+	// Append message after tool creation; DB head_message_id is now set, but conv
+	// captured by the tool remains stale unless handler resolves latest state.
+	parentMsg := &models.Message{
+		ID:             "msg-stale-head",
+		ConversationID: conv.ID,
+		SentBy:         models.SentByUser,
+		State:          models.MessageStateCompleted,
+		Parts:          []models.MessagePart{{Kind: models.PartText, Text: &models.TextPart{Text: "hello"}}},
+	}
+	if err := s.Messages().Append(ctx, parentMsg); err != nil {
+		t.Fatalf("append parent msg: %v", err)
+	}
+
+	args, _ := json.Marshal(map[string]string{
+		"title":            "sub-task",
+		"task":             "do something",
+		"context_strategy": "full_chain",
+		"mode":             "blocking",
+	})
+
+	result, err := tool.Handler(ctx, args)
+	if err != nil {
+		t.Fatalf("unexpected handler error: %v", err)
+	}
+
+	r := unmarshalSpawnResult(t, result)
+	if r["status"] != "completed" {
+		t.Fatalf("status = %q, want completed (full result: %s)", r["status"], result)
+	}
+	if r["result"] != "child answer" {
+		t.Fatalf("result = %q, want child answer", r["result"])
+	}
 }
 
 func TestSpawnThreadDepthGuard(t *testing.T) {

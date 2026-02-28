@@ -37,7 +37,12 @@ const awaitPollInterval = 100 * time.Millisecond
 //     status leaves "running", then returns the result. Respects ctx cancellation.
 //   - blocking=false: single read, returns current status + result immediately
 //     (useful for non-blocking status checks mid-turn).
-func NewAwaitThreadTool(s store.Store) *agent.ToolDef {
+func NewAwaitThreadTool(s store.Store, statusEmitters ...func(string)) *agent.ToolDef {
+	var statusEmitter func(string)
+	if len(statusEmitters) > 0 {
+		statusEmitter = statusEmitters[0]
+	}
+
 	decl := &genai.FunctionDeclaration{
 		Name: "await_thread",
 		Description: `Wait for (or poll) a previously spawned async thread.
@@ -77,18 +82,29 @@ check multiple threads and continue if some are done.`,
 
 		if !args.Blocking {
 			// Single non-blocking read.
-			return readThreadStatus(ctx, s, convID)
+			result, err := readThreadStatus(ctx, s, convID)
+			if err != nil {
+				return result, err
+			}
+			emitAwaitStatus(statusEmitter, convID, result, false)
+			return result, nil
 		}
 
 		// Blocking: poll until status != running, or ctx is cancelled.
+		polls := 0
 		for {
 			result, _ := readThreadStatus(ctx, s, convID)
+			polls++
 
 			// Check if the thread has left the running state.
 			var r awaitThreadResult
 			if jsonErr := json.Unmarshal(result, &r); jsonErr == nil {
 				if r.Status != string(models.ThreadStatusRunning) {
+					emitAwaitStatus(statusEmitter, convID, result, true)
 					return result, nil
+				}
+				if polls == 1 || polls%30 == 0 {
+					emitThreadStatus(statusEmitter, "[thread %s] await: still running", shortThreadID(string(convID)))
 				}
 			}
 
@@ -110,6 +126,27 @@ check multiple threads and continue if some are done.`,
 			"Use blocking=false to poll multiple threads without stalling",
 		},
 	}
+}
+
+func emitAwaitStatus(statusEmitter func(string), convID models.ConversationID, result json.RawMessage, blocking bool) {
+	if statusEmitter == nil {
+		return
+	}
+	var r awaitThreadResult
+	if json.Unmarshal(result, &r) != nil {
+		return
+	}
+	mode := "poll"
+	if blocking {
+		mode = "await"
+	}
+	msg := "[thread %s] %s: %s"
+	args := []any{shortThreadID(string(convID)), mode, r.Status}
+	if r.Error != "" {
+		msg += ": %s"
+		args = append(args, r.Error)
+	}
+	emitThreadStatus(statusEmitter, msg, args...)
 }
 
 // readThreadStatus loads a conversation by ID and returns its status JSON.

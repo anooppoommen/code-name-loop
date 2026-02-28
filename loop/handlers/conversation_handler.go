@@ -31,6 +31,8 @@ func NewConversationHandler(s store.Store, client agent.ModelClient, pm *tools.P
 func (h *ConversationHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /conversations", h.Create)
 	mux.HandleFunc("GET /conversations/{id}", h.Get)
+	mux.HandleFunc("DELETE /conversations/{id}", h.Delete)
+	mux.HandleFunc("GET /conversations/{id}/messages", h.ListMessages)
 	mux.HandleFunc("GET /workspaces/{wsID}/conversations", h.ListByWorkspace)
 	mux.HandleFunc("GET /conversations/{id}/threads", h.ListThreads)
 	mux.HandleFunc("POST /conversations/{id}/reply", h.Reply)
@@ -74,6 +76,56 @@ func (h *ConversationHandler) Get(w http.ResponseWriter, r *http.Request) {
 	utils.WriteJSON(w, http.StatusOK, conv)
 }
 
+func (h *ConversationHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	id := models.ConversationID(r.PathValue("id"))
+
+	conv, err := h.store.Conversations().Get(r.Context(), id)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			utils.WriteError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		utils.WriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	allConvs, err := h.store.Conversations().ListByWorkspace(r.Context(), conv.WorkspaceID)
+	if err != nil {
+		utils.WriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	childrenByParent := make(map[models.ConversationID][]models.ConversationID, len(allConvs))
+	for _, row := range allConvs {
+		if row.ParentConversationID == "" {
+			continue
+		}
+		childrenByParent[row.ParentConversationID] = append(childrenByParent[row.ParentConversationID], row.ID)
+	}
+
+	var deleteOrder []models.ConversationID
+	var walk func(models.ConversationID)
+	walk = func(parent models.ConversationID) {
+		for _, child := range childrenByParent[parent] {
+			walk(child)
+		}
+		deleteOrder = append(deleteOrder, parent)
+	}
+	walk(id)
+
+	for _, convID := range deleteOrder {
+		if err := h.store.Conversations().Delete(r.Context(), convID); err != nil {
+			if strings.Contains(err.Error(), "not found") {
+				continue
+			}
+			utils.WriteError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (h *ConversationHandler) ListByWorkspace(w http.ResponseWriter, r *http.Request) {
 	wsID := models.WorkspaceID(r.PathValue("wsID"))
 	convs, err := h.store.Conversations().ListByWorkspace(r.Context(), wsID)
@@ -94,6 +146,26 @@ func (h *ConversationHandler) ListThreads(w http.ResponseWriter, r *http.Request
 	utils.WriteJSON(w, http.StatusOK, threads)
 }
 
+func (h *ConversationHandler) ListMessages(w http.ResponseWriter, r *http.Request) {
+	id := models.ConversationID(r.PathValue("id"))
+
+	if _, err := h.store.Conversations().Get(r.Context(), id); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			utils.WriteError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		utils.WriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	msgs, err := h.store.Messages().GetRange(r.Context(), id, 1, 999999)
+	if err != nil {
+		utils.WriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	utils.WriteJSON(w, http.StatusOK, msgs)
+}
+
 // replyRequest is the JSON body for the Reply endpoint.
 type replyRequest struct {
 	Message string `json:"message"`
@@ -107,6 +179,17 @@ type replyRequest struct {
 // Response: text/event-stream (SSE)
 func (h *ConversationHandler) Reply(w http.ResponseWriter, r *http.Request) {
 	convID := models.ConversationID(r.PathValue("id"))
+	threadStatusCh := make(chan string, 512)
+	emitThreadStatus := func(msg string) {
+		if strings.TrimSpace(msg) == "" {
+			return
+		}
+		select {
+		case threadStatusCh <- msg:
+		default:
+			// Drop if client is slow; status updates are best-effort.
+		}
+	}
 
 	var req replyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -151,8 +234,8 @@ func (h *ConversationHandler) Reply(w http.ResponseWriter, r *http.Request) {
 	// the same capabilities as the parent (including spawn_thread for nesting).
 	// We assemble the full list first, then construct spawn_thread with it.
 	agentTools := append(baseTools,
-		tools.NewSpawnThreadTool(h.store, h.client, ws, conv, baseTools, 0),
-		tools.NewAwaitThreadTool(h.store),
+		tools.NewSpawnThreadTool(h.store, h.client, ws, conv, baseTools, 0, emitThreadStatus),
+		tools.NewAwaitThreadTool(h.store, emitThreadStatus),
 	)
 
 	// Create agent session with all tools (depth=0 for root HTTP sessions).
@@ -190,9 +273,47 @@ func (h *ConversationHandler) Reply(w http.ResponseWriter, r *http.Request) {
 	defer ticker.Stop()
 
 	for {
+		// Prioritize turn events so completion/error cannot be starved by
+		// high-volume thread status updates.
 		select {
 		case <-r.Context().Done():
 			return
+		case event, ok := <-events:
+			if !ok {
+				return
+			}
+			data, err := json.Marshal(event)
+			if err != nil {
+				continue
+			}
+
+			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event.Kind, data)
+			flusher.Flush()
+
+			// Stop streaming on terminal events.
+			if event.Kind == agent.EventTurnComplete || event.Kind == agent.EventError || event.Kind == agent.EventTurnAborted {
+				return
+			}
+			continue
+		default:
+		}
+
+		select {
+		case <-r.Context().Done():
+			return
+		case statusText := <-threadStatusCh:
+			ev := agent.TurnEvent{
+				Kind: agent.EventStatus,
+				Status: &agent.StatusEvent{
+					Text: statusText,
+				},
+			}
+			data, err := json.Marshal(ev)
+			if err != nil {
+				continue
+			}
+			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", ev.Kind, data)
+			flusher.Flush()
 		case <-ticker.C:
 			// SSE comment line keeps proxies/clients alive during long model or tool calls.
 			fmt.Fprintf(w, ": keep-alive\n\n")
@@ -209,8 +330,8 @@ func (h *ConversationHandler) Reply(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event.Kind, data)
 			flusher.Flush()
 
-			// Stop streaming on error or turn complete.
-			if event.Kind == agent.EventTurnComplete || event.Kind == agent.EventError {
+			// Stop streaming on terminal events.
+			if event.Kind == agent.EventTurnComplete || event.Kind == agent.EventError || event.Kind == agent.EventTurnAborted {
 				return
 			}
 		}

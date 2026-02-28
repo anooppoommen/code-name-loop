@@ -2,8 +2,10 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 
 	"github.com/google/uuid"
@@ -13,9 +15,17 @@ import (
 	"loop/store"
 )
 
-// MaxToolCallIterations is the maximum number of tool call cycles per turn.
-// This prevents runaway agent loops.
-const MaxToolCallIterations = 32
+const (
+	// DefaultMaxToolCallIterations is the default maximum number of tool call
+	// cycles per turn. This prevents runaway loops while allowing sustained
+	// debug/fix sessions for realistic coding tasks.
+	DefaultMaxToolCallIterations = 96
+	// MaxToolCallIterations is retained for backward compatibility in tests.
+	MaxToolCallIterations = DefaultMaxToolCallIterations
+
+	thoughtStatusChunkInterval = 10
+	thoughtStatusMinChars      = 220
+)
 
 // Turn represents a single model interaction cycle within a session.
 // A turn may involve multiple model calls if the model requests tool
@@ -68,16 +78,17 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 	}
 
 	iteration := 0
+	maxIterations := s.maxToolCallIterations()
 
 	for {
 		iteration++
 
 		// Guard against runaway tool call loops.
-		if iteration > MaxToolCallIterations {
+		if iteration > maxIterations {
 			ch <- TurnEvent{
 				Kind:      EventError,
-				Error:     fmt.Errorf("max tool call iterations (%d) exceeded", MaxToolCallIterations),
-				ErrorText: fmt.Sprintf("max tool call iterations (%d) exceeded", MaxToolCallIterations),
+				Error:     fmt.Errorf("max tool call iterations (%d) exceeded", maxIterations),
+				ErrorText: fmt.Sprintf("max tool call iterations (%d) exceeded", maxIterations),
 			}
 			return
 		}
@@ -110,10 +121,39 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 
 		var agentMsg *models.Message
 
+		thoughtChunkCount := 0
+		thoughtCharsSinceStatus := 0
+		lastThoughtSummary := ""
+
 		for event := range s.Client.StreamMessage(ctx, history, config) {
 			switch event.Kind {
 			case EventDelta:
 				ch <- event
+				if event.Delta != nil && event.Delta.IsThought {
+					thoughtChunkCount++
+					thoughtCharsSinceStatus += len(strings.TrimSpace(event.Delta.Text))
+
+					if summary := extractThoughtSummary(event.Delta.Text); summary != "" && summary != lastThoughtSummary {
+						lastThoughtSummary = summary
+						ch <- TurnEvent{
+							Kind: EventStatus,
+							Status: &StatusEvent{
+								Text:      "thinking: " + summary,
+								Iteration: iteration,
+							},
+						}
+						thoughtCharsSinceStatus = 0
+					} else if thoughtCharsSinceStatus >= thoughtStatusMinChars || thoughtChunkCount%thoughtStatusChunkInterval == 0 {
+						ch <- TurnEvent{
+							Kind: EventStatus,
+							Status: &StatusEvent{
+								Text:      fmt.Sprintf("thinking... (%d thought updates)", thoughtChunkCount),
+								Iteration: iteration,
+							},
+						}
+						thoughtCharsSinceStatus = 0
+					}
+				}
 
 			case EventMessageDone:
 				msg, ok := event.Message.(*models.Message)
@@ -145,6 +185,7 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 		}
 
 		// Step 3: Persist the agent message.
+		ensureFunctionCallIDs(agentMsg)
 		agentMsg.ID = models.MessageID(uuid.New().String())
 		agentMsg.ConversationID = s.Conversation.ID
 		agentMsg.SentBy = models.SentByAgent
@@ -173,13 +214,20 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 		ch <- TurnEvent{
 			Kind: EventStatus,
 			Status: &StatusEvent{
-				Text:      fmt.Sprintf("executing %d tool call(s)", len(functionCalls)),
+				Text:      fmt.Sprintf("executing %d tool call(s): %s", len(functionCalls), summarizeToolList(functionCalls)),
 				Iteration: iteration,
 			},
 		}
 
 		// Step 5: Execute tool calls.
-		for _, fc := range functionCalls {
+		for i, fc := range functionCalls {
+			ch <- TurnEvent{
+				Kind: EventStatus,
+				Status: &StatusEvent{
+					Text:      summarizeToolAction(fc, i+1, len(functionCalls)),
+					Iteration: iteration,
+				},
+			}
 			ch <- TurnEvent{
 				Kind: EventToolCallStart,
 				ToolCall: &ToolCallEvent{
@@ -203,6 +251,7 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 
 		// Step 6: Persist tool results as a tool message and emit events.
 		toolParts := make([]models.MessagePart, len(results))
+		successCount := 0
 		for i, result := range results {
 			toolParts[i] = models.MessagePart{
 				Kind: models.PartFunctionResponse,
@@ -212,6 +261,9 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 					ResponseJSON: result.ResponseJSON,
 				},
 			}
+			if result.Err == nil {
+				successCount++
+			}
 			ch <- TurnEvent{
 				Kind: EventToolResult,
 				ToolResult: &ToolResultEvent{
@@ -220,6 +272,13 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 					Success: result.Err == nil,
 					Result:  truncateEventText(string(result.ResponseJSON), 4000),
 					Error:   errorString(result.Err),
+				},
+			}
+			ch <- TurnEvent{
+				Kind: EventStatus,
+				Status: &StatusEvent{
+					Text:      summarizeToolResultStatus(result, i+1, len(results)),
+					Iteration: iteration,
 				},
 			}
 		}
@@ -238,11 +297,11 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 		}
 
 		log.Printf("[turn] tool call cycle complete (%d/%d), %d results sent back to model",
-			iteration, MaxToolCallIterations, len(results))
+			iteration, maxIterations, len(results))
 		ch <- TurnEvent{
 			Kind: EventStatus,
 			Status: &StatusEvent{
-				Text:      fmt.Sprintf("tool call cycle complete (%d result(s))", len(results)),
+				Text:      fmt.Sprintf("tool call cycle complete (%d success, %d failed)", successCount, len(results)-successCount),
 				Iteration: iteration,
 			},
 		}
@@ -281,11 +340,13 @@ func (t *Turn) buildHistory(ctx context.Context) ([]*models.Message, error) {
 // extractFunctionCalls pulls all function call parts from a message.
 func extractFunctionCalls(msg *models.Message) []ToolCallRequest {
 	var calls []ToolCallRequest
-	for _, part := range msg.Parts {
+	for i := range msg.Parts {
+		part := &msg.Parts[i]
 		if part.Kind == models.PartFunctionCall && part.FunctionCall != nil {
 			callID := part.FunctionCall.CallID
 			if callID == "" {
 				callID = uuid.New().String()
+				part.FunctionCall.CallID = callID
 			}
 			calls = append(calls, ToolCallRequest{
 				CallID: callID,
@@ -295,6 +356,18 @@ func extractFunctionCalls(msg *models.Message) []ToolCallRequest {
 		}
 	}
 	return calls
+}
+
+func ensureFunctionCallIDs(msg *models.Message) {
+	if msg == nil {
+		return
+	}
+	for i := range msg.Parts {
+		part := &msg.Parts[i]
+		if part.Kind == models.PartFunctionCall && part.FunctionCall != nil && part.FunctionCall.CallID == "" {
+			part.FunctionCall.CallID = uuid.New().String()
+		}
+	}
 }
 
 func truncateEventText(s string, max int) string {
@@ -309,6 +382,221 @@ func errorString(err error) string {
 		return ""
 	}
 	return err.Error()
+}
+
+func extractThoughtSummary(deltaText string) string {
+	trimmed := strings.TrimSpace(deltaText)
+	if trimmed == "" {
+		return ""
+	}
+
+	// Prefer markdown-style heading snippets: **Heading**
+	if idx := strings.Index(trimmed, "**"); idx >= 0 {
+		rest := trimmed[idx+2:]
+		if end := strings.Index(rest, "**"); end > 0 {
+			head := normalizeThoughtSummary(rest[:end])
+			if len(head) >= 10 {
+				return truncateEventText(head, 120)
+			}
+		}
+	}
+
+	for _, line := range strings.Split(trimmed, "\n") {
+		candidate := normalizeThoughtSummary(line)
+		if len(candidate) >= 20 {
+			return truncateEventText(candidate, 120)
+		}
+	}
+	return ""
+}
+
+func normalizeThoughtSummary(line string) string {
+	cleaned := strings.TrimSpace(line)
+	cleaned = strings.TrimLeft(cleaned, "#*-`> ")
+	cleaned = strings.Join(strings.Fields(cleaned), " ")
+	return cleaned
+}
+
+func summarizeToolList(calls []ToolCallRequest) string {
+	if len(calls) == 0 {
+		return "none"
+	}
+	names := make([]string, 0, len(calls))
+	for _, c := range calls {
+		names = append(names, c.Name)
+	}
+	joined := strings.Join(names, ", ")
+	return truncateEventText(joined, 140)
+}
+
+func summarizeToolAction(call ToolCallRequest, idx, total int) string {
+	prefix := fmt.Sprintf("tool %d/%d %s", idx, total, call.Name)
+	arg := summarizeToolArgs(call.Name, call.Args)
+	if arg == "" {
+		return prefix
+	}
+	return prefix + ": " + arg
+}
+
+func summarizeToolResultStatus(result ToolCallResponse, idx, total int) string {
+	prefix := fmt.Sprintf("tool %d/%d %s", idx, total, result.Name)
+
+	if result.Err != nil {
+		return prefix + " failed: " + truncateEventText(result.Err.Error(), 140)
+	}
+
+	if result.Name == "spawn_thread" {
+		var parsed struct {
+			ThreadID string `json:"thread_id"`
+			Status   string `json:"status"`
+			Error    string `json:"error,omitempty"`
+		}
+		if json.Unmarshal(result.ResponseJSON, &parsed) == nil && parsed.ThreadID != "" {
+			msg := fmt.Sprintf("%s thread %s is %s", prefix, shortThreadID(parsed.ThreadID), parsed.Status)
+			if parsed.Error != "" {
+				msg += ": " + truncateEventText(parsed.Error, 120)
+			}
+			return msg
+		}
+	}
+
+	if result.Name == "await_thread" {
+		var parsed struct {
+			ThreadID string `json:"thread_id"`
+			Status   string `json:"status"`
+			Result   string `json:"result,omitempty"`
+			Error    string `json:"error,omitempty"`
+		}
+		if json.Unmarshal(result.ResponseJSON, &parsed) == nil && parsed.ThreadID != "" {
+			msg := fmt.Sprintf("%s thread %s %s", prefix, shortThreadID(parsed.ThreadID), parsed.Status)
+			if parsed.Error != "" {
+				msg += ": " + truncateEventText(parsed.Error, 120)
+			}
+			return msg
+		}
+	}
+
+	outSummary := summarizeToolOutput(result.ResponseJSON)
+	if outSummary == "" {
+		return prefix + " completed"
+	}
+	return prefix + " completed: " + outSummary
+}
+
+func summarizeToolArgs(name string, args json.RawMessage) string {
+	var m map[string]any
+	if err := json.Unmarshal(args, &m); err != nil {
+		return ""
+	}
+
+	switch name {
+	case "shell":
+		if cmd, ok := m["command"].(string); ok {
+			return truncateEventText(firstLine(cmd), 120)
+		}
+	case "exec_command":
+		if cmd, ok := m["cmd"].(string); ok {
+			return truncateEventText(firstLine(cmd), 120)
+		}
+	case "apply_patch":
+		if input, ok := m["input"].(string); ok {
+			patch := summarizePatchTarget(input)
+			if patch != "" {
+				return patch
+			}
+		}
+	case "read_file":
+		if p, ok := m["file_path"].(string); ok {
+			return truncateEventText(p, 120)
+		}
+	case "list_dir":
+		if p, ok := m["dir_path"].(string); ok {
+			return truncateEventText(p, 120)
+		}
+	case "grep_files":
+		pat, _ := m["pattern"].(string)
+		path, _ := m["path"].(string)
+		if pat != "" && path != "" {
+			return truncateEventText(fmt.Sprintf("pattern=%q path=%s", pat, path), 120)
+		}
+		if pat != "" {
+			return truncateEventText(fmt.Sprintf("pattern=%q", pat), 120)
+		}
+	case "spawn_thread":
+		title, _ := m["title"].(string)
+		mode, _ := m["mode"].(string)
+		strategy, _ := m["context_strategy"].(string)
+		parts := make([]string, 0, 3)
+		if title != "" {
+			parts = append(parts, "title="+title)
+		}
+		if mode != "" {
+			parts = append(parts, "mode="+mode)
+		}
+		if strategy != "" {
+			parts = append(parts, "context="+strategy)
+		}
+		if len(parts) > 0 {
+			return truncateEventText(strings.Join(parts, ", "), 120)
+		}
+	case "await_thread":
+		threadID, _ := m["thread_id"].(string)
+		blocking := "true"
+		if b, ok := m["blocking"].(bool); ok {
+			if !b {
+				blocking = "false"
+			}
+		}
+		if threadID != "" {
+			return fmt.Sprintf("thread=%s blocking=%s", shortThreadID(threadID), blocking)
+		}
+	}
+
+	return ""
+}
+
+func summarizePatchTarget(input string) string {
+	for _, line := range strings.Split(input, "\n") {
+		line = strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(line, "*** Update File: "):
+			return "update " + strings.TrimSpace(strings.TrimPrefix(line, "*** Update File: "))
+		case strings.HasPrefix(line, "*** Add File: "):
+			return "add " + strings.TrimSpace(strings.TrimPrefix(line, "*** Add File: "))
+		case strings.HasPrefix(line, "*** Delete File: "):
+			return "delete " + strings.TrimSpace(strings.TrimPrefix(line, "*** Delete File: "))
+		}
+	}
+	return ""
+}
+
+func summarizeToolOutput(raw json.RawMessage) string {
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return ""
+	}
+	if e, ok := m["error"].(string); ok && e != "" {
+		return "error=" + truncateEventText(e, 120)
+	}
+	if out, ok := m["output"].(string); ok && strings.TrimSpace(out) != "" {
+		return truncateEventText(firstLine(out), 120)
+	}
+	return ""
+}
+
+func firstLine(s string) string {
+	lines := strings.Split(strings.TrimSpace(s), "\n")
+	if len(lines) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(lines[0])
+}
+
+func shortThreadID(id string) string {
+	if len(id) <= 8 {
+		return id
+	}
+	return id[:8]
 }
 
 // Session represents an active agent session tied to a workspace and
@@ -333,6 +621,9 @@ type Session struct {
 	Tools        []*ToolDef
 	// Depth is the nesting level of this session (0 = root).
 	Depth int
+	// MaxToolCallIterations caps tool-call cycles for this session.
+	// If <= 0, DefaultMaxToolCallIterations is used.
+	MaxToolCallIterations int
 
 	// mu protects activeTurnCancel.
 	mu               sync.Mutex
@@ -349,14 +640,22 @@ func NewSession(
 	depth int,
 ) *Session {
 	return &Session{
-		Store:        store,
-		Client:       client,
-		Workspace:    workspace,
-		Conversation: conversation,
-		SystemPrompt: systeminstruction.Get(),
-		Tools:        tools,
-		Depth:        depth,
+		Store:                 store,
+		Client:                client,
+		Workspace:             workspace,
+		Conversation:          conversation,
+		SystemPrompt:          systeminstruction.Get(),
+		Tools:                 tools,
+		Depth:                 depth,
+		MaxToolCallIterations: DefaultMaxToolCallIterations,
 	}
+}
+
+func (s *Session) maxToolCallIterations() int {
+	if s == nil || s.MaxToolCallIterations <= 0 {
+		return DefaultMaxToolCallIterations
+	}
+	return s.MaxToolCallIterations
 }
 
 // HandleUserMessage is the main entry point for user interaction.

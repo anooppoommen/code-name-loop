@@ -657,9 +657,10 @@ func TestSessionMaxToolCallIterations(t *testing.T) {
 	s := newTestStore(t)
 	ws, conv := seedConversation(t, s)
 	ctx := context.Background()
+	const testMaxIterations = 8
 
 	// Create a mock that always returns tool calls (infinite loop).
-	infiniteResponses := make([][]agent.TurnEvent, agent.MaxToolCallIterations+5)
+	infiniteResponses := make([][]agent.TurnEvent, testMaxIterations+5)
 	for i := range infiniteResponses {
 		infiniteResponses[i] = makeToolCallResponse(struct{ Name, CallID, Args string }{
 			"loop_tool", fmt.Sprintf("c%d", i), `{}`,
@@ -669,6 +670,7 @@ func TestSessionMaxToolCallIterations(t *testing.T) {
 	mock := &mockModelClient{responses: infiniteResponses}
 
 	session := agent.NewSession(s, mock, ws, conv, []*agent.ToolDef{simpleTool("loop_tool", `{"ok":true}`)}, 0)
+	session.MaxToolCallIterations = testMaxIterations
 
 	events, cancel, _ := session.HandleUserMessage(ctx, "Loop forever")
 	defer cancel()
@@ -684,9 +686,9 @@ func TestSessionMaxToolCallIterations(t *testing.T) {
 		t.Error("error text should describe max iterations")
 	}
 
-	// Should have been called exactly MaxToolCallIterations times (hit on iteration MaxToolCallIterations+1).
-	if int(mock.callCount.Load()) != agent.MaxToolCallIterations {
-		t.Errorf("mock calls = %d, want %d", mock.callCount.Load(), agent.MaxToolCallIterations)
+	// Should have been called exactly max iterations times (hit on iteration max+1).
+	if int(mock.callCount.Load()) != testMaxIterations {
+		t.Errorf("mock calls = %d, want %d", mock.callCount.Load(), testMaxIterations)
 	}
 }
 
@@ -790,6 +792,160 @@ func TestSessionDeltaStreaming(t *testing.T) {
 				t.Error("second delta should be thought")
 			}
 		}
+	}
+}
+
+func TestSessionThoughtStatusSummary(t *testing.T) {
+	s := newTestStore(t)
+	ws, conv := seedConversation(t, s)
+	ctx := context.Background()
+
+	mock := &mockModelClient{
+		responses: [][]agent.TurnEvent{{
+			{Kind: agent.EventDelta, Delta: &agent.StreamDelta{Text: "**Planning Calendar Layout**\n", IsThought: true}},
+			{Kind: agent.EventDelta, Delta: &agent.StreamDelta{Text: "working...", IsThought: true}},
+			{Kind: agent.EventMessageDone, Message: &models.Message{
+				SentBy: models.SentByAgent, State: models.MessageStateCompleted,
+				Parts: []models.MessagePart{{Kind: models.PartText, Text: &models.TextPart{Text: "done"}}},
+			}},
+		}},
+	}
+
+	session := agent.NewSession(s, mock, ws, conv, nil, 0)
+	events, cancel, _ := session.HandleUserMessage(ctx, "Hi")
+	defer cancel()
+	allEvents := collectEvents(events)
+
+	foundThinkingSummary := false
+	for _, e := range allEvents {
+		if e.Kind == agent.EventStatus && e.Status != nil &&
+			strings.Contains(e.Status.Text, "thinking: Planning Calendar Layout") {
+			foundThinkingSummary = true
+			break
+		}
+	}
+	if !foundThinkingSummary {
+		t.Fatal("expected a thinking status summary event")
+	}
+}
+
+func TestSessionFillsMissingFunctionCallID(t *testing.T) {
+	s := newTestStore(t)
+	ws, conv := seedConversation(t, s)
+	ctx := context.Background()
+
+	mock := &mockModelClient{
+		responses: [][]agent.TurnEvent{
+			makeToolCallResponse(struct{ Name, CallID, Args string }{"t", "", `{}`}),
+			makeTextResponse("done"),
+		},
+	}
+
+	session := agent.NewSession(s, mock, ws, conv, []*agent.ToolDef{simpleTool("t", `{"ok":true}`)}, 0)
+
+	events, cancel, _ := session.HandleUserMessage(ctx, "Go")
+	defer cancel()
+	allEvents := collectEvents(events)
+
+	for _, e := range allEvents {
+		if e.Kind == agent.EventToolCallStart {
+			if e.ToolCall == nil || e.ToolCall.CallID == "" {
+				t.Fatal("tool call start emitted empty call_id")
+			}
+		}
+		if e.Kind == agent.EventToolResult {
+			if e.ToolResult == nil || e.ToolResult.CallID == "" {
+				t.Fatal("tool result emitted empty call_id")
+			}
+		}
+	}
+
+	msgs, err := s.Messages().GetRange(ctx, conv.ID, 1, 100)
+	if err != nil {
+		t.Fatalf("get messages: %v", err)
+	}
+
+	found := false
+	for _, m := range msgs {
+		if m.SentBy != models.SentByAgent {
+			continue
+		}
+		for _, p := range m.Parts {
+			if p.Kind == models.PartFunctionCall && p.FunctionCall != nil {
+				found = true
+				if p.FunctionCall.CallID == "" {
+					t.Fatal("persisted function call still has empty call_id")
+				}
+			}
+		}
+	}
+	if !found {
+		t.Fatal("expected persisted function call message")
+	}
+}
+
+func TestSessionStatusIncludesToolActionSummary(t *testing.T) {
+	s := newTestStore(t)
+	ws, conv := seedConversation(t, s)
+	ctx := context.Background()
+
+	mock := &mockModelClient{
+		responses: [][]agent.TurnEvent{
+			makeToolCallResponse(struct{ Name, CallID, Args string }{"shell", "c1", `{"command":"go test ./..."}`}),
+			makeTextResponse("done"),
+		},
+	}
+
+	session := agent.NewSession(s, mock, ws, conv, []*agent.ToolDef{simpleTool("shell", `{"output":"ok"}`)}, 0)
+	events, cancel, _ := session.HandleUserMessage(ctx, "Run checks")
+	defer cancel()
+	allEvents := collectEvents(events)
+
+	var statuses []string
+	for _, e := range allEvents {
+		if e.Kind == agent.EventStatus && e.Status != nil {
+			statuses = append(statuses, e.Status.Text)
+		}
+	}
+
+	joined := strings.Join(statuses, "\n")
+	if !strings.Contains(joined, "executing 1 tool call(s): shell") {
+		t.Fatalf("missing tool list status, got:\n%s", joined)
+	}
+	if !strings.Contains(joined, "tool 1/1 shell: go test ./...") {
+		t.Fatalf("missing tool action summary, got:\n%s", joined)
+	}
+	if !strings.Contains(joined, "tool 1/1 shell completed") {
+		t.Fatalf("missing tool completion summary, got:\n%s", joined)
+	}
+}
+
+func TestSessionStatusIncludesThreadUpdateSummary(t *testing.T) {
+	s := newTestStore(t)
+	ws, conv := seedConversation(t, s)
+	ctx := context.Background()
+
+	mock := &mockModelClient{
+		responses: [][]agent.TurnEvent{
+			makeToolCallResponse(struct{ Name, CallID, Args string }{"spawn_thread", "c1", `{"title":"t1","mode":"async","context_strategy":"full_chain","task":"x"}`}),
+			makeTextResponse("done"),
+		},
+	}
+
+	session := agent.NewSession(s, mock, ws, conv, []*agent.ToolDef{simpleTool("spawn_thread", `{"thread_id":"12345678-1234-1234-1234-1234567890ab","status":"running"}`)}, 0)
+	events, cancel, _ := session.HandleUserMessage(ctx, "Spawn")
+	defer cancel()
+	allEvents := collectEvents(events)
+
+	var statuses []string
+	for _, e := range allEvents {
+		if e.Kind == agent.EventStatus && e.Status != nil {
+			statuses = append(statuses, e.Status.Text)
+		}
+	}
+	joined := strings.Join(statuses, "\n")
+	if !strings.Contains(joined, "tool 1/1 spawn_thread thread 12345678 is running") {
+		t.Fatalf("missing thread status summary, got:\n%s", joined)
 	}
 }
 

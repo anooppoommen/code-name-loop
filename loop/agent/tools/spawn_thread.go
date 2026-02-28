@@ -29,10 +29,15 @@ type spawnThreadArgs struct {
 
 // spawnThreadResult is the JSON returned to the model as the tool response.
 type spawnThreadResult struct {
-	ThreadID string `json:"thread_id"`
-	Status   string `json:"status"`
-	Result   string `json:"result,omitempty"`
-	Error    string `json:"error,omitempty"`
+	ThreadID             string `json:"thread_id"`
+	Status               string `json:"status"`
+	Result               string `json:"result,omitempty"`
+	Error                string `json:"error,omitempty"`
+	ParentConversationID string `json:"parent_conversation_id,omitempty"`
+	AnchorMessageID      string `json:"anchor_message_id,omitempty"`
+	Title                string `json:"title,omitempty"`
+	Mode                 string `json:"mode,omitempty"`
+	ContextStrategy      string `json:"context_strategy,omitempty"`
 }
 
 // NewSpawnThreadTool creates the spawn_thread tool definition.
@@ -54,7 +59,13 @@ func NewSpawnThreadTool(
 	parentConv *models.Conversation,
 	parentTools []*agent.ToolDef,
 	parentDepth int,
+	statusEmitters ...func(string),
 ) *agent.ToolDef {
+	var statusEmitter func(string)
+	if len(statusEmitters) > 0 {
+		statusEmitter = statusEmitters[0]
+	}
+
 	decl := &genai.FunctionDeclaration{
 		Name: "spawn_thread",
 		Description: `Spawn a sub-agent thread to solve a focused task.
@@ -114,7 +125,17 @@ Use async mode when you can do other work while the thread runs, then call await
 		}
 
 		// ── Anchor: current head of the parent conversation ───────────────────
-		anchorMsgID := parentConv.HeadMessageID
+		//
+		// parentConv may be stale (captured when the session/tool was created).
+		// Resolve the latest head from the store so full_chain threads can
+		// reliably anchor to an existing parent message.
+		anchorMsgID, err := resolveAnchorMessageID(ctx, s, parentConv)
+		if err != nil {
+			return errorJSON("resolve parent anchor: " + err.Error()), nil
+		}
+		if strategy == models.ContextStrategyFullChain && anchorMsgID == "" {
+			return errorJSON("cannot spawn full_chain thread: parent conversation has no anchor message"), nil
+		}
 
 		// ── Create child conversation ─────────────────────────────────────────
 		childConv := &models.Conversation{
@@ -130,6 +151,8 @@ Use async mode when you can do other work while the thread runs, then call await
 		if err := s.Conversations().Create(ctx, childConv); err != nil {
 			return errorJSON("create child conversation: " + err.Error()), nil
 		}
+		emitThreadStatus(statusEmitter, "[thread %s] spawned (%s, mode=%s, anchor=%s, title=%q)",
+			shortThreadID(string(childConv.ID)), strategy, mode, shortThreadID(string(anchorMsgID)), args.Title)
 
 		// ── Build child session ───────────────────────────────────────────────
 		childSession := agent.NewSession(
@@ -138,15 +161,20 @@ Use async mode when you can do other work while the thread runs, then call await
 		)
 
 		runChild := func(runCtx context.Context) {
-			result, errMsg := driveChildSession(runCtx, childSession, args.Task)
+			emitThreadStatus(statusEmitter, "[thread %s] started", shortThreadID(string(childConv.ID)))
+			result, errMsg := driveChildSession(runCtx, childSession, args.Task, childConv.ID, statusEmitter)
 
 			// Persist outcome regardless of error.
 			childConv.ResultMessage = result
 			if errMsg != "" {
 				childConv.ThreadStatus = models.ThreadStatusFailed
 				childConv.ResultMessage = errMsg
+				emitThreadStatus(statusEmitter, "[thread %s] failed: %s",
+					shortThreadID(string(childConv.ID)), errMsg)
 			} else {
 				childConv.ThreadStatus = models.ThreadStatusCompleted
+				emitThreadStatus(statusEmitter, "[thread %s] completed",
+					shortThreadID(string(childConv.ID)))
 			}
 			if updateErr := s.Conversations().Update(context.Background(), childConv); updateErr != nil {
 				log.Printf("[spawn_thread] update child conv %s: %v", childConv.ID, updateErr)
@@ -162,16 +190,27 @@ Use async mode when you can do other work while the thread runs, then call await
 				status = "failed"
 			}
 			return marshalResult(spawnThreadResult{
-				ThreadID: string(childConv.ID),
-				Status:   status,
-				Result:   childConv.ResultMessage,
+				ThreadID:             string(childConv.ID),
+				Status:               status,
+				Result:               childConv.ResultMessage,
+				ParentConversationID: string(parentConv.ID),
+				AnchorMessageID:      string(anchorMsgID),
+				Title:                args.Title,
+				Mode:                 string(mode),
+				ContextStrategy:      string(strategy),
 			})
 
 		default: // async
 			go runChild(context.Background())
+			emitThreadStatus(statusEmitter, "[thread %s] running in background", shortThreadID(string(childConv.ID)))
 			return marshalResult(spawnThreadResult{
-				ThreadID: string(childConv.ID),
-				Status:   "running",
+				ThreadID:             string(childConv.ID),
+				Status:               "running",
+				ParentConversationID: string(parentConv.ID),
+				AnchorMessageID:      string(anchorMsgID),
+				Title:                args.Title,
+				Mode:                 string(mode),
+				ContextStrategy:      string(strategy),
 			})
 		}
 	}
@@ -187,9 +226,39 @@ Use async mode when you can do other work while the thread runs, then call await
 	}
 }
 
+func resolveAnchorMessageID(ctx context.Context, s store.Store, parentConv *models.Conversation) (models.MessageID, error) {
+	if parentConv == nil {
+		return "", fmt.Errorf("parent conversation is required")
+	}
+
+	latest := parentConv
+	if convFromDB, err := s.Conversations().Get(ctx, parentConv.ID); err == nil && convFromDB != nil {
+		latest = convFromDB
+	}
+	if latest.HeadMessageID != "" {
+		return latest.HeadMessageID, nil
+	}
+
+	// Fallback if head pointer is missing/outdated: read last persisted message.
+	msgs, err := s.Messages().GetRange(ctx, latest.ID, 1, 999999)
+	if err != nil {
+		return "", err
+	}
+	if len(msgs) == 0 {
+		return "", nil
+	}
+	return msgs[len(msgs)-1].ID, nil
+}
+
 // driveChildSession runs HandleUserMessage and drains the event channel to
 // completion, returning the final agent text and any error message.
-func driveChildSession(ctx context.Context, session *agent.Session, task string) (result string, errMsg string) {
+func driveChildSession(
+	ctx context.Context,
+	session *agent.Session,
+	task string,
+	threadID models.ConversationID,
+	statusEmitter func(string),
+) (result string, errMsg string) {
 	events, cancel, err := session.HandleUserMessage(ctx, task)
 	if err != nil {
 		return "", "start session: " + err.Error()
@@ -198,6 +267,24 @@ func driveChildSession(ctx context.Context, session *agent.Session, task string)
 
 	for event := range events {
 		switch event.Kind {
+		case agent.EventStatus:
+			if event.Status != nil && event.Status.Text != "" {
+				emitThreadStatus(statusEmitter, "[thread %s] %s", shortThreadID(string(threadID)), event.Status.Text)
+			}
+		case agent.EventToolCallStart:
+			if event.ToolCall != nil && event.ToolCall.Name != "" {
+				emitThreadStatus(statusEmitter, "[thread %s] tool start: %s", shortThreadID(string(threadID)), event.ToolCall.Name)
+			}
+		case agent.EventToolResult:
+			if event.ToolResult != nil {
+				if event.ToolResult.Success {
+					emitThreadStatus(statusEmitter, "[thread %s] tool done: %s",
+						shortThreadID(string(threadID)), event.ToolResult.Name)
+				} else {
+					emitThreadStatus(statusEmitter, "[thread %s] tool failed: %s (%s)",
+						shortThreadID(string(threadID)), event.ToolResult.Name, event.ToolResult.Error)
+				}
+			}
 		case agent.EventMessageDone:
 			msg, ok := event.Message.(*models.Message)
 			if ok && msg.SentBy == models.SentByAgent {
@@ -209,11 +296,15 @@ func driveChildSession(ctx context.Context, session *agent.Session, task string)
 				}
 			}
 		case agent.EventError:
+			emitThreadStatus(statusEmitter, "[thread %s] error: %s", shortThreadID(string(threadID)), event.ErrorText)
 			errMsg = event.ErrorText
 			return
 		case agent.EventTurnAborted:
+			emitThreadStatus(statusEmitter, "[thread %s] aborted: %s", shortThreadID(string(threadID)), event.ErrorText)
 			errMsg = "turn aborted: " + event.ErrorText
 			return
+		case agent.EventTurnComplete:
+			emitThreadStatus(statusEmitter, "[thread %s] turn complete", shortThreadID(string(threadID)))
 		}
 	}
 	return
@@ -232,4 +323,18 @@ func marshalResult(r spawnThreadResult) (json.RawMessage, error) {
 		return errorJSON("marshal result: " + err.Error()), nil
 	}
 	return b, nil
+}
+
+func emitThreadStatus(statusEmitter func(string), format string, args ...any) {
+	if statusEmitter == nil {
+		return
+	}
+	statusEmitter(fmt.Sprintf(format, args...))
+}
+
+func shortThreadID(id string) string {
+	if len(id) <= 8 {
+		return id
+	}
+	return id[:8]
 }
