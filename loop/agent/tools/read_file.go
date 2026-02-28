@@ -57,6 +57,7 @@ func NewReadFileTool(ws *models.Workspace) *agent.ToolDef {
 			return handleReadFile(ctx, args, guard)
 		},
 		Intents: []string{
+			"Use as the default first choice for reading known files",
 			"Use for targeted file reads instead of shell cat/sed",
 			"Use offset/limit to keep context tight and token-efficient",
 		},

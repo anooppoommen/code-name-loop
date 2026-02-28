@@ -14,6 +14,7 @@ import (
 )
 
 const maxParallelToolUses = 8
+const minParallelToolUses = 2
 
 type parallelToolUseArgs struct {
 	ToolUses []parallelToolUseItem `json:"tool_uses"`
@@ -27,11 +28,11 @@ type parallelToolUseItem struct {
 }
 
 type parallelToolUseResult struct {
-	Name     string          `json:"name"`
-	Success  bool            `json:"success"`
-	Arguments map[string]any `json:"arguments,omitempty"`
-	Response json.RawMessage `json:"response,omitempty"`
-	Error    string          `json:"error,omitempty"`
+	Name      string          `json:"name"`
+	Success   bool            `json:"success"`
+	Arguments map[string]any  `json:"arguments,omitempty"`
+	Response  json.RawMessage `json:"response,omitempty"`
+	Error     string          `json:"error,omitempty"`
 }
 
 var parallelToolDisallowed = map[string]struct{}{
@@ -48,7 +49,9 @@ func NewParallelToolUseTool(toolDefsProvider func() []*agent.ToolDef) *agent.Too
 		Declaration: &genai.FunctionDeclaration{
 			Name: "parallel_tool_use",
 			Description: `Runs multiple tool calls concurrently and returns ordered results.
-Use for independent read-oriented calls when you already know all required calls.
+Use this only when you have 2 or more independent read-oriented calls to run at the same time.
+This tool is invalid for a single call; call the tool directly instead.
+Do not use as a default wrapper for sequential dependent work.
 Do not include stateful tools (apply_patch, write_stdin, thread-control tools).`,
 			Parameters: &genai.Schema{
 				Type: genai.TypeObject,
@@ -92,6 +95,7 @@ Do not include stateful tools (apply_patch, write_stdin, thread-control tools).`
 		Intents: []string{
 			"Use when you already know multiple independent read-only calls are needed",
 			"Prefer this over sequential calls for independent file/search reads",
+			"Do not use for single-call flows or for steps where one result determines the next call",
 		},
 	}
 }
@@ -102,8 +106,8 @@ func handleParallelToolUse(ctx context.Context, args json.RawMessage, registry a
 		return nil, fmt.Errorf("failed to parse arguments: %w", err)
 	}
 
-	if len(a.ToolUses) == 0 {
-		return nil, fmt.Errorf("tool_uses must contain at least one item")
+	if len(a.ToolUses) < minParallelToolUses {
+		return nil, fmt.Errorf("tool_uses must contain at least %d items for parallel execution", minParallelToolUses)
 	}
 	if len(a.ToolUses) > maxParallelToolUses {
 		return nil, fmt.Errorf("tool_uses length exceeds max of %d", maxParallelToolUses)

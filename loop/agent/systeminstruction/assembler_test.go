@@ -18,4 +18,10 @@ func TestGet(t *testing.T) {
 	if !strings.Contains(prompt, "Output Contract") {
 		t.Error("expected prompt to contain 'Output Contract'")
 	}
+	if !strings.Contains(prompt, "Task contract gate") {
+		t.Error("expected prompt to contain task-contract routing guidance")
+	}
+	if !strings.Contains(prompt, "Capability ladder") {
+		t.Error("expected prompt to contain capability ladder guidance")
+	}
 }

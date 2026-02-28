@@ -63,7 +63,8 @@ func NewGrepFilesTool(ws *models.Workspace) *agent.ToolDef {
 			return handleGrepFiles(ctx, args, guard)
 		},
 		Intents: []string{
-			"Use as the first step for symbol/TODO/usages searches",
+			"Use as the default first step for symbol/TODO/usages searches",
+			"Prefer this over shell grep/cat loops for codebase search",
 			"Prefer targeted include/path constraints to keep searches efficient",
 		},
 	}

@@ -64,6 +64,7 @@ func NewListDirTool(ws *models.Workspace) *agent.ToolDef {
 			return handleListDir(ctx, args, guard)
 		},
 		Intents: []string{
+			"Use as the default first step for directory/repo structure discovery",
 			"Use for directory discovery before targeted reads",
 			"Prefer depth-limited listing to avoid broad shell scans",
 		},

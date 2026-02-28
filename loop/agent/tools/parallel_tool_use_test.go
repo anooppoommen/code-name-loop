@@ -70,7 +70,7 @@ func TestParallelToolUseBlocksDisallowedTools(t *testing.T) {
 		},
 	}})
 
-	args := json.RawMessage(`{"tool_uses":[{"name":"apply_patch","arguments":{}}]}`)
+	args := json.RawMessage(`{"tool_uses":[{"name":"apply_patch","arguments":{}},{"name":"apply_patch","arguments":{}}]}`)
 	out, err := handleParallelToolUse(context.Background(), args, registry)
 	if err != nil {
 		t.Fatalf("handleParallelToolUse failed: %v", err)
@@ -82,14 +82,20 @@ func TestParallelToolUseBlocksDisallowedTools(t *testing.T) {
 	if err := json.Unmarshal(out, &resp); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
 	}
-	if len(resp.Results) != 1 {
-		t.Fatalf("results length = %d, want 1", len(resp.Results))
+	if len(resp.Results) != 2 {
+		t.Fatalf("results length = %d, want 2", len(resp.Results))
 	}
 	if resp.Results[0].Success {
-		t.Fatal("expected blocked tool call to fail")
+		t.Fatal("expected first blocked tool call to fail")
 	}
 	if resp.Results[0].Error == "" {
-		t.Fatal("expected error message for blocked tool")
+		t.Fatal("expected error message for first blocked tool")
+	}
+	if resp.Results[1].Success {
+		t.Fatal("expected second blocked tool call to fail")
+	}
+	if resp.Results[1].Error == "" {
+		t.Fatal("expected error message for second blocked tool")
 	}
 }
 
@@ -103,6 +109,22 @@ func TestParallelToolUseRejectsEmptyCalls(t *testing.T) {
 	}
 }
 
+func TestParallelToolUseRejectsSingleCall(t *testing.T) {
+	decl := &genai.FunctionDeclaration{Name: "echo"}
+	registry := agent.NewToolRegistry([]*agent.ToolDef{{
+		Declaration: decl,
+		Handler: func(ctx context.Context, args json.RawMessage) (json.RawMessage, error) {
+			return args, nil
+		},
+	}})
+
+	args := json.RawMessage(`{"tool_uses":[{"name":"echo","arguments":{"text":"hello"}}]}`)
+	_, err := handleParallelToolUse(context.Background(), args, registry)
+	if err == nil {
+		t.Fatal("expected validation error for single tool_use")
+	}
+}
+
 func TestParallelToolUseAcceptsRecipientNameAndParameters(t *testing.T) {
 	decl := &genai.FunctionDeclaration{Name: "echo"}
 	registry := agent.NewToolRegistry([]*agent.ToolDef{{
@@ -112,7 +134,7 @@ func TestParallelToolUseAcceptsRecipientNameAndParameters(t *testing.T) {
 		},
 	}})
 
-	args := json.RawMessage(`{"tool_uses":[{"recipient_name":"functions.echo","parameters":{"text":"hello"}}]}`)
+	args := json.RawMessage(`{"tool_uses":[{"recipient_name":"functions.echo","parameters":{"text":"hello"}},{"name":"echo","arguments":{"text":"world"}}]}`)
 	out, err := handleParallelToolUse(context.Background(), args, registry)
 	if err != nil {
 		t.Fatalf("handleParallelToolUse failed: %v", err)
@@ -124,10 +146,13 @@ func TestParallelToolUseAcceptsRecipientNameAndParameters(t *testing.T) {
 	if err := json.Unmarshal(out, &resp); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
 	}
-	if len(resp.Results) != 1 || !resp.Results[0].Success {
-		t.Fatalf("expected single successful result: %#v", resp.Results)
+	if len(resp.Results) != 2 {
+		t.Fatalf("expected two successful results: %#v", resp.Results)
 	}
 	if string(resp.Results[0].Response) != `{"text":"hello"}` {
 		t.Fatalf("unexpected response payload: %s", string(resp.Results[0].Response))
+	}
+	if string(resp.Results[1].Response) != `{"text":"world"}` {
+		t.Fatalf("unexpected response payload: %s", string(resp.Results[1].Response))
 	}
 }

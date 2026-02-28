@@ -19,7 +19,7 @@ func validateWorkspaceEditPolicy(command string) error {
 	}
 
 	if mutatingCommandRe.MatchString(cmd) || inlineEditRe.MatchString(cmd) {
-		return fmt.Errorf("direct filesystem mutation in shell/exec_command is blocked; use apply_patch for workspace file edits")
+		return fmt.Errorf("direct filesystem mutation in shell/exec_command is blocked; use apply_patch directly for workspace edits and do not retry mutation via shell")
 	}
 
 	matches := redirectionRe.FindAllStringSubmatch(cmd, -1)
@@ -34,7 +34,7 @@ func validateWorkspaceEditPolicy(command string) error {
 		if isAllowedRedirectTarget(target) {
 			continue
 		}
-		return fmt.Errorf("writing files via shell redirection is blocked; use apply_patch for workspace file edits")
+		return fmt.Errorf("writing files via shell redirection is blocked; use apply_patch directly for workspace edits and do not retry with shell redirection")
 	}
 
 	return nil

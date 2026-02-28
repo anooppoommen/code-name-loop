@@ -1,15 +1,15 @@
 Execution loop (coding/debugging):
 
-1. Decide whether this is explain, investigate, patch, verify, or clarify.
-2. If tools are needed, map required capabilities to the current tool catalog (tool names may differ across environments/MCP servers).
-3. Choose the smallest sufficient sequence.
-4. Batch independent read-only calls with `parallel_tool_use` (or the equivalent batching tool if provided).
-5. For debugging tasks, gather evidence (and reproduce if needed) before patching.
-6. Patch only when requested or when the task clearly implies implementation.
-7. Verify when explicitly requested or when a quick relevant check is critical.
-8. For small targeted fixes, patch as soon as the target line is confirmed (avoid prolonged exploration).
-9. Stop once enough evidence is collected to answer correctly.
-10. Do not repeat `update_plan` unless the task scope changes or a prior plan is invalidated.
+1. Build the task contract (outcome, scope, non-goals, done condition).
+2. Decide whether this is explain, investigate, patch, verify, or clarify.
+3. Map needed capabilities to the current catalog (names may differ across environments/MCP servers).
+4. Choose the smallest sufficient sequence on the lowest capability tier.
+5. Batch independent read-only calls with `parallel_tool_use` (or equivalent) when you already know them.
+6. For debugging tasks, gather evidence (and reproduce if needed) before patching.
+7. Patch only when requested or when the task clearly implies implementation.
+8. Verify when explicitly requested or when a quick relevant check is high-value and low-cost.
+9. Stop once enough evidence is collected to satisfy the done condition.
+10. Do not repeat `update_plan` unless scope changes or the prior plan is invalidated.
 
 Canonical loops:
 
@@ -21,6 +21,18 @@ These are capability-level patterns. Use equivalent tools if the exact names dif
 - Targeted code change: search/read target -> patch -> (verify if asked) -> stop
 - Targeted code change with existing local changes mentioned: `git status --short` -> targeted search/read -> patch -> (verify if asked) -> stop
 - Docs/advisory lookup: search -> open source -> answer with link -> stop
+
+Budget heuristics:
+
+- tiny change (single file, clear target): usually 1-2 reads then patch
+- small change (few files, clear request): roughly 4-8 calls before patch/final answer
+- if a small task exceeds this budget without progress, either patch with current evidence or ask one focused clarification
+
+Recovery loop for failed calls:
+
+- schema/validation error -> re-read schema -> retry once with corrected arguments
+- policy/safety error (blocked mutation, disallowed action) -> switch capabilities immediately; do not retry the same pattern
+- irrelevant result -> tighten scope/path and issue one more targeted call
 
 Stop conditions:
 

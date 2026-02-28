@@ -30,8 +30,9 @@ func NewShellTool(pm *ProcessManager, ws *models.Workspace) *agent.ToolDef {
 	return &agent.ToolDef{
 		Declaration: &genai.FunctionDeclaration{
 			Name: "shell",
-			Description: `Runs a read/diagnostic shell command and returns its output.
+			Description: `Runs diagnostic or verification shell commands and returns output.
 - Always set the workdir param when using the shell function. Do not use cd unless absolutely necessary.
+- Prefer structured repository tools (read/search/list equivalents) for local code inspection before using shell.
 - Do not use shell to create/edit/delete workspace files. Use apply_patch for all workspace file edits.
 - If the command does not finish before timeout_ms, this tool returns an error plus session_id and partial combined stdout/stderr. Use write_stdin with chars="" and that session_id to poll more output.`,
 			Parameters: &genai.Schema{
@@ -59,7 +60,9 @@ func NewShellTool(pm *ProcessManager, ws *models.Workspace) *agent.ToolDef {
 		Intents: []string{
 			"Use for quick read-only diagnostics when exec_command is not required",
 			"Use for verification commands (build/test/lint) after patching if needed",
+			"Prefer structured read/search/list tools for code inspection when available",
 			"Never use for writing workspace files; apply_patch is mandatory for edits",
+			"If blocked by workspace edit policy, switch to apply_patch instead of retrying shell mutation",
 		},
 	}
 }

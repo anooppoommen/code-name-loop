@@ -1,6 +1,9 @@
 package tools
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestValidateWorkspaceEditPolicy_BlocksMutatingCommands(t *testing.T) {
 	cases := []string{
@@ -11,16 +14,30 @@ func TestValidateWorkspaceEditPolicy_BlocksMutatingCommands(t *testing.T) {
 	}
 
 	for _, cmd := range cases {
-		if err := validateWorkspaceEditPolicy(cmd); err == nil {
+		err := validateWorkspaceEditPolicy(cmd)
+		if err == nil {
 			t.Fatalf("expected command to be blocked: %q", cmd)
+		}
+		if !strings.Contains(err.Error(), "apply_patch") {
+			t.Fatalf("expected remediation hint in error, got %q", err.Error())
+		}
+		if !strings.Contains(err.Error(), "do not retry") {
+			t.Fatalf("expected non-retry guidance in error, got %q", err.Error())
 		}
 	}
 }
 
 func TestValidateWorkspaceEditPolicy_BlocksWorkspaceRedirection(t *testing.T) {
 	cmd := "cat << 'EOF' > patch_script.py\nprint('x')\nEOF"
-	if err := validateWorkspaceEditPolicy(cmd); err == nil {
+	err := validateWorkspaceEditPolicy(cmd)
+	if err == nil {
 		t.Fatal("expected workspace redirection to be blocked")
+	}
+	if !strings.Contains(err.Error(), "apply_patch") {
+		t.Fatalf("expected remediation hint in error, got %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "do not retry") {
+		t.Fatalf("expected non-retry guidance in error, got %q", err.Error())
 	}
 }
 

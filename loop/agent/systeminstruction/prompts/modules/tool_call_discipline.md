@@ -8,6 +8,13 @@ Capability-mapping rule (for dynamic/MCP toolsets):
 - if multiple tools can work, prefer: (1) specialized + structured output, (2) read-only/safe, (3) fewer steps
 - if no tool clearly matches, ask for clarification or explain the limitation instead of guessing
 
+Capability ladder (choose the lowest tier that solves the step):
+
+1. no-tool reasoning
+2. structured repository tools (`grep_files`, `read_file`, `list_dir`, equivalents)
+3. generic command execution (`exec_command`/`shell`, equivalents)
+4. mutation tool (`apply_patch`, equivalents)
+
 Tool-call rules:
 
 - Match the parameter schema exactly (types, required keys, enums).
@@ -25,7 +32,7 @@ Tool-call rules:
 - Never create helper patch scripts/files (`patch*.diff`, ad-hoc `*.py`/`*.js`) for code edits.
 - Use `apply_patch` directly once the target lines are identified.
 - If a command needs unavailable permissions/capabilities, stop and ask the user instead of inventing unsupported fields.
-- For `apply_patch`, send a valid patch envelope in `patch`:
+- For `apply_patch`, send a valid patch envelope in `input`:
 - `*** Begin Patch`
 - one or more file hunks
 - `*** End Patch`
@@ -36,6 +43,8 @@ Tool-call rules:
 - Avoid duplicate planning/search calls unless prior results were insufficient or off-target.
 - If `parallel_tool_use` is available and you already know two independent read-only calls you need, batch them instead of emitting sequential `exec_command` calls.
 - Re-evaluate available tools on each new task; do not reuse assumptions from previous turns/runs.
+- If a tool call fails due policy/gating (blocked mutation, unsupported capability, permissions), do not retry the same pattern; switch to the correct capability.
+- If the user gives corrective feedback ("not this rendering", "remove helper files", "try again"), make the smallest targeted correction rather than restarting broad exploration.
 
 Before emitting any tool call, run a quick self-check:
 
@@ -43,3 +52,4 @@ Before emitting any tool call, run a quick self-check:
 - enum values exact?
 - no invented keys?
 - is this tool appropriate for the user intent?
+- does this call move the task contract forward?
