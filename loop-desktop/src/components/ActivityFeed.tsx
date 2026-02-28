@@ -9,7 +9,7 @@ import {
   UserRound,
   Workflow,
 } from 'lucide-react';
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { RefObject } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -25,7 +25,120 @@ interface ActivityFeedProps {
 
 const BOTTOM_THRESHOLD_PX = 24;
 
-export function ActivityFeed({ events, conversationId, containerRef }: ActivityFeedProps) {
+const ActivityItem = memo(function ActivityItem({
+  event,
+  visibleChars,
+  isCopied,
+  onCopyToolCommand,
+}: {
+  event: ActivityEvent;
+  visibleChars?: number;
+  isCopied: boolean;
+  onCopyToolCommand: (command: string, id: string) => void;
+}) {
+  const icon = iconFor(event.kind);
+
+  if (event.kind === 'status') {
+    return (
+      <div className="flex items-center gap-4 border-l-2 border-transparent px-6 py-1.5 text-[11px] font-normal text-neutral-500 opacity-75 transition-colors">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center text-neutral-600">
+          {icon}
+        </div>
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <span className="truncate">{event.title}</span>
+          {event.body ? <span className="truncate text-neutral-600">{event.body}</span> : null}
+        </div>
+      </div>
+    );
+  }
+
+  const toolPhase = toolPhaseLabel(event);
+  const headline = eventHeadline(event);
+  const visual = visualStyleFor(event);
+
+  const isUser = event.kind === 'user';
+  const isAsst = event.kind === 'assistant';
+  const isSystemEvent = !isUser && !isAsst;
+  const bodyText = primaryTextForEvent(event, headline);
+  const renderedText = bodyText.slice(0, visibleChars ?? bodyText.length);
+  const copyCommand = toolCommandForCopy(event);
+
+  return (
+    <article
+      className={`group flex gap-4 border-l-2 px-6 py-3 transition-colors ${visual.row}`}
+    >
+      <div className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${visual.icon}`}>
+        {isUser ? <UserRound size={20} /> : isAsst ? <Bot size={20} /> : icon}
+      </div>
+
+      <div className="flex min-w-0 flex-col gap-1">
+        <div className="flex flex-wrap items-baseline gap-2">
+          <span className="font-semibold text-neutral-200">
+            {isUser ? 'You' : isAsst ? 'Agent' : 'System'}
+          </span>
+          <time className="text-[11px] font-medium text-neutral-500">
+            {new Date(event.timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+          </time>
+
+          {isSystemEvent ? (
+            <div className="ml-2 flex items-center gap-2">
+              <span className="text-[10px] font-semibold uppercase tracking-wider text-neutral-500">
+                {labelFor(event.kind)}
+              </span>
+              {event.tool?.callId ? (
+                <span className="font-mono text-[10px] text-neutral-500">
+                  {shortID(event.tool.callId)}
+                </span>
+              ) : null}
+              {event.tool ? (
+                <span
+                  className={`rounded px-1.5 py-0.5 text-[9px] font-bold uppercase ${
+                    event.tool.success === false
+                      ? 'bg-red-500/10 text-red-500'
+                      : 'bg-blue-500/10 text-blue-500'
+                  }`}
+                >
+                  {toolPhase}
+                </span>
+              ) : null}
+              {copyCommand ? (
+                <button
+                  type="button"
+                  className="rounded border border-neutral-700 px-1.5 py-0.5 text-[10px] text-neutral-400 hover:border-neutral-500 hover:text-neutral-200"
+                  onClick={() => onCopyToolCommand(copyCommand, event.id)}
+                >
+                  {isCopied ? 'Copied' : 'Copy cmd'}
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+
+        <div className={`text-[15px] leading-relaxed ${visual.copy}`}>
+          <MarkdownBlock text={renderedText} />
+
+          {(event.tool?.name === 'apply_patch' || event.tool?.name?.endsWith(':apply_patch')) && (event.tool.command || event.body) ? (
+            <div className="mt-2 text-xs">
+              {event.body && (event.tool.phase === 'result' || event.tool.error) && event.body !== event.tool.command ? (
+                <div className={`mb-2 whitespace-pre-wrap rounded-md px-3 py-2 text-xs leading-relaxed ${visual.detail}`}>
+                  {event.body}
+                </div>
+              ) : null}
+              <PatchViewer patchText={event.tool.command || event.body || ''} />
+            </div>
+          ) : isSystemEvent && event.kind !== 'thought' && event.body ? (
+            <pre className={`mt-2 max-h-96 overflow-y-auto whitespace-pre-wrap rounded-md px-3 py-2 text-xs leading-relaxed scrollbar-thin ${visual.detail}`}>
+              {event.body}
+            </pre>
+          ) : null}
+          {event.streaming ? <span className="animate-pulse text-neutral-500">▍</span> : null}
+        </div>
+      </div>
+    </article>
+  );
+});
+
+export const ActivityFeed = memo(function ActivityFeed({ events, conversationId, containerRef }: ActivityFeedProps) {
   const [visibleChars, setVisibleChars] = useState<Record<string, number>>({});
   const [copiedToolID, setCopiedToolID] = useState('');
   const [isAtBottom, setIsAtBottom] = useState(true);
@@ -177,6 +290,10 @@ export function ActivityFeed({ events, conversationId, containerRef }: ActivityF
     return () => window.cancelAnimationFrame(frame);
   }, [events, scrollToBottom, visibleChars]);
 
+  const handleCopyToolCommand = useCallback((command: string, eventId: string) => {
+    void copyToolCommand(command, eventId, setCopiedToolID);
+  }, []);
+
   return (
     <section className="relative flex h-full min-h-0 flex-col bg-transparent">
       <div
@@ -186,111 +303,15 @@ export function ActivityFeed({ events, conversationId, containerRef }: ActivityF
         {events.length === 0 ? (
           <p className="m-0 px-4 py-3 text-sm text-neutral-500">No run activity yet. Send a task to start streaming events.</p>
         ) : (
-          events.map((event) => {
-            const icon = iconFor(event.kind);
-
-            if (event.kind === 'status') {
-              return (
-                <div
-                  key={event.id}
-                  className="flex items-center gap-4 border-l-2 border-transparent px-6 py-1.5 text-[11px] font-normal text-neutral-500 opacity-75 transition-colors"
-                >
-                  <div className="flex h-9 w-9 shrink-0 items-center justify-center text-neutral-600">
-                    {icon}
-                  </div>
-                  <div className="flex min-w-0 flex-1 items-center gap-2">
-                    <span className="truncate">{event.title}</span>
-                    {event.body ? <span className="truncate text-neutral-600">{event.body}</span> : null}
-                  </div>
-                </div>
-              );
-            }
-
-            const toolPhase = toolPhaseLabel(event);
-            const headline = eventHeadline(event);
-            const visual = visualStyleFor(event);
-
-            const isUser = event.kind === 'user';
-            const isAsst = event.kind === 'assistant';
-            const isSystemEvent = !isUser && !isAsst;
-            const bodyText = primaryTextForEvent(event, headline);
-            const renderedText = bodyText.slice(0, visibleChars[event.id] ?? bodyText.length);
-            const copyCommand = toolCommandForCopy(event);
-
-            return (
-              <article
-                key={event.id}
-                className={`group flex gap-4 border-l-2 px-6 py-3 transition-colors ${visual.row}`}
-              >
-                <div className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${visual.icon}`}>
-                  {isUser ? <UserRound size={20} /> : isAsst ? <Bot size={20} /> : icon}
-                </div>
-
-                <div className="flex min-w-0 flex-col gap-1">
-                  <div className="flex flex-wrap items-baseline gap-2">
-                    <span className="font-semibold text-neutral-200">
-                      {isUser ? 'You' : isAsst ? 'Agent' : 'System'}
-                    </span>
-                    <time className="text-[11px] font-medium text-neutral-500">
-                      {new Date(event.timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
-                    </time>
-
-                    {isSystemEvent ? (
-                      <div className="ml-2 flex items-center gap-2">
-                        <span className="text-[10px] font-semibold uppercase tracking-wider text-neutral-500">
-                          {labelFor(event.kind)}
-                        </span>
-                        {event.tool?.callId ? (
-                          <span className="font-mono text-[10px] text-neutral-500">
-                            {shortID(event.tool.callId)}
-                          </span>
-                        ) : null}
-                        {event.tool ? (
-                          <span
-                            className={`rounded px-1.5 py-0.5 text-[9px] font-bold uppercase ${event.tool.success === false
-                              ? 'bg-red-500/10 text-red-500'
-                              : 'bg-blue-500/10 text-blue-500'
-                              }`}
-                          >
-                            {toolPhase}
-                          </span>
-                        ) : null}
-                        {copyCommand ? (
-                          <button
-                            type="button"
-                            className="rounded border border-neutral-700 px-1.5 py-0.5 text-[10px] text-neutral-400 hover:border-neutral-500 hover:text-neutral-200"
-                            onClick={() => void copyToolCommand(copyCommand, event.id, setCopiedToolID)}
-                          >
-                            {copiedToolID === event.id ? 'Copied' : 'Copy cmd'}
-                          </button>
-                        ) : null}
-                      </div>
-                    ) : null}
-                  </div>
-
-                  <div className={`text-[15px] leading-relaxed ${visual.copy}`}>
-                    <MarkdownBlock text={renderedText} />
-
-                    {(event.tool?.name === 'apply_patch' || event.tool?.name?.endsWith(':apply_patch')) && (event.tool.command || event.body) ? (
-                      <div className="mt-2 text-xs">
-                        {event.body && (event.tool.phase === 'result' || event.tool.error) && event.body !== event.tool.command ? (
-                          <div className={`mb-2 whitespace-pre-wrap rounded-md px-3 py-2 text-xs leading-relaxed ${visual.detail}`}>
-                            {event.body}
-                          </div>
-                        ) : null}
-                        <PatchViewer patchText={event.tool.command || event.body || ''} />
-                      </div>
-                    ) : isSystemEvent && event.kind !== 'thought' && event.body ? (
-                      <pre className={`mt-2 max-h-96 overflow-y-auto whitespace-pre-wrap rounded-md px-3 py-2 text-xs leading-relaxed scrollbar-thin ${visual.detail}`}>
-                        {event.body}
-                      </pre>
-                    ) : null}
-                    {event.streaming ? <span className="animate-pulse text-neutral-500">▍</span> : null}
-                  </div>
-                </div>
-              </article>
-            );
-          })
+          events.map((event) => (
+            <ActivityItem
+              key={event.id}
+              event={event}
+              visibleChars={visibleChars[event.id]}
+              isCopied={copiedToolID === event.id}
+              onCopyToolCommand={handleCopyToolCommand}
+            />
+          ))
         )}
       </div>
       {!isAtBottom && events.length > 0 ? (
@@ -306,7 +327,7 @@ export function ActivityFeed({ events, conversationId, containerRef }: ActivityF
       ) : null}
     </section>
   );
-}
+});
 
 function toolCommandForCopy(event: ActivityEvent): string {
   if (event.kind !== 'tool' || !event.tool?.command) {
@@ -408,7 +429,7 @@ function primaryTextForEvent(event: ActivityEvent, headline: string): string {
   return headline;
 }
 
-function MarkdownBlock({ text }: { text: string }) {
+const MarkdownBlock = memo(function MarkdownBlock({ text }: { text: string }) {
   return (
     <div className="m-0 break-words text-[15px] leading-relaxed">
       <ReactMarkdown
@@ -482,7 +503,7 @@ function MarkdownBlock({ text }: { text: string }) {
       </ReactMarkdown>
     </div>
   );
-}
+});
 
 function labelFor(kind: ActivityKind): string {
   switch (kind) {
