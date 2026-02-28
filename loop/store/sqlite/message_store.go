@@ -271,7 +271,7 @@ func scanMessage(row *sql.Row) (*models.Message, error) {
 }
 
 func scanMessages(rows *sql.Rows) ([]*models.Message, error) {
-	var result []*models.Message
+	result := make([]*models.Message, 0)
 	for rows.Next() {
 		msg := &models.Message{}
 		var partsJSON, metaJSON, attachJSON string

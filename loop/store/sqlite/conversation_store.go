@@ -147,7 +147,7 @@ func (s *sqliteConversationStore) Delete(ctx context.Context, id models.Conversa
 // ----- helpers -----
 
 func scanConversations(rows *sql.Rows) ([]*models.Conversation, error) {
-	var result []*models.Conversation
+	result := make([]*models.Conversation, 0)
 	for rows.Next() {
 		conv := &models.Conversation{}
 		if err := rows.Scan(
