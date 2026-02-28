@@ -340,7 +340,7 @@ export function useLoopDesktop(): LoopDesktopController {
   }, [backendUrl, pushNotice, selectedWorkspaceId]);
 
   const refreshConversationsByWorkspace = useCallback(
-    async (workspaceId: string): Promise<void> => {
+    async (workspaceId: string, preserveEmpty = false): Promise<void> => {
       const response = await requestJson<unknown>({
         baseUrl: backendUrl,
         endpointPath: `/workspaces/${workspaceId}/conversations`,
@@ -368,11 +368,15 @@ export function useLoopDesktop(): LoopDesktopController {
 
       setConversations(rootsOnly);
 
-      if (!rootsOnly.some((conversation) => conversation.id === selectedConversationId)) {
+      const currentSelectedId = selectedConversationIdRef.current;
+
+      if (preserveEmpty && currentSelectedId === '') {
+        // Do nothing, keep it empty
+      } else if (!rootsOnly.some((conversation) => conversation.id === currentSelectedId)) {
         setSelectedConversationId(rootsOnly[0]?.id ?? '');
       }
     },
-    [backendUrl, pushActivity, selectedConversationId],
+    [backendUrl, pushActivity],
   );
 
   const loadConversationHistory = useCallback(
@@ -579,7 +583,7 @@ export function useLoopDesktop(): LoopDesktopController {
         return null;
       }
 
-      await refreshConversationsByWorkspace(selectedWorkspaceId);
+      await refreshConversationsByWorkspace(selectedWorkspaceId, true);
       return conversationId;
     },
     [backendUrl, pushNotice, refreshConversationsByWorkspace, selectedWorkspaceId],
@@ -617,7 +621,7 @@ export function useLoopDesktop(): LoopDesktopController {
 
       setConversations((prev) => prev.filter((conversation) => conversation.id !== conversationId));
       pushNotice('success', `Deleted conversation "${displayName}".`);
-      await refreshConversationsByWorkspace(selectedWorkspaceId);
+      await refreshConversationsByWorkspace(selectedWorkspaceId, selectedConversationId === '' && !wasSelected);
     },
     [
       backendUrl,
@@ -656,7 +660,7 @@ export function useLoopDesktop(): LoopDesktopController {
         )
       );
 
-      await refreshConversationsByWorkspace(selectedWorkspaceId);
+      await refreshConversationsByWorkspace(selectedWorkspaceId, true);
     },
     [backendUrl, pushNotice, refreshConversationsByWorkspace, selectedWorkspaceId],
   );
@@ -997,19 +1001,14 @@ export function useLoopDesktop(): LoopDesktopController {
   const newConversation = useCallback(async (): Promise<void> => {
     clearConversationView();
     setSelectedConversationId('');
-    const conversationId = await createConversation('New thread');
-    if (!conversationId) {
-      return;
-    }
-    setSelectedConversationId(conversationId);
     clearNotices();
-  }, [clearConversationView, clearNotices, createConversation]);
+  }, [clearConversationView, clearNotices]);
 
   const refreshConversations = useCallback(async (): Promise<void> => {
     if (!selectedWorkspaceId) {
       return;
     }
-    await refreshConversationsByWorkspace(selectedWorkspaceId);
+    await refreshConversationsByWorkspace(selectedWorkspaceId, true);
   }, [refreshConversationsByWorkspace, selectedWorkspaceId]);
 
   useEffect(() => {

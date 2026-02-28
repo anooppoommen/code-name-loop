@@ -23,7 +23,7 @@ export function AppHeader({ workspaceName, conversationTitle, isSending, isSideb
           <span className="max-w-[140px] truncate">{workspaceName}</span>
           <span className="opacity-50">/</span>
           <span className="max-w-[200px] truncate text-neutral-300">
-            {conversationTitle || 'No active thread'}
+            {conversationTitle || 'New thread'}
           </span>
         </div>
       </div>
