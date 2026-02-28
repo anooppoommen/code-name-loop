@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"loop/agent"
+	"loop/models"
 
 	"google.golang.org/genai"
 )
@@ -27,7 +28,8 @@ type readFileArgs struct {
 }
 
 // NewReadFileTool creates the read_file tool (slice mode).
-func NewReadFileTool() *agent.ToolDef {
+func NewReadFileTool(ws *models.Workspace) *agent.ToolDef {
+	guard := newPathGuard(ws)
 	return &agent.ToolDef{
 		Declaration: &genai.FunctionDeclaration{
 			Name:        "read_file",
@@ -51,11 +53,13 @@ func NewReadFileTool() *agent.ToolDef {
 				Required: []string{"file_path"},
 			},
 		},
-		Handler: handleReadFile,
+		Handler: func(ctx context.Context, args json.RawMessage) (json.RawMessage, error) {
+			return handleReadFile(ctx, args, guard)
+		},
 	}
 }
 
-func handleReadFile(_ context.Context, args json.RawMessage) (json.RawMessage, error) {
+func handleReadFile(_ context.Context, args json.RawMessage, guard *pathGuard) (json.RawMessage, error) {
 	var a readFileArgs
 	if err := json.Unmarshal(args, &a); err != nil {
 		return nil, fmt.Errorf("failed to parse arguments: %w", err)
@@ -85,7 +89,12 @@ func handleReadFile(_ context.Context, args json.RawMessage) (json.RawMessage, e
 		return nil, fmt.Errorf("limit must be greater than zero")
 	}
 
-	file, err := os.Open(a.FilePath)
+	filePath, err := guard.requireAllowedPath(a.FilePath)
+	if err != nil {
+		return nil, err
+	}
+
+	file, err := os.Open(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read file: %w", err)
 	}

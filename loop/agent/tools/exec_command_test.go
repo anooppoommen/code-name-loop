@@ -10,12 +10,15 @@ import (
 func TestExecCommand_BasicEcho(t *testing.T) {
 	pm := NewProcessManager()
 	defer pm.Cleanup()
+	dir := t.TempDir()
+	guard := newPathGuard(testWorkspace(dir))
 
 	args, _ := json.Marshal(map[string]any{
-		"cmd": "echo 'hello exec'",
+		"cmd":     "echo 'hello exec'",
+		"workdir": dir,
 	})
 
-	result, err := handleExecCommand(context.Background(), args, pm)
+	result, err := handleExecCommand(context.Background(), args, pm, guard)
 	if err != nil {
 		t.Fatalf("handleExecCommand failed: %v", err)
 	}
@@ -32,15 +35,18 @@ func TestExecCommand_BasicEcho(t *testing.T) {
 func TestExecCommand_LongRunningWithWriteStdin(t *testing.T) {
 	pm := NewProcessManager()
 	defer pm.Cleanup()
+	dir := t.TempDir()
+	guard := newPathGuard(testWorkspace(dir))
 
 	// Start cat with a short yield time so we get back while it's running.
 	yieldMs := int64(200)
 	args, _ := json.Marshal(map[string]any{
 		"cmd":           "cat",
 		"yield_time_ms": yieldMs,
+		"workdir":       dir,
 	})
 
-	execResult, err := handleExecCommand(context.Background(), args, pm)
+	execResult, err := handleExecCommand(context.Background(), args, pm, guard)
 	if err != nil {
 		t.Fatalf("handleExecCommand failed: %v", err)
 	}
@@ -100,12 +106,15 @@ func TestExecCommand_LongRunningWithWriteStdin(t *testing.T) {
 
 func TestExecCommand_EmptyCmd(t *testing.T) {
 	pm := NewProcessManager()
+	dir := t.TempDir()
+	guard := newPathGuard(testWorkspace(dir))
 
 	args, _ := json.Marshal(map[string]any{
-		"cmd": "",
+		"cmd":     "",
+		"workdir": dir,
 	})
 
-	_, err := handleExecCommand(context.Background(), args, pm)
+	_, err := handleExecCommand(context.Background(), args, pm, guard)
 	if err == nil {
 		t.Fatal("expected error for empty cmd")
 	}

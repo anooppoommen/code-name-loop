@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"loop/agent"
 	"loop/agent/tools"
@@ -137,13 +138,13 @@ func (h *ConversationHandler) Reply(w http.ResponseWriter, r *http.Request) {
 
 	// Build the base tool list (without spawn_thread/await_thread initially).
 	baseTools := []*agent.ToolDef{
-		tools.NewShellTool(),
-		tools.NewExecCommandTool(h.pm),
+		tools.NewShellTool(ws),
+		tools.NewExecCommandTool(h.pm, ws),
 		tools.NewWriteStdinTool(h.pm),
-		tools.NewApplyPatchTool(),
-		tools.NewReadFileTool(),
-		tools.NewListDirTool(),
-		tools.NewGrepFilesTool(),
+		tools.NewApplyPatchTool(ws),
+		tools.NewReadFileTool(ws),
+		tools.NewListDirTool(ws),
+		tools.NewGrepFilesTool(ws),
 	}
 
 	// spawn_thread passes the full tool list to child sessions so they have
@@ -184,19 +185,34 @@ func (h *ConversationHandler) Reply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Stream events to the client.
-	for event := range events {
-		data, err := json.Marshal(event)
-		if err != nil {
-			continue
-		}
+	// Stream events to the client and emit keepalives while the model/tool loop is busy.
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
 
-		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event.Kind, data)
-		flusher.Flush()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ticker.C:
+			// SSE comment line keeps proxies/clients alive during long model or tool calls.
+			fmt.Fprintf(w, ": keep-alive\n\n")
+			flusher.Flush()
+		case event, ok := <-events:
+			if !ok {
+				return
+			}
+			data, err := json.Marshal(event)
+			if err != nil {
+				continue
+			}
 
-		// Stop streaming on error or turn complete.
-		if event.Kind == agent.EventTurnComplete || event.Kind == agent.EventError {
-			break
+			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event.Kind, data)
+			flusher.Flush()
+
+			// Stop streaming on error or turn complete.
+			if event.Kind == agent.EventTurnComplete || event.Kind == agent.EventError {
+				return
+			}
 		}
 	}
 }

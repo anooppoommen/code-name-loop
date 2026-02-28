@@ -11,6 +11,7 @@ import (
 
 func TestReadFile_BasicRange(t *testing.T) {
 	dir := t.TempDir()
+	guard := newPathGuard(testWorkspace(dir))
 	path := filepath.Join(dir, "test.txt")
 	os.WriteFile(path, []byte("alpha\nbeta\ngamma\n"), 0o644)
 
@@ -20,7 +21,7 @@ func TestReadFile_BasicRange(t *testing.T) {
 		"limit":     2,
 	})
 
-	result, err := handleReadFile(context.Background(), args)
+	result, err := handleReadFile(context.Background(), args, guard)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -39,6 +40,7 @@ func TestReadFile_BasicRange(t *testing.T) {
 
 func TestReadFile_OffsetExceedsLength(t *testing.T) {
 	dir := t.TempDir()
+	guard := newPathGuard(testWorkspace(dir))
 	path := filepath.Join(dir, "test.txt")
 	os.WriteFile(path, []byte("only\n"), 0o644)
 
@@ -47,18 +49,19 @@ func TestReadFile_OffsetExceedsLength(t *testing.T) {
 		"offset":    100,
 	})
 
-	_, err := handleReadFile(context.Background(), args)
+	_, err := handleReadFile(context.Background(), args, guard)
 	if err == nil {
 		t.Fatal("expected error for offset exceeding length")
 	}
 }
 
 func TestReadFile_RequiresAbsolutePath(t *testing.T) {
+	guard := newPathGuard(testWorkspace(t.TempDir()))
 	args, _ := json.Marshal(map[string]any{
 		"file_path": "relative/path.txt",
 	})
 
-	_, err := handleReadFile(context.Background(), args)
+	_, err := handleReadFile(context.Background(), args, guard)
 	if err == nil {
 		t.Fatal("expected error for relative path")
 	}
@@ -66,12 +69,13 @@ func TestReadFile_RequiresAbsolutePath(t *testing.T) {
 
 func TestReadFile_TruncatesLongLines(t *testing.T) {
 	dir := t.TempDir()
+	guard := newPathGuard(testWorkspace(dir))
 	path := filepath.Join(dir, "long.txt")
 	longLine := strings.Repeat("x", 600)
 	os.WriteFile(path, []byte(longLine+"\n"), 0o644)
 
 	args, _ := json.Marshal(map[string]any{"file_path": path})
-	result, err := handleReadFile(context.Background(), args)
+	result, err := handleReadFile(context.Background(), args, guard)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -88,11 +92,12 @@ func TestReadFile_TruncatesLongLines(t *testing.T) {
 
 func TestReadFile_CRLF(t *testing.T) {
 	dir := t.TempDir()
+	guard := newPathGuard(testWorkspace(dir))
 	path := filepath.Join(dir, "crlf.txt")
 	os.WriteFile(path, []byte("one\r\ntwo\r\n"), 0o644)
 
 	args, _ := json.Marshal(map[string]any{"file_path": path})
-	result, _ := handleReadFile(context.Background(), args)
+	result, _ := handleReadFile(context.Background(), args, guard)
 
 	var resp map[string]any
 	json.Unmarshal(result, &resp)

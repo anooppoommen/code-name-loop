@@ -3,16 +3,21 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
 func TestShell_EchoCommand(t *testing.T) {
+	dir := t.TempDir()
+	guard := newPathGuard(testWorkspace(dir))
 	args, _ := json.Marshal(map[string]any{
 		"command": "echo 'hello world'",
+		"workdir": dir,
 	})
 
-	result, err := handleShell(context.Background(), args)
+	result, err := handleShell(context.Background(), args, guard)
 	if err != nil {
 		t.Fatalf("handleShell failed: %v", err)
 	}
@@ -33,11 +38,14 @@ func TestShell_EchoCommand(t *testing.T) {
 }
 
 func TestShell_NonZeroExit(t *testing.T) {
+	dir := t.TempDir()
+	guard := newPathGuard(testWorkspace(dir))
 	args, _ := json.Marshal(map[string]any{
 		"command": "exit 42",
+		"workdir": dir,
 	})
 
-	result, err := handleShell(context.Background(), args)
+	result, err := handleShell(context.Background(), args, guard)
 	if err != nil {
 		t.Fatalf("handleShell failed: %v", err)
 	}
@@ -52,12 +60,19 @@ func TestShell_NonZeroExit(t *testing.T) {
 }
 
 func TestShell_WorkDir(t *testing.T) {
+	dir := t.TempDir()
+	workdir := filepath.Join(dir, "nested")
+	if err := os.MkdirAll(workdir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	guard := newPathGuard(testWorkspace(dir))
+
 	args, _ := json.Marshal(map[string]any{
 		"command": "pwd",
-		"workdir": "/tmp",
+		"workdir": workdir,
 	})
 
-	result, err := handleShell(context.Background(), args)
+	result, err := handleShell(context.Background(), args, guard)
 	if err != nil {
 		t.Fatalf("handleShell failed: %v", err)
 	}
@@ -66,18 +81,20 @@ func TestShell_WorkDir(t *testing.T) {
 	json.Unmarshal(result, &resp)
 	output := resp["output"].(string)
 
-	// /tmp may resolve to /private/tmp on macOS.
-	if !strings.Contains(output, "tmp") {
-		t.Errorf("expected '/tmp' in output, got %q", output)
+	if !strings.Contains(output, "nested") {
+		t.Errorf("expected workdir path in output, got %q", output)
 	}
 }
 
 func TestShell_EmptyCommand(t *testing.T) {
+	dir := t.TempDir()
+	guard := newPathGuard(testWorkspace(dir))
 	args, _ := json.Marshal(map[string]any{
 		"command": "",
+		"workdir": dir,
 	})
 
-	_, err := handleShell(context.Background(), args)
+	_, err := handleShell(context.Background(), args, guard)
 	if err == nil {
 		t.Fatal("expected error for empty command")
 	}

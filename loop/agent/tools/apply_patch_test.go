@@ -1,11 +1,21 @@
 package tools
 
 import (
+	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"loop/models"
 )
+
+func guardForDir(dir string) *pathGuard {
+	return newPathGuard(&models.Workspace{
+		CanonicalRootPath: dir,
+	})
+}
 
 func TestApplyPatch_AddFile(t *testing.T) {
 	dir := t.TempDir()
@@ -16,7 +26,7 @@ func TestApplyPatch_AddFile(t *testing.T) {
 +Second line
 *** End Patch`
 
-	result, err := applyPatch(dir, patch)
+	result, err := applyPatch(dir, patch, guardForDir(dir))
 	if err != nil {
 		t.Fatalf("applyPatch failed: %v", err)
 	}
@@ -39,7 +49,7 @@ func TestApplyPatch_DeleteFile(t *testing.T) {
 *** Delete File: obsolete.txt
 *** End Patch`
 
-	result, err := applyPatch(dir, patch)
+	result, err := applyPatch(dir, patch, guardForDir(dir))
 	if err != nil {
 		t.Fatalf("applyPatch failed: %v", err)
 	}
@@ -60,7 +70,7 @@ func TestApplyPatch_UpdateFile(t *testing.T) {
 
 	patch := "*** Begin Patch\n*** Update File: app.py\n@@ def greet():\n def greet():\n-    print(\"Hi\")\n+    print(\"Hello, world!\")\n     return True\n*** End Patch"
 
-	result, err := applyPatch(dir, patch)
+	result, err := applyPatch(dir, patch, guardForDir(dir))
 	if err != nil {
 		t.Fatalf("applyPatch failed: %v", err)
 	}
@@ -89,7 +99,7 @@ func TestApplyPatch_UpdateFileWithMove(t *testing.T) {
  content
 *** End Patch`
 
-	result, err := applyPatch(dir, patch)
+	result, err := applyPatch(dir, patch, guardForDir(dir))
 	if err != nil {
 		t.Fatalf("applyPatch failed: %v", err)
 	}
@@ -122,7 +132,7 @@ func TestApplyPatch_MultiFile(t *testing.T) {
 *** End Patch`
 
 	// temp.txt doesn't exist but delete should succeed silently.
-	result, err := applyPatch(dir, patch)
+	result, err := applyPatch(dir, patch, guardForDir(dir))
 	if err != nil {
 		t.Fatalf("applyPatch failed: %v", err)
 	}
@@ -138,7 +148,7 @@ func TestApplyPatch_MultiFile(t *testing.T) {
 func TestApplyPatch_InvalidPatch(t *testing.T) {
 	dir := t.TempDir()
 
-	_, err := applyPatch(dir, "not a patch")
+	_, err := applyPatch(dir, "not a patch", guardForDir(dir))
 	if err == nil {
 		t.Fatal("expected error for invalid patch")
 	}
@@ -152,7 +162,7 @@ func TestApplyPatch_AddFileWithSubdirs(t *testing.T) {
 +nested content
 *** End Patch`
 
-	_, err := applyPatch(dir, patch)
+	_, err := applyPatch(dir, patch, guardForDir(dir))
 	if err != nil {
 		t.Fatalf("applyPatch failed: %v", err)
 	}
@@ -160,5 +170,31 @@ func TestApplyPatch_AddFileWithSubdirs(t *testing.T) {
 	content, _ := os.ReadFile(filepath.Join(dir, "deep", "nested", "file.txt"))
 	if !strings.Contains(string(content), "nested content") {
 		t.Error("file should have been created with correct content")
+	}
+}
+
+func TestHandleApplyPatch_UsesBaseDir(t *testing.T) {
+	dir := t.TempDir()
+	args, err := json.Marshal(applyPatchArgs{
+		Input: `*** Begin Patch
+*** Add File: scoped.txt
++scoped content
+*** End Patch`,
+	})
+	if err != nil {
+		t.Fatalf("marshal args: %v", err)
+	}
+
+	_, err = handleApplyPatch(context.Background(), args, guardForDir(dir))
+	if err != nil {
+		t.Fatalf("handleApplyPatch failed: %v", err)
+	}
+
+	content, err := os.ReadFile(filepath.Join(dir, "scoped.txt"))
+	if err != nil {
+		t.Fatalf("expected file in base dir: %v", err)
+	}
+	if !strings.Contains(string(content), "scoped content") {
+		t.Fatalf("unexpected content: %q", string(content))
 	}
 }

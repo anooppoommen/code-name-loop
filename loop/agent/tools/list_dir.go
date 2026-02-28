@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"loop/agent"
+	"loop/models"
 
 	"google.golang.org/genai"
 )
@@ -30,7 +31,8 @@ type listDirArgs struct {
 }
 
 // NewListDirTool creates the list_dir tool.
-func NewListDirTool() *agent.ToolDef {
+func NewListDirTool(ws *models.Workspace) *agent.ToolDef {
+	guard := newPathGuard(ws)
 	return &agent.ToolDef{
 		Declaration: &genai.FunctionDeclaration{
 			Name:        "list_dir",
@@ -58,7 +60,9 @@ func NewListDirTool() *agent.ToolDef {
 				Required: []string{"dir_path"},
 			},
 		},
-		Handler: handleListDir,
+		Handler: func(ctx context.Context, args json.RawMessage) (json.RawMessage, error) {
+			return handleListDir(ctx, args, guard)
+		},
 	}
 }
 
@@ -78,7 +82,7 @@ const (
 	kindOther
 )
 
-func handleListDir(_ context.Context, args json.RawMessage) (json.RawMessage, error) {
+func handleListDir(_ context.Context, args json.RawMessage, guard *pathGuard) (json.RawMessage, error) {
 	var a listDirArgs
 	if err := json.Unmarshal(args, &a); err != nil {
 		return nil, fmt.Errorf("failed to parse arguments: %w", err)
@@ -90,6 +94,10 @@ func handleListDir(_ context.Context, args json.RawMessage) (json.RawMessage, er
 
 	if !filepath.IsAbs(a.DirPath) {
 		return nil, fmt.Errorf("dir_path must be an absolute path")
+	}
+	dirPath, err := guard.requireAllowedPath(a.DirPath)
+	if err != nil {
+		return nil, err
 	}
 
 	offset := listDirDefaultOffset
@@ -116,13 +124,13 @@ func handleListDir(_ context.Context, args json.RawMessage) (json.RawMessage, er
 		return nil, fmt.Errorf("depth must be greater than zero")
 	}
 
-	entries, err := collectEntries(a.DirPath, "", depth)
+	entries, err := collectEntries(dirPath, "", depth)
 	if err != nil {
 		return nil, err
 	}
 
 	if len(entries) == 0 {
-		return json.Marshal(map[string]any{"output": fmt.Sprintf("Absolute path: %s", a.DirPath)})
+		return json.Marshal(map[string]any{"output": fmt.Sprintf("Absolute path: %s", dirPath)})
 	}
 
 	// Sort by relative name.
@@ -144,7 +152,7 @@ func handleListDir(_ context.Context, args json.RawMessage) (json.RawMessage, er
 	selected := entries[startIdx:endIdx]
 
 	var output []string
-	output = append(output, fmt.Sprintf("Absolute path: %s", a.DirPath))
+	output = append(output, fmt.Sprintf("Absolute path: %s", dirPath))
 
 	for _, e := range selected {
 		output = append(output, formatEntryLine(e))

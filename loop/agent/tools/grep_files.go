@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"loop/agent"
+	"loop/models"
 
 	"google.golang.org/genai"
 )
@@ -29,7 +30,8 @@ type grepFilesArgs struct {
 }
 
 // NewGrepFilesTool creates the grep_files tool.
-func NewGrepFilesTool() *agent.ToolDef {
+func NewGrepFilesTool(ws *models.Workspace) *agent.ToolDef {
+	guard := newPathGuard(ws)
 	return &agent.ToolDef{
 		Declaration: &genai.FunctionDeclaration{
 			Name:        "grep_files",
@@ -57,11 +59,13 @@ func NewGrepFilesTool() *agent.ToolDef {
 				Required: []string{"pattern"},
 			},
 		},
-		Handler: handleGrepFiles,
+		Handler: func(ctx context.Context, args json.RawMessage) (json.RawMessage, error) {
+			return handleGrepFiles(ctx, args, guard)
+		},
 	}
 }
 
-func handleGrepFiles(ctx context.Context, args json.RawMessage) (json.RawMessage, error) {
+func handleGrepFiles(ctx context.Context, args json.RawMessage, guard *pathGuard) (json.RawMessage, error) {
 	var a grepFilesArgs
 	if err := json.Unmarshal(args, &a); err != nil {
 		return nil, fmt.Errorf("failed to parse arguments: %w", err)
@@ -85,16 +89,15 @@ func handleGrepFiles(ctx context.Context, args json.RawMessage) (json.RawMessage
 
 	searchPath := a.Path
 	if searchPath == "" {
-		cwd, err := os.Getwd()
-		if err != nil {
-			return nil, fmt.Errorf("failed to get working directory: %w", err)
-		}
-		searchPath = cwd
+		searchPath = guard.workspaceRoot
 	}
 
 	if !filepath.IsAbs(searchPath) {
-		cwd, _ := os.Getwd()
-		searchPath = filepath.Join(cwd, searchPath)
+		searchPath = filepath.Join(guard.workspaceRoot, searchPath)
+	}
+	searchPath, err := guard.requireAllowedPath(searchPath)
+	if err != nil {
+		return nil, err
 	}
 
 	// Verify path exists.

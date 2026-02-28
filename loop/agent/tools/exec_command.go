@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"loop/agent"
+	"loop/models"
 
 	"google.golang.org/genai"
 )
@@ -34,7 +35,8 @@ type writeStdinArgs struct {
 }
 
 // NewExecCommandTool creates the exec_command tool.
-func NewExecCommandTool(pm *ProcessManager) *agent.ToolDef {
+func NewExecCommandTool(pm *ProcessManager, ws *models.Workspace) *agent.ToolDef {
+	guard := newPathGuard(ws)
 	return &agent.ToolDef{
 		Declaration: &genai.FunctionDeclaration{
 			Name:        "exec_command",
@@ -71,7 +73,7 @@ func NewExecCommandTool(pm *ProcessManager) *agent.ToolDef {
 			},
 		},
 		Handler: func(ctx context.Context, args json.RawMessage) (json.RawMessage, error) {
-			return handleExecCommand(ctx, args, pm)
+			return handleExecCommand(ctx, args, pm, guard)
 		},
 	}
 }
@@ -111,7 +113,7 @@ func NewWriteStdinTool(pm *ProcessManager) *agent.ToolDef {
 	}
 }
 
-func handleExecCommand(_ context.Context, args json.RawMessage, pm *ProcessManager) (json.RawMessage, error) {
+func handleExecCommand(_ context.Context, args json.RawMessage, pm *ProcessManager, guard *pathGuard) (json.RawMessage, error) {
 	var a execCommandArgs
 	if err := json.Unmarshal(args, &a); err != nil {
 		return nil, fmt.Errorf("failed to parse arguments: %w", err)
@@ -127,8 +129,12 @@ func handleExecCommand(_ context.Context, args json.RawMessage, pm *ProcessManag
 	}
 
 	command := buildExecCommand(a.Cmd, a.Shell)
+	workdir, err := guard.requireAllowedWorkdir(a.Workdir)
+	if err != nil {
+		return nil, err
+	}
 
-	result, err := pm.ExecCommand(command, a.Workdir, nil, yieldMs)
+	result, err := pm.ExecCommand(command, workdir, nil, yieldMs)
 	if err != nil {
 		return nil, err
 	}

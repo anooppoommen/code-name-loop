@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"loop/agent"
+	"loop/models"
 
 	"google.golang.org/genai"
 )
@@ -18,7 +19,8 @@ type applyPatchArgs struct {
 }
 
 // NewApplyPatchTool creates the apply_patch tool.
-func NewApplyPatchTool() *agent.ToolDef {
+func NewApplyPatchTool(ws *models.Workspace) *agent.ToolDef {
+	guard := newPathGuard(ws)
 	return &agent.ToolDef{
 		Declaration: &genai.FunctionDeclaration{
 			Name: "apply_patch",
@@ -70,11 +72,13 @@ Important:
 				Required: []string{"input"},
 			},
 		},
-		Handler: handleApplyPatch,
+		Handler: func(ctx context.Context, args json.RawMessage) (json.RawMessage, error) {
+			return handleApplyPatch(ctx, args, guard)
+		},
 	}
 }
 
-func handleApplyPatch(_ context.Context, args json.RawMessage) (json.RawMessage, error) {
+func handleApplyPatch(_ context.Context, args json.RawMessage, guard *pathGuard) (json.RawMessage, error) {
 	var a applyPatchArgs
 	if err := json.Unmarshal(args, &a); err != nil {
 		return nil, fmt.Errorf("failed to parse arguments: %w", err)
@@ -85,13 +89,12 @@ func handleApplyPatch(_ context.Context, args json.RawMessage) (json.RawMessage,
 		return nil, fmt.Errorf("patch input must not be empty")
 	}
 
-	// Use current working directory as base for relative paths.
-	cwd, err := os.Getwd()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get working directory: %w", err)
+	cwd := guard.workspaceRoot
+	if strings.TrimSpace(cwd) == "" {
+		return nil, fmt.Errorf("workspace root path is required")
 	}
 
-	result, err := applyPatch(cwd, input)
+	result, err := applyPatch(cwd, input, guard)
 	if err != nil {
 		return json.Marshal(map[string]any{"error": err.Error()})
 	}
@@ -100,7 +103,7 @@ func handleApplyPatch(_ context.Context, args json.RawMessage) (json.RawMessage,
 }
 
 // applyPatch parses and applies a patch, returning a summary of changes.
-func applyPatch(cwd string, input string) (string, error) {
+func applyPatch(cwd string, input string, guard *pathGuard) (string, error) {
 	lines := strings.Split(input, "\n")
 
 	// Validate envelope.
@@ -149,7 +152,10 @@ func applyPatch(cwd string, input string) (string, error) {
 				}
 				i++
 			}
-			absPath := resolvePath(cwd, path)
+			absPath, err := resolvePath(cwd, path, guard)
+			if err != nil {
+				return "", err
+			}
 			if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
 				return "", fmt.Errorf("failed to create directories for %s: %w", path, err)
 			}
@@ -164,7 +170,10 @@ func applyPatch(cwd string, input string) (string, error) {
 
 		} else if strings.HasPrefix(trimmed, "*** Delete File:") {
 			path := strings.TrimSpace(strings.TrimPrefix(trimmed, "*** Delete File:"))
-			absPath := resolvePath(cwd, path)
+			absPath, err := resolvePath(cwd, path, guard)
+			if err != nil {
+				return "", err
+			}
 			if err := os.Remove(absPath); err != nil && !os.IsNotExist(err) {
 				return "", fmt.Errorf("failed to delete file %s: %w", path, err)
 			}
@@ -221,7 +230,10 @@ func applyPatch(cwd string, input string) (string, error) {
 				}
 			}
 
-			absPath := resolvePath(cwd, path)
+			absPath, err := resolvePath(cwd, path, guard)
+			if err != nil {
+				return "", err
+			}
 			data, err := os.ReadFile(absPath)
 			if err != nil {
 				return "", fmt.Errorf("failed to read file %s for update: %w", path, err)
@@ -244,7 +256,10 @@ func applyPatch(cwd string, input string) (string, error) {
 			newContent := strings.Join(fileLines, "\n") + "\n"
 
 			if moveTo != "" {
-				absMoveTo := resolvePath(cwd, moveTo)
+				absMoveTo, err := resolvePath(cwd, moveTo, guard)
+				if err != nil {
+					return "", err
+				}
 				if err := os.MkdirAll(filepath.Dir(absMoveTo), 0o755); err != nil {
 					return "", fmt.Errorf("failed to create directories for %s: %w", moveTo, err)
 				}
@@ -399,9 +414,9 @@ func matchesAt(fileLines []string, pos int, searchLines []string) bool {
 	return true
 }
 
-func resolvePath(cwd, path string) string {
+func resolvePath(cwd, path string, guard *pathGuard) (string, error) {
 	if filepath.IsAbs(path) {
-		return path
+		return guard.requireAllowedPath(path)
 	}
-	return filepath.Join(cwd, path)
+	return guard.resolveForPatch(filepath.Join(cwd, path))
 }

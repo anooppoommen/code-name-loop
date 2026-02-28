@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"loop/agent"
+	"loop/models"
 
 	"google.golang.org/genai"
 )
@@ -26,7 +27,8 @@ type shellArgs struct {
 }
 
 // NewShellTool creates the shell_command tool.
-func NewShellTool() *agent.ToolDef {
+func NewShellTool(ws *models.Workspace) *agent.ToolDef {
+	guard := newPathGuard(ws)
 	return &agent.ToolDef{
 		Declaration: &genai.FunctionDeclaration{
 			Name: "shell",
@@ -51,11 +53,13 @@ func NewShellTool() *agent.ToolDef {
 				Required: []string{"command"},
 			},
 		},
-		Handler: handleShell,
+		Handler: func(ctx context.Context, args json.RawMessage) (json.RawMessage, error) {
+			return handleShell(ctx, args, guard)
+		},
 	}
 }
 
-func handleShell(ctx context.Context, args json.RawMessage) (json.RawMessage, error) {
+func handleShell(ctx context.Context, args json.RawMessage, guard *pathGuard) (json.RawMessage, error) {
 	var a shellArgs
 	if err := json.Unmarshal(args, &a); err != nil {
 		return nil, fmt.Errorf("failed to parse arguments: %w", err)
@@ -77,9 +81,11 @@ func handleShell(ctx context.Context, args json.RawMessage) (json.RawMessage, er
 	shellCmd := buildShellCommand(a.Command)
 	cmd := exec.CommandContext(ctx, shellCmd[0], shellCmd[1:]...)
 
-	if a.Workdir != "" {
-		cmd.Dir = a.Workdir
+	workdir, err := guard.requireAllowedWorkdir(a.Workdir)
+	if err != nil {
+		return nil, err
 	}
+	cmd.Dir = workdir
 
 	startTime := time.Now()
 	output, err := cmd.CombinedOutput()

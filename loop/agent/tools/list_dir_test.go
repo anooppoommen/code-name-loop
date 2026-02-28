@@ -11,12 +11,13 @@ import (
 
 func TestListDir_BasicListing(t *testing.T) {
 	dir := t.TempDir()
+	guard := newPathGuard(testWorkspace(dir))
 	os.WriteFile(filepath.Join(dir, "file_a.txt"), []byte("a"), 0o644)
 	os.WriteFile(filepath.Join(dir, "file_b.txt"), []byte("b"), 0o644)
 	os.MkdirAll(filepath.Join(dir, "subdir"), 0o755)
 
 	args, _ := json.Marshal(map[string]any{"dir_path": dir})
-	result, err := handleListDir(context.Background(), args)
+	result, err := handleListDir(context.Background(), args, guard)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -38,12 +39,13 @@ func TestListDir_BasicListing(t *testing.T) {
 
 func TestListDir_DepthControl(t *testing.T) {
 	dir := t.TempDir()
+	guard := newPathGuard(testWorkspace(dir))
 	os.MkdirAll(filepath.Join(dir, "a", "b", "c"), 0o755)
 	os.WriteFile(filepath.Join(dir, "a", "b", "c", "deep.txt"), []byte("d"), 0o644)
 
 	// Depth 1 should only show immediate children.
 	args, _ := json.Marshal(map[string]any{"dir_path": dir, "depth": 1})
-	result, _ := handleListDir(context.Background(), args)
+	result, _ := handleListDir(context.Background(), args, guard)
 
 	var resp map[string]any
 	json.Unmarshal(result, &resp)
@@ -59,12 +61,13 @@ func TestListDir_DepthControl(t *testing.T) {
 
 func TestListDir_Pagination(t *testing.T) {
 	dir := t.TempDir()
+	guard := newPathGuard(testWorkspace(dir))
 	for i := 0; i < 10; i++ {
 		os.WriteFile(filepath.Join(dir, strings.Repeat("a", i+1)+".txt"), []byte("x"), 0o644)
 	}
 
 	args, _ := json.Marshal(map[string]any{"dir_path": dir, "limit": 3})
-	result, _ := handleListDir(context.Background(), args)
+	result, _ := handleListDir(context.Background(), args, guard)
 
 	var resp map[string]any
 	json.Unmarshal(result, &resp)
@@ -76,8 +79,9 @@ func TestListDir_Pagination(t *testing.T) {
 }
 
 func TestListDir_RequiresAbsolutePath(t *testing.T) {
+	guard := newPathGuard(testWorkspace(t.TempDir()))
 	args, _ := json.Marshal(map[string]any{"dir_path": "relative"})
-	_, err := handleListDir(context.Background(), args)
+	_, err := handleListDir(context.Background(), args, guard)
 	if err == nil {
 		t.Fatal("expected error for relative path")
 	}
@@ -85,12 +89,13 @@ func TestListDir_RequiresAbsolutePath(t *testing.T) {
 
 func TestListDir_Sorted(t *testing.T) {
 	dir := t.TempDir()
+	guard := newPathGuard(testWorkspace(dir))
 	os.WriteFile(filepath.Join(dir, "z.txt"), []byte("z"), 0o644)
 	os.WriteFile(filepath.Join(dir, "a.txt"), []byte("a"), 0o644)
 	os.WriteFile(filepath.Join(dir, "m.txt"), []byte("m"), 0o644)
 
 	args, _ := json.Marshal(map[string]any{"dir_path": dir})
-	result, _ := handleListDir(context.Background(), args)
+	result, _ := handleListDir(context.Background(), args, guard)
 
 	var resp map[string]any
 	json.Unmarshal(result, &resp)

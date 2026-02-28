@@ -28,3 +28,8 @@ go.work.sum
 
 .env
 docs
+
+calendar-app-loop
+*.db
+*.db-shm
+*.db-wal

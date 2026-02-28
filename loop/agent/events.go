@@ -16,6 +16,8 @@ const (
 	EventToolCallStart TurnEventKind = "tool_call_start"
 	// EventToolResult is emitted when a tool call completes.
 	EventToolResult TurnEventKind = "tool_result"
+	// EventStatus is emitted for agent progress updates between deltas/tool events.
+	EventStatus TurnEventKind = "status"
 	// EventTurnComplete is emitted when the entire turn is finished
 	// (no more tool calls, model has produced a final response).
 	EventTurnComplete TurnEventKind = "turn_complete"
@@ -41,6 +43,8 @@ type TurnEvent struct {
 	ToolCall *ToolCallEvent `json:"tool_call,omitempty"`
 	// ToolResult is populated for EventToolResult events.
 	ToolResult *ToolResultEvent `json:"tool_result,omitempty"`
+	// Status is populated for EventStatus events.
+	Status *StatusEvent `json:"status,omitempty"`
 	// Error is populated for EventError events.
 	Error error `json:"-"`
 	// ErrorText is the serializable error string for JSON transport.
@@ -66,4 +70,12 @@ type ToolResultEvent struct {
 	CallID  string `json:"call_id"`
 	Name    string `json:"name"`
 	Success bool   `json:"success"`
+	Result  string `json:"result,omitempty"`
+	Error   string `json:"error,omitempty"`
+}
+
+// StatusEvent represents a lightweight progress update during long turns.
+type StatusEvent struct {
+	Text      string `json:"text"`
+	Iteration int    `json:"iteration,omitempty"`
 }

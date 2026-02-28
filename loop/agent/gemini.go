@@ -71,7 +71,11 @@ type GenerateContentConfig struct {
 
 func (c *Client) buildGenaiConfig(config *GenerateContentConfig) *genai.GenerateContentConfig {
 	if config == nil {
-		return &genai.GenerateContentConfig{}
+		return &genai.GenerateContentConfig{
+			ThinkingConfig: &genai.ThinkingConfig{
+				IncludeThoughts: true,
+			},
+		}
 	}
 
 	genaiConfig := &genai.GenerateContentConfig{}
@@ -86,6 +90,11 @@ func (c *Client) buildGenaiConfig(config *GenerateContentConfig) *genai.Generate
 	}
 	if len(config.Tools) > 0 {
 		genaiConfig.Tools = config.Tools
+	}
+	// Always request thought parts when supported so they can be streamed and
+	// persisted as PartThought entries in conversation history.
+	genaiConfig.ThinkingConfig = &genai.ThinkingConfig{
+		IncludeThoughts: true,
 	}
 
 	return genaiConfig

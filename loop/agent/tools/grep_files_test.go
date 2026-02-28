@@ -11,6 +11,7 @@ import (
 
 func TestGrepFiles_BasicSearch(t *testing.T) {
 	dir := t.TempDir()
+	guard := newPathGuard(testWorkspace(dir))
 	os.WriteFile(filepath.Join(dir, "match.txt"), []byte("alpha beta gamma"), 0o644)
 	os.WriteFile(filepath.Join(dir, "other.txt"), []byte("omega"), 0o644)
 
@@ -19,7 +20,7 @@ func TestGrepFiles_BasicSearch(t *testing.T) {
 		"path":    dir,
 	})
 
-	result, err := handleGrepFiles(context.Background(), args)
+	result, err := handleGrepFiles(context.Background(), args, guard)
 	if err != nil {
 		t.Fatalf("handleGrepFiles failed: %v", err)
 	}
@@ -35,6 +36,7 @@ func TestGrepFiles_BasicSearch(t *testing.T) {
 
 func TestGrepFiles_NoMatches(t *testing.T) {
 	dir := t.TempDir()
+	guard := newPathGuard(testWorkspace(dir))
 	os.WriteFile(filepath.Join(dir, "file.txt"), []byte("nothing here"), 0o644)
 
 	args, _ := json.Marshal(map[string]any{
@@ -42,7 +44,7 @@ func TestGrepFiles_NoMatches(t *testing.T) {
 		"path":    dir,
 	})
 
-	result, err := handleGrepFiles(context.Background(), args)
+	result, err := handleGrepFiles(context.Background(), args, guard)
 	if err != nil {
 		t.Fatalf("handleGrepFiles failed: %v", err)
 	}
@@ -57,11 +59,12 @@ func TestGrepFiles_NoMatches(t *testing.T) {
 }
 
 func TestGrepFiles_EmptyPattern(t *testing.T) {
+	guard := newPathGuard(testWorkspace(t.TempDir()))
 	args, _ := json.Marshal(map[string]any{
 		"pattern": "",
 	})
 
-	_, err := handleGrepFiles(context.Background(), args)
+	_, err := handleGrepFiles(context.Background(), args, guard)
 	if err == nil {
 		t.Fatal("expected error for empty pattern")
 	}

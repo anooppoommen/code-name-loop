@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"strings"
 
 	"google.golang.org/genai"
 
@@ -79,7 +80,7 @@ func partToGenAI(p models.MessagePart) *genai.Part {
 
 	switch p.Kind {
 	case models.PartText:
-		if p.Text != nil {
+		if p.Text != nil && strings.TrimSpace(p.Text.Text) != "" {
 			gp = genai.NewPartFromText(p.Text.Text)
 		}
 
@@ -171,6 +172,9 @@ func partToGenAI(p models.MessagePart) *genai.Part {
 func partsFromGenAI(gparts []*genai.Part) []models.MessagePart {
 	var parts []models.MessagePart
 	for _, gp := range gparts {
+		if gp == nil || isEmptyGenAIPart(gp) {
+			continue
+		}
 		p := partFromGenAI(gp)
 		parts = append(parts, p)
 	}
@@ -237,4 +241,15 @@ func partFromGenAI(gp *genai.Part) models.MessagePart {
 	}
 
 	return mp
+}
+
+func isEmptyGenAIPart(gp *genai.Part) bool {
+	return gp.FunctionCall == nil &&
+		gp.FunctionResponse == nil &&
+		gp.ExecutableCode == nil &&
+		gp.CodeExecutionResult == nil &&
+		gp.FileData == nil &&
+		gp.InlineData == nil &&
+		!gp.Thought &&
+		strings.TrimSpace(gp.Text) == ""
 }

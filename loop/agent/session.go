@@ -60,6 +60,12 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 
 	// Emit TurnStarted.
 	ch <- TurnEvent{Kind: EventTurnStarted}
+	ch <- TurnEvent{
+		Kind: EventStatus,
+		Status: &StatusEvent{
+			Text: "turn started",
+		},
+	}
 
 	iteration := 0
 
@@ -90,6 +96,13 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 		}
 
 		// Step 2: Stream model response.
+		ch <- TurnEvent{
+			Kind: EventStatus,
+			Status: &StatusEvent{
+				Text:      "model call started",
+				Iteration: iteration,
+			},
+		}
 		config := &GenerateContentConfig{
 			SystemInstruction: s.SystemPrompt,
 			Tools:             BuildToolsForModel(s.Tools),
@@ -147,8 +160,22 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 		// Step 4: Check for function calls.
 		functionCalls := extractFunctionCalls(agentMsg)
 		if len(functionCalls) == 0 {
+			ch <- TurnEvent{
+				Kind: EventStatus,
+				Status: &StatusEvent{
+					Text:      "model produced final response",
+					Iteration: iteration,
+				},
+			}
 			ch <- TurnEvent{Kind: EventTurnComplete}
 			return
+		}
+		ch <- TurnEvent{
+			Kind: EventStatus,
+			Status: &StatusEvent{
+				Text:      fmt.Sprintf("executing %d tool call(s)", len(functionCalls)),
+				Iteration: iteration,
+			},
 		}
 
 		// Step 5: Execute tool calls.
@@ -191,6 +218,8 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 					CallID:  result.CallID,
 					Name:    result.Name,
 					Success: result.Err == nil,
+					Result:  truncateEventText(string(result.ResponseJSON), 4000),
+					Error:   errorString(result.Err),
 				},
 			}
 		}
@@ -210,6 +239,13 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 
 		log.Printf("[turn] tool call cycle complete (%d/%d), %d results sent back to model",
 			iteration, MaxToolCallIterations, len(results))
+		ch <- TurnEvent{
+			Kind: EventStatus,
+			Status: &StatusEvent{
+				Text:      fmt.Sprintf("tool call cycle complete (%d result(s))", len(results)),
+				Iteration: iteration,
+			},
+		}
 	}
 }
 
@@ -247,14 +283,32 @@ func extractFunctionCalls(msg *models.Message) []ToolCallRequest {
 	var calls []ToolCallRequest
 	for _, part := range msg.Parts {
 		if part.Kind == models.PartFunctionCall && part.FunctionCall != nil {
+			callID := part.FunctionCall.CallID
+			if callID == "" {
+				callID = uuid.New().String()
+			}
 			calls = append(calls, ToolCallRequest{
-				CallID: part.FunctionCall.CallID,
+				CallID: callID,
 				Name:   part.FunctionCall.Name,
 				Args:   part.FunctionCall.ArgsJSON,
 			})
 		}
 	}
 	return calls
+}
+
+func truncateEventText(s string, max int) string {
+	if max <= 0 || len(s) <= max {
+		return s
+	}
+	return s[:max] + "...(truncated)"
+}
+
+func errorString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 // Session represents an active agent session tied to a workspace and

@@ -6,6 +6,8 @@ import (
 
 	"loop/agent"
 	"loop/models"
+
+	"google.golang.org/genai"
 )
 
 // TestMessagesToContentsRoundTrip verifies that converting domain messages to
@@ -285,5 +287,58 @@ func TestSenderRoleMapping(t *testing.T) {
 		if contents[0].Role != tt.wantRole {
 			t.Errorf("sender %q → role %q, want %q", tt.sender, contents[0].Role, tt.wantRole)
 		}
+	}
+}
+
+func TestMessagesToContentsSkipsEmptyTextPart(t *testing.T) {
+	msg := &models.Message{
+		SentBy: models.SentByAgent,
+		Parts: []models.MessagePart{
+			{
+				Kind: models.PartFunctionCall,
+				FunctionCall: &models.FunctionCallPart{
+					Name:     "shell",
+					ArgsJSON: json.RawMessage(`{"command":"pwd"}`),
+				},
+			},
+			{
+				Kind: models.PartText,
+				Text: &models.TextPart{Text: ""},
+			},
+		},
+	}
+
+	contents := agent.MessagesToContents([]*models.Message{msg})
+	if len(contents) != 1 {
+		t.Fatalf("contents count = %d, want 1", len(contents))
+	}
+	if len(contents[0].Parts) != 1 {
+		t.Fatalf("parts count = %d, want 1 (empty text part should be skipped)", len(contents[0].Parts))
+	}
+	if contents[0].Parts[0].FunctionCall == nil {
+		t.Fatalf("expected function call part, got %#v", contents[0].Parts[0])
+	}
+}
+
+func TestContentToMessageSkipsStructurallyEmptyPart(t *testing.T) {
+	content := &genai.Content{
+		Role: "model",
+		Parts: []*genai.Part{
+			{
+				FunctionCall: &genai.FunctionCall{Name: "shell", Args: map[string]any{"command": "pwd"}},
+			},
+			{
+				// Simulates malformed/empty part returned by model.
+				Text: "",
+			},
+		},
+	}
+
+	msg := agent.ContentToMessage(content)
+	if len(msg.Parts) != 1 {
+		t.Fatalf("parts count = %d, want 1 (empty part should be skipped)", len(msg.Parts))
+	}
+	if msg.Parts[0].Kind != models.PartFunctionCall {
+		t.Fatalf("kind = %q, want %q", msg.Parts[0].Kind, models.PartFunctionCall)
 	}
 }
