@@ -23,6 +23,9 @@ interface SidebarProps {
   onPickFolder: () => void;
   onDeleteWorkspace: (workspaceId: string) => void;
 
+  hideLifecycle: boolean;
+  onHideLifecycleChange: (value: boolean) => void;
+
   workspaces: WorkspaceSummary[];
   selectedWorkspaceId: string;
   onSelectWorkspace: (workspaceId: string) => void;
@@ -218,6 +221,8 @@ export function Sidebar({
   onBackendUrlChange,
   onPickFolder,
   onDeleteWorkspace,
+  hideLifecycle,
+  onHideLifecycleChange,
   workspaces,
   selectedWorkspaceId,
   onSelectWorkspace,
@@ -346,6 +351,15 @@ export function Sidebar({
                 onChange={(event) => onBackendUrlChange(event.target.value)}
               />
             </div>
+            <label className="flex items-center gap-2 cursor-pointer pt-1 text-neutral-400 hover:text-neutral-300 transition-colors">
+              <input
+                type="checkbox"
+                checked={hideLifecycle}
+                onChange={(e) => onHideLifecycleChange(e.target.checked)}
+                className="rounded border-neutral-700 bg-neutral-900 text-blue-500 focus:ring-blue-500/50 focus:ring-offset-neutral-900 cursor-pointer"
+              />
+              <span className="text-[11px] font-medium uppercase tracking-wider">Hide Lifecycle</span>
+            </label>
           </div>
         )}
       </section>

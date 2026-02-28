@@ -85,6 +85,9 @@ export interface LoopDesktopController {
   canCompose: boolean;
   isSending: boolean;
   notices: NoticeToast[];
+  hideLifecycle: boolean;
+  setHideLifecycle: (value: boolean) => void;
+
   dismissNotice: (id: string) => void;
 
   refreshWorkspaces: () => Promise<void>;
@@ -110,6 +113,7 @@ export function useLoopDesktop(): LoopDesktopController {
   const [workspacePath, setWorkspacePath] = useState('');
   const [workspaceName, setWorkspaceName] = useState('');
 
+  const [hideLifecycle, setHideLifecycle] = useState(false);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [selectedConversationId, setSelectedConversationId] = useState('');
 
@@ -247,6 +251,11 @@ export function useLoopDesktop(): LoopDesktopController {
     openToolEventIDsRef.current = {};
   }, []);
 
+  const visibleActivities = useMemo(() => {
+    if (!hideLifecycle) return activities;
+    return activities.filter((a) => a.kind !== 'lifecycle');
+  }, [activities, hideLifecycle]);
+
   useEffect(() => {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) {
@@ -259,6 +268,7 @@ export function useLoopDesktop(): LoopDesktopController {
         selectedWorkspaceId?: string;
         selectedConversationId?: string;
         workspacePath?: string;
+        hideLifecycle?: boolean;
       };
 
       if (parsed.backendUrl) {
@@ -273,6 +283,9 @@ export function useLoopDesktop(): LoopDesktopController {
       if (parsed.workspacePath) {
         setWorkspacePath(parsed.workspacePath);
       }
+      if (typeof parsed.hideLifecycle === 'boolean') {
+        setHideLifecycle(parsed.hideLifecycle);
+      }
     } catch {
       // Ignore invalid local storage state.
     }
@@ -286,9 +299,10 @@ export function useLoopDesktop(): LoopDesktopController {
         selectedWorkspaceId,
         selectedConversationId,
         workspacePath,
+        hideLifecycle,
       }),
     );
-  }, [backendUrl, selectedWorkspaceId, selectedConversationId, workspacePath]);
+  }, [backendUrl, selectedWorkspaceId, selectedConversationId, workspacePath, hideLifecycle]);
 
   const refreshWorkspaces = useCallback(async (): Promise<void> => {
     setIsLoadingWorkspaces(true);
@@ -1051,7 +1065,7 @@ export function useLoopDesktop(): LoopDesktopController {
     selectedConversationId,
     selectedConversation,
 
-    activities,
+    activities: visibleActivities,
     feedScrollRef,
 
     messageInput,
@@ -1060,6 +1074,8 @@ export function useLoopDesktop(): LoopDesktopController {
     isSending,
     notices,
     dismissNotice,
+    hideLifecycle,
+    setHideLifecycle,
 
     refreshWorkspaces,
     refreshConversations,

@@ -50,6 +50,8 @@ export default function App() {
               onDeleteWorkspace={(workspaceId) => {
                 void app.deleteWorkspace(workspaceId);
               }}
+              hideLifecycle={app.hideLifecycle}
+              onHideLifecycleChange={app.setHideLifecycle}
               workspaces={app.workspaces}
               selectedWorkspaceId={app.selectedWorkspaceId}
               onSelectWorkspace={app.selectWorkspace}
