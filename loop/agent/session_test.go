@@ -180,6 +180,16 @@ func countEvents(events []agent.TurnEvent, kind agent.TurnEventKind) int {
 	return n
 }
 
+func statusTexts(events []agent.TurnEvent) []string {
+	var out []string
+	for _, e := range events {
+		if e.Kind == agent.EventStatus && e.Status != nil {
+			out = append(out, e.Status.Text)
+		}
+	}
+	return out
+}
+
 func simpleTool(name string, result string) *agent.ToolDef {
 	decl := genaiDecl(name, name)
 	return &agent.ToolDef{
@@ -238,6 +248,62 @@ func TestSessionSimpleTextResponse(t *testing.T) {
 	}
 	if msgs[1].SentBy != models.SentByAgent {
 		t.Errorf("msg[1] = %s, want agent", msgs[1].SentBy)
+	}
+}
+
+func TestSessionRetriesOn503AndEmitsRetryEvents(t *testing.T) {
+	s := newTestStore(t)
+	ws, conv := seedConversation(t, s)
+	ctx := context.Background()
+
+	mock := &mockModelClient{
+		responses: [][]agent.TurnEvent{
+			{
+				{
+					Kind:      agent.EventError,
+					Error:     fmt.Errorf("503 Service Unavailable"),
+					ErrorText: "503 Service Unavailable",
+				},
+			},
+			makeTextResponse("Recovered after retry."),
+		},
+	}
+
+	session := agent.NewSession(s, mock, ws, conv, nil, 0)
+	session.MaxModelRetries = 2
+	session.RetryDelay = 120 * time.Millisecond
+	session.RetryTick = 40 * time.Millisecond
+
+	events, cancel, err := session.HandleUserMessage(ctx, textParts("retry please"))
+	if err != nil {
+		t.Fatalf("HandleUserMessage: %v", err)
+	}
+	defer cancel()
+
+	allEvents := collectEvents(events)
+
+	if mock.callCount.Load() != 2 {
+		t.Fatalf("model call count = %d, want 2", mock.callCount.Load())
+	}
+	if countEvents(allEvents, agent.EventRetry) == 0 {
+		t.Fatal("expected at least one retry event")
+	}
+	if findEvent(allEvents, agent.EventTurnComplete) == nil {
+		t.Fatal("expected turn_complete after retry")
+	}
+	if countEvents(allEvents, agent.EventError) > 0 {
+		t.Fatalf("unexpected terminal error events: %+v", allEvents)
+	}
+
+	var sawRetryStatus bool
+	for _, status := range statusTexts(allEvents) {
+		if strings.Contains(status, "Service unavailable (503). Retrying in") {
+			sawRetryStatus = true
+			break
+		}
+	}
+	if !sawRetryStatus {
+		t.Fatalf("expected retry status in status events, got: %v", statusTexts(allEvents))
 	}
 }
 

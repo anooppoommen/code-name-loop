@@ -94,6 +94,14 @@ function parsePendingCommandApprovalRecord(
   };
 }
 
+function getNumber(record: Record<string, unknown> | null, keys: string[]): number {
+  const value = getField(record, keys);
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  return Number.NaN;
+}
+
 function toolNameMatches(toolName: string, canonical: string): boolean {
   return (
     toolName === canonical ||
@@ -191,6 +199,7 @@ interface ConversationLiveState {
   draftThoughtId: string | null;
   lastStatus: string;
   openToolEventIDs: Record<string, string>;
+  retryStatusEventID: string | null;
 }
 
 export type CommandApprovalDecision = 'deny' | 'allow_once' | 'allow_session';
@@ -416,6 +425,7 @@ export function useLoopDesktop(): LoopDesktopController {
       draftThoughtId: null,
       lastStatus: '',
       openToolEventIDs: {},
+      retryStatusEventID: null,
     };
     conversationLiveStateRef.current[conversationId] = fresh;
     return fresh;
@@ -430,6 +440,7 @@ export function useLoopDesktop(): LoopDesktopController {
       draftThoughtId: null,
       lastStatus: '',
       openToolEventIDs: {},
+      retryStatusEventID: null,
     };
   }, []);
 
@@ -647,6 +658,7 @@ export function useLoopDesktop(): LoopDesktopController {
         const liveState = getConversationLiveState(targetConversationId);
         liveState.lastStatus = '';
         liveState.openToolEventIDs = {};
+        liveState.retryStatusEventID = null;
       }
 
       if (conversationId) {
@@ -1173,6 +1185,41 @@ export function useLoopDesktop(): LoopDesktopController {
       const kind = getString(eventRecord, ['kind']) || eventName;
       const liveState = getConversationLiveState(conversationId);
 
+      if (kind === 'retry') {
+        const retryRecord = asRecord(getField(eventRecord, ['retry'])) ?? eventRecord;
+        const message = getString(retryRecord, ['message']) || 'Temporary server issue. Retrying...';
+        const attempt = getNumber(retryRecord, ['attempt']);
+        const maxAttempts = getNumber(retryRecord, ['max_attempts', 'maxAttempts']);
+        const secondsRemaining = getNumber(retryRecord, ['seconds_remaining', 'secondsRemaining']);
+        const hasAttempt = Number.isFinite(attempt) && Number.isFinite(maxAttempts) && attempt > 0 && maxAttempts > 0;
+        const body = hasAttempt ? `Server retry ${attempt}/${maxAttempts}` : undefined;
+
+        if (message && message !== liveState.lastStatus) {
+          liveState.lastStatus = message;
+          setCurrentStatus(message);
+        }
+
+        if (liveState.retryStatusEventID) {
+          mutateActivity(liveState.retryStatusEventID, (event) => ({
+            ...event,
+            title: message || event.title,
+            body,
+            timestamp: Date.now(),
+          }));
+        } else {
+          liveState.retryStatusEventID = pushActivity({
+            kind: 'status',
+            title: message,
+            body,
+          });
+        }
+
+        if (Number.isFinite(secondsRemaining) && secondsRemaining <= 0) {
+          liveState.retryStatusEventID = null;
+        }
+        return;
+      }
+
       if (kind === 'status') {
         const statusText = getString(asRecord(getField(eventRecord, ['status'])), ['text']);
         if (!statusText) {
@@ -1183,6 +1230,20 @@ export function useLoopDesktop(): LoopDesktopController {
         }
         liveState.lastStatus = statusText;
         setCurrentStatus(statusText);
+
+        if (statusText.startsWith('Service unavailable (503). Retrying in ')) {
+          if (liveState.retryStatusEventID) {
+            mutateActivity(liveState.retryStatusEventID, (event) => ({
+              ...event,
+              title: statusText,
+              timestamp: Date.now(),
+            }));
+          } else {
+            liveState.retryStatusEventID = pushActivity({ kind: 'status', title: statusText });
+          }
+          return;
+        }
+        liveState.retryStatusEventID = null;
 
         const parsed = parseStatusLine(statusText);
         if (parsed?.kind === 'lifecycle' && parsed.title.startsWith('Executing ')) {

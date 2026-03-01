@@ -27,6 +27,9 @@ const (
 
 	thoughtStatusChunkInterval = 10
 	thoughtStatusMinChars      = 220
+	defaultMaxModelRetries     = 3
+	defaultRetryDelay          = 30 * time.Second
+	defaultRetryTick           = 1 * time.Second
 )
 
 // Turn represents a single model interaction cycle within a session.
@@ -89,6 +92,20 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 			},
 		}
 		s.emitUIEvent(ctx, models.UIEventKindStatus, text, agentMsgID, statusMeta(iteration))
+	}
+
+	emitRetry := func(message string, attempt, maxAttempts, secondsRemaining, delaySeconds, iteration int) {
+		ch <- TurnEvent{
+			Kind: EventRetry,
+			Retry: &RetryEvent{
+				Message:          message,
+				Attempt:          attempt,
+				MaxAttempts:      maxAttempts,
+				SecondsRemaining: secondsRemaining,
+				DelaySeconds:     delaySeconds,
+				Iteration:        iteration,
+			},
+		}
 	}
 
 	emitError := func(err error, iteration int) {
@@ -154,14 +171,26 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 
 		var agentMsg *models.Message
 
-		maxRetries := 3
-		retryDelay := 30 * time.Second
+		maxRetries := s.maxModelRetries()
+		retryDelay := s.modelRetryDelay()
+		retryTick := s.modelRetryTick(retryDelay)
 
 		for attempt := 0; attempt <= maxRetries; attempt++ {
 			thoughtChunkCount := 0
 			thoughtCharsSinceStatus := 0
 			lastThoughtSummary := ""
 			shouldRetry := false
+			retryAttempt := attempt + 1
+			delaySeconds := int(retryDelay.Round(time.Second).Seconds())
+			if delaySeconds <= 0 {
+				delaySeconds = 1
+			}
+
+			if attempt > 0 {
+				emitStatus(fmt.Sprintf("model call started (retry attempt %d/%d)", attempt, maxRetries), iteration)
+				log.Printf("[turn] conv=%s retrying model call attempt=%d/%d",
+					s.Conversation.ID, attempt, maxRetries)
+			}
 
 		StreamLoop:
 			for event := range s.Client.StreamMessage(ctx, history, config) {
@@ -207,12 +236,18 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 						msg = event.Error.Error()
 					}
 
-					if strings.Contains(msg, "503") || strings.Contains(msg, "Service Unavailable") || strings.Contains(msg, "ServiceUnavailable") {
+					if isServiceUnavailableError(msg) {
 						if attempt < maxRetries {
-							emitStatus(fmt.Sprintf("Service unavailable (503). Retrying in %d seconds... (attempt %d/%d)", int(retryDelay.Seconds()), attempt+1, maxRetries), iteration)
+							retryMsg := fmt.Sprintf("Service unavailable (503). Retrying in %d seconds... (attempt %d/%d)", delaySeconds, retryAttempt, maxRetries)
+							emitStatus(retryMsg, iteration)
+							emitRetry(retryMsg, retryAttempt, maxRetries, delaySeconds, delaySeconds, iteration)
+							log.Printf("[turn] conv=%s transient 503; scheduling retry attempt=%d/%d delay=%s",
+								s.Conversation.ID, retryAttempt, maxRetries, retryDelay)
 							shouldRetry = true
 							break StreamLoop
 						}
+						log.Printf("[turn] conv=%s transient 503; retries exhausted max=%d",
+							s.Conversation.ID, maxRetries)
 					}
 
 					if msg == "" {
@@ -224,12 +259,34 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 			}
 
 			if shouldRetry {
-				select {
-				case <-ctx.Done():
-					emitAbort(ctx.Err().Error(), iteration)
-					return
-				case <-time.After(retryDelay):
+				remaining := retryDelay
+				for remaining > 0 {
+					wait := retryTick
+					if wait > remaining {
+						wait = remaining
+					}
+
+					select {
+					case <-ctx.Done():
+						emitAbort(ctx.Err().Error(), iteration)
+						return
+					case <-time.After(wait):
+					}
+
+					remaining -= wait
+					if remaining <= 0 {
+						break
+					}
+
+					secondsRemaining := int((remaining + (time.Second - time.Nanosecond)) / time.Second)
+					if secondsRemaining <= 0 {
+						secondsRemaining = 1
+					}
+					retryMsg := fmt.Sprintf("Service unavailable (503). Retrying in %d seconds... (attempt %d/%d)", secondsRemaining, retryAttempt, maxRetries)
+					emitRetry(retryMsg, retryAttempt, maxRetries, secondsRemaining, delaySeconds, iteration)
 				}
+				emitRetry(fmt.Sprintf("Retrying now... (attempt %d/%d)", retryAttempt, maxRetries),
+					retryAttempt, maxRetries, 0, delaySeconds, iteration)
 				continue
 			}
 			break
@@ -733,6 +790,16 @@ func firstLine(s string) string {
 	return strings.TrimSpace(lines[0])
 }
 
+func isServiceUnavailableError(msg string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(msg))
+	if normalized == "" {
+		return false
+	}
+	return strings.Contains(normalized, "503") ||
+		strings.Contains(normalized, "service unavailable") ||
+		strings.Contains(normalized, "serviceunavailable")
+}
+
 func shortThreadID(id string) string {
 	if len(id) <= 8 {
 		return id
@@ -770,6 +837,15 @@ type Session struct {
 	// MaxToolCallIterations caps tool-call cycles for this session.
 	// If <= 0, DefaultMaxToolCallIterations is used.
 	MaxToolCallIterations int
+	// MaxModelRetries controls retry count for transient model failures (503).
+	// If <= 0, defaultMaxModelRetries is used.
+	MaxModelRetries int
+	// RetryDelay controls backoff duration for transient model failures.
+	// If <= 0, defaultRetryDelay is used.
+	RetryDelay time.Duration
+	// RetryTick controls retry countdown update frequency.
+	// If <= 0, defaultRetryTick is used.
+	RetryTick time.Duration
 
 	// mu protects activeTurnCancel.
 	mu               sync.Mutex
@@ -796,6 +872,9 @@ func NewSession(
 		ThinkingLevel:         "medium",
 		Depth:                 depth,
 		MaxToolCallIterations: DefaultMaxToolCallIterations,
+		MaxModelRetries:       defaultMaxModelRetries,
+		RetryDelay:            defaultRetryDelay,
+		RetryTick:             defaultRetryTick,
 	}
 }
 
@@ -804,6 +883,37 @@ func (s *Session) maxToolCallIterations() int {
 		return DefaultMaxToolCallIterations
 	}
 	return s.MaxToolCallIterations
+}
+
+func (s *Session) maxModelRetries() int {
+	if s == nil || s.MaxModelRetries <= 0 {
+		return defaultMaxModelRetries
+	}
+	return s.MaxModelRetries
+}
+
+func (s *Session) modelRetryDelay() time.Duration {
+	if s == nil || s.RetryDelay <= 0 {
+		return defaultRetryDelay
+	}
+	return s.RetryDelay
+}
+
+func (s *Session) modelRetryTick(delay time.Duration) time.Duration {
+	if delay <= 0 {
+		delay = defaultRetryDelay
+	}
+	tick := defaultRetryTick
+	if s != nil && s.RetryTick > 0 {
+		tick = s.RetryTick
+	}
+	if tick <= 0 {
+		tick = defaultRetryTick
+	}
+	if tick > delay {
+		return delay
+	}
+	return tick
 }
 
 // emitUIEvent persists a single UIEvent to the store.

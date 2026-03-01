@@ -18,6 +18,9 @@ const (
 	EventToolResult TurnEventKind = "tool_result"
 	// EventStatus is emitted for agent progress updates between deltas/tool events.
 	EventStatus TurnEventKind = "status"
+	// EventRetry is emitted for transient model failures when the server is
+	// waiting to retry a model call.
+	EventRetry TurnEventKind = "retry"
 	// EventApprovalRequest is emitted when a command tool asks for user approval.
 	EventApprovalRequest TurnEventKind = "approval_request"
 	// EventTurnComplete is emitted when the entire turn is finished
@@ -47,6 +50,8 @@ type TurnEvent struct {
 	ToolResult *ToolResultEvent `json:"tool_result,omitempty"`
 	// Status is populated for EventStatus events.
 	Status *StatusEvent `json:"status,omitempty"`
+	// Retry is populated for EventRetry events.
+	Retry *RetryEvent `json:"retry,omitempty"`
 	// ApprovalRequest is populated for EventApprovalRequest events.
 	ApprovalRequest *ApprovalRequestEvent `json:"approval_request,omitempty"`
 	// Error is populated for EventError events.
@@ -84,6 +89,22 @@ type ToolResultEvent struct {
 type StatusEvent struct {
 	Text      string `json:"text"`
 	Iteration int    `json:"iteration,omitempty"`
+}
+
+// RetryEvent represents retry/backoff state for transient model failures.
+type RetryEvent struct {
+	// Message is a human-readable status line suitable for direct UI display.
+	Message string `json:"message"`
+	// Attempt is the 1-based retry attempt number.
+	Attempt int `json:"attempt"`
+	// MaxAttempts is the maximum number of retries allowed.
+	MaxAttempts int `json:"max_attempts"`
+	// SecondsRemaining is the countdown value until the next retry attempt.
+	SecondsRemaining int `json:"seconds_remaining"`
+	// DelaySeconds is the configured retry backoff duration in seconds.
+	DelaySeconds int `json:"delay_seconds"`
+	// Iteration is the current agent loop iteration.
+	Iteration int `json:"iteration,omitempty"`
 }
 
 // ApprovalRequestEvent represents a pending command approval request.
