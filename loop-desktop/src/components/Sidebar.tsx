@@ -1,4 +1,3 @@
-import { useEffect, useState } from 'react';
 import type { ConversationSummary, WorkspaceSummary } from '../types/ui';
 import { SidebarActions } from './sidebar/SidebarActions';
 import { SidebarSettings } from './sidebar/SidebarSettings';
@@ -16,7 +15,8 @@ interface SidebarProps {
   onShowMascotChange: (value: boolean) => void;
   workspaces: WorkspaceSummary[];
   selectedWorkspaceId: string;
-  onSelectWorkspace: (workspaceId: string) => void;
+  expandedWorkspaceIds: Record<string, boolean>;
+  onToggleWorkspace: (workspaceId: string) => void;
   conversationsByWorkspace: Record<string, ConversationSummary[]>;
   selectedConversationId: string;
   sendingConversations: Record<string, boolean>;
@@ -38,7 +38,8 @@ export function Sidebar({
   onShowMascotChange,
   workspaces,
   selectedWorkspaceId,
-  onSelectWorkspace,
+  expandedWorkspaceIds,
+  onToggleWorkspace,
   conversationsByWorkspace,
   selectedConversationId,
   sendingConversations,
@@ -47,40 +48,6 @@ export function Sidebar({
   onDeleteConversation,
   onRenameConversation,
 }: SidebarProps) {
-  const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<Record<string, boolean>>({});
-
-  useEffect(() => {
-    if (!selectedWorkspaceId) {
-      return;
-    }
-    setExpandedWorkspaceIds((prev) => (prev[selectedWorkspaceId] ? prev : { ...prev, [selectedWorkspaceId]: true }));
-  }, [selectedWorkspaceId]);
-
-  useEffect(() => {
-    const validWorkspaceIds = new Set(workspaces.map((workspace) => workspace.id));
-    setExpandedWorkspaceIds((prev) => {
-      const next: Record<string, boolean> = {};
-      for (const [workspaceId, isExpanded] of Object.entries(prev)) {
-        if (validWorkspaceIds.has(workspaceId)) {
-          next[workspaceId] = isExpanded;
-        }
-      }
-      return next;
-    });
-  }, [workspaces]);
-
-  const toggleWorkspace = (workspaceId: string) => {
-    let nextExpanded = false;
-    setExpandedWorkspaceIds((prev) => {
-      nextExpanded = !prev[workspaceId];
-      return { ...prev, [workspaceId]: nextExpanded };
-    });
-
-    if (nextExpanded) {
-      onSelectWorkspace(workspaceId);
-    }
-  };
-
   return (
     <aside className="no-drag select-none flex h-full min-h-0 w-[260px] flex-col gap-1.5 border-r border-loop-700 bg-loop-800 px-2.5 pb-2.5 pt-3 text-sm text-loop-300">
       <SidebarActions
@@ -97,7 +64,7 @@ export function Sidebar({
         conversationsByWorkspace={conversationsByWorkspace}
         selectedConversationId={selectedConversationId}
         sendingConversations={sendingConversations}
-        onToggleWorkspace={toggleWorkspace}
+        onToggleWorkspace={onToggleWorkspace}
         onDeleteWorkspace={onDeleteWorkspace}
         onSelectConversation={onSelectConversation}
         onDeleteConversation={onDeleteConversation}

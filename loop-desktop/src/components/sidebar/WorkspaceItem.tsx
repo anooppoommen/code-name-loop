@@ -34,13 +34,13 @@ export function WorkspaceItem({
     <div className="flex flex-col gap-0.5">
       <div className="group/ws relative">
         <button
-          className={`flex w-full items-center justify-between rounded-lg px-2 py-1.5 pr-9 text-left text-[13px] transition-colors ${
+          className={`flex min-h-[30px] w-full items-center justify-between rounded-lg px-2 py-1.5 pr-9 text-left text-[13px] transition-colors ${
             isSelected ? 'text-loop-200' : 'text-loop-300 hover:bg-loop-700'
           }`}
           onClick={() => onToggle(workspace.id)}
         >
           <div className="flex min-w-0 flex-1 items-center gap-2">
-            <div className="flex w-[15px] shrink-0 items-center justify-center">
+            <div className="flex h-[15px] w-[15px] shrink-0 items-center justify-center">
               {isExpanded ? <FolderOpen size={15} className="text-loop-400" /> : <Folder size={15} className="text-loop-400" />}
             </div>
             <div className="flex min-w-0 flex-1 items-center gap-2 pr-1">

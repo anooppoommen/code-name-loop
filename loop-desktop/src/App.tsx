@@ -28,6 +28,7 @@ export default function App() {
     }
     return true;
   });
+  const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<Record<string, boolean>>({});
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
 
   // Navigation history (jumplist)
@@ -50,6 +51,30 @@ export default function App() {
       return { list: nextList, index: nextList.length - 1 };
     });
   }, [app.selectedConversationId]);
+
+  useEffect(() => {
+    if (!app.selectedWorkspaceId) {
+      return;
+    }
+    setExpandedWorkspaceIds((prev) => (
+      Object.prototype.hasOwnProperty.call(prev, app.selectedWorkspaceId)
+        ? prev
+        : { ...prev, [app.selectedWorkspaceId]: true }
+    ));
+  }, [app.selectedWorkspaceId]);
+
+  useEffect(() => {
+    const validWorkspaceIds = new Set(app.workspaces.map((workspace) => workspace.id));
+    setExpandedWorkspaceIds((prev) => {
+      const next: Record<string, boolean> = {};
+      for (const [workspaceId, isExpanded] of Object.entries(prev)) {
+        if (validWorkspaceIds.has(workspaceId)) {
+          next[workspaceId] = isExpanded;
+        }
+      }
+      return next;
+    });
+  }, [app.workspaces]);
 
   const appShortcutHandler = useCallback((event: KeyboardEvent): boolean => {
     if (!(event.ctrlKey || event.metaKey)) {
@@ -129,6 +154,14 @@ export default function App() {
     }
   }, [app]);
 
+  const toggleWorkspace = useCallback((workspaceId: string) => {
+    const nextExpanded = !expandedWorkspaceIds[workspaceId];
+    setExpandedWorkspaceIds((prev) => ({ ...prev, [workspaceId]: nextExpanded }));
+    if (nextExpanded) {
+      app.selectWorkspace(workspaceId);
+    }
+  }, [app, expandedWorkspaceIds]);
+
   useEffect(() => {
     const mediaQuery = window.matchMedia(`(max-width: ${MOBILE_SIDEBAR_BREAKPOINT_PX}px)`);
     const onChange = (e: MediaQueryListEvent) => {
@@ -179,7 +212,8 @@ export default function App() {
                 onShowMascotChange={app.setShowMascot}
                 workspaces={app.workspaces}
                 selectedWorkspaceId={app.selectedWorkspaceId}
-                onSelectWorkspace={app.selectWorkspace}
+                expandedWorkspaceIds={expandedWorkspaceIds}
+                onToggleWorkspace={toggleWorkspace}
                 conversationsByWorkspace={app.conversationsByWorkspace}
                 selectedConversationId={app.selectedConversationId}
                 sendingConversations={app.sendingConversations}

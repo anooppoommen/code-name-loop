@@ -29,12 +29,15 @@ export function WorkspaceSection({
   onRenameConversation,
 }: WorkspaceSectionProps) {
   return (
-    <section className="flex min-h-0 flex-col gap-1">
+    <section className="flex min-h-0 flex-1 flex-col gap-1">
       <header className="flex h-7 items-center bg-loop-800 px-2 text-xs font-medium text-loop-400">
         <span>Workspaces</span>
       </header>
 
-      <div className="flex min-h-0 flex-col gap-1 overflow-y-auto pt-1">
+      <div
+        className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto pt-1"
+        style={{ overflowAnchor: 'none', scrollbarGutter: 'stable' }}
+      >
         {workspaces.map((workspace) => (
           <WorkspaceItem
             key={workspace.id}
