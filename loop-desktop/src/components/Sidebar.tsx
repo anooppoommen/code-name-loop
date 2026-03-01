@@ -7,6 +7,7 @@ import { WorkspaceSection } from './sidebar/WorkspaceSection';
 interface SidebarProps {
   backendUrl: string;
   onBackendUrlChange: (value: string) => void;
+  onOpenCommandPalette: () => void;
   onPickFolder: () => void;
   onDeleteWorkspace: (workspaceId: string) => void;
   hideLifecycle: boolean;
@@ -28,6 +29,7 @@ interface SidebarProps {
 export function Sidebar({
   backendUrl,
   onBackendUrlChange,
+  onOpenCommandPalette,
   onPickFolder,
   onDeleteWorkspace,
   hideLifecycle,
@@ -83,6 +85,7 @@ export function Sidebar({
     <aside className="no-drag select-none flex h-full min-h-0 w-[260px] flex-col gap-1.5 border-r border-loop-700 bg-loop-800 px-2.5 pb-2.5 pt-3 text-sm text-loop-300">
       <SidebarActions
         selectedWorkspaceId={selectedWorkspaceId}
+        onOpenCommandPalette={onOpenCommandPalette}
         onNewConversation={onNewConversation}
         onPickFolder={onPickFolder}
       />

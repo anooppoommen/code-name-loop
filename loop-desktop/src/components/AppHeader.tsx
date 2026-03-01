@@ -7,7 +7,12 @@ interface AppHeaderProps {
   onToggleSidebar: () => void;
 }
 
-export function AppHeader({ workspaceName, conversationTitle, isSidebarOpen, onToggleSidebar }: AppHeaderProps) {
+export function AppHeader({
+  workspaceName,
+  conversationTitle,
+  isSidebarOpen,
+  onToggleSidebar,
+}: AppHeaderProps) {
   return (
     <header className={`drag-region flex items-center justify-between h-[40px] bg-transparent shrink-0 transition-spacing duration-200 pr-4 ${isSidebarOpen ? 'pl-4' : 'pl-[72px]'}`}>
       <div className="flex items-center gap-2 pointer-events-auto">

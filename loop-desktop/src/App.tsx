@@ -10,6 +10,7 @@ import { KeyboardShortcut } from './components/KeyboardShortcut';
 import { QueuedMessages } from './components/QueuedMessages';
 import { Powerline } from './components/Powerline';
 import { WorkingRobotFlare } from './components/activity-feed/WorkingRobotFlare';
+import { CommandPalette } from './components/CommandPalette';
 
 const MOBILE_SIDEBAR_BREAKPOINT_PX = 920;
 const COMMAND_APPROVAL_OPTIONS: Array<{ decision: CommandApprovalDecision; label: string; keyHint: string }> = [
@@ -27,6 +28,7 @@ export default function App() {
     }
     return true;
   });
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
 
   // Navigation history (jumplist)
   const [, setHistoryState] = useState<{ list: string[]; index: number }>({ list: [], index: -1 });
@@ -54,8 +56,16 @@ export default function App() {
       return false;
     }
     const key = event.key.toLowerCase();
+    if (key === 'o' && event.shiftKey) {
+      void app.pickAndCreateWorkspace();
+      return true;
+    }
     if (key === 'n') {
       void app.newConversation();
+      return true;
+    }
+    if (key === 'k') {
+      setIsCommandPaletteOpen((prev) => !prev);
       return true;
     }
     if (key === 'b') {
@@ -93,6 +103,32 @@ export default function App() {
     return false;
   }, [app]);
 
+  const startConversationFromPalette = useCallback(async (workspaceId: string): Promise<void> => {
+    if (!workspaceId) {
+      return;
+    }
+    if (workspaceId !== app.selectedWorkspaceId) {
+      app.selectWorkspace(workspaceId);
+    }
+    await app.newConversation();
+    if (window.innerWidth <= MOBILE_SIDEBAR_BREAKPOINT_PX) {
+      setIsSidebarOpen(false);
+    }
+  }, [app]);
+
+  const openConversationFromPalette = useCallback(async (workspaceId: string, conversationId: string): Promise<void> => {
+    if (!workspaceId || !conversationId) {
+      return;
+    }
+    if (workspaceId !== app.selectedWorkspaceId) {
+      app.selectWorkspace(workspaceId);
+    }
+    app.selectConversation(conversationId);
+    if (window.innerWidth <= MOBILE_SIDEBAR_BREAKPOINT_PX) {
+      setIsSidebarOpen(false);
+    }
+  }, [app]);
+
   useEffect(() => {
     const mediaQuery = window.matchMedia(`(max-width: ${MOBILE_SIDEBAR_BREAKPOINT_PX}px)`);
     const onChange = (e: MediaQueryListEvent) => {
@@ -110,6 +146,15 @@ export default function App() {
     <KeyboardShortcut priority={0} enabled onKeyDown={appShortcutHandler}>
       <div className="flex h-full w-full overflow-hidden bg-loop-900 text-loop-200 selection:bg-blue-500/30">
         <ToastStack toasts={app.notices} onDismiss={app.dismissNotice} />
+        <CommandPalette
+          open={isCommandPaletteOpen}
+          backendUrl={app.backendUrl}
+          workspaces={app.workspaces}
+          selectedWorkspaceId={app.selectedWorkspaceId}
+          onClose={() => setIsCommandPaletteOpen(false)}
+          onStartNewConversation={startConversationFromPalette}
+          onOpenConversation={openConversationFromPalette}
+        />
 
         <AnimatePresence initial={false}>
           {isSidebarOpen && (
@@ -123,6 +168,7 @@ export default function App() {
               <Sidebar
                 backendUrl={app.backendUrl}
                 onBackendUrlChange={app.setBackendUrl}
+                onOpenCommandPalette={() => setIsCommandPaletteOpen(true)}
                 onPickFolder={() => void app.pickAndCreateWorkspace()}
                 onDeleteWorkspace={(workspaceId) => {
                   void app.deleteWorkspace(workspaceId);

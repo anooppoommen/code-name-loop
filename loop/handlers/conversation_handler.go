@@ -47,6 +47,7 @@ func (h *ConversationHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /conversations/{id}", h.Get)
 	mux.HandleFunc("PATCH /conversations/{id}", h.Update)
 	mux.HandleFunc("DELETE /conversations/{id}", h.Delete)
+	mux.HandleFunc("GET /command-palette/search", h.CommandPaletteSearch)
 	mux.HandleFunc("GET /conversations/{id}/messages", h.ListMessages)
 	mux.HandleFunc("GET /conversations/{id}/timeline", h.Timeline)
 	mux.HandleFunc("GET /workspaces/{wsID}/conversations", h.ListByWorkspace)
