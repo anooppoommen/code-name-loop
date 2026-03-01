@@ -7,6 +7,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -152,11 +153,17 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 
 		var agentMsg *models.Message
 
+		maxRetries := 3
+		retryDelay := 30 * time.Second
+
+		for attempt := 0; attempt <= maxRetries; attempt++ {
 		thoughtChunkCount := 0
 		thoughtCharsSinceStatus := 0
 		lastThoughtSummary := ""
+		shouldRetry := false
 
-		for event := range s.Client.StreamMessage(ctx, history, config) {
+		StreamLoop:
+			for event := range s.Client.StreamMessage(ctx, history, config) {
 			switch event.Kind {
 			case EventDelta:
 				ch <- event
@@ -198,6 +205,15 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 				if msg == "" && event.Error != nil {
 					msg = event.Error.Error()
 				}
+
+				if strings.Contains(msg, "503") || strings.Contains(msg, "Service Unavailable") || strings.Contains(msg, "ServiceUnavailable") {
+					if attempt < maxRetries {
+						emitStatus(fmt.Sprintf("Service unavailable (503). Retrying in %d seconds... (attempt %d/%d)", int(retryDelay.Seconds()), attempt+1, maxRetries), iteration)
+						shouldRetry = true
+						break StreamLoop
+					}
+				}
+
 				if msg == "" {
 					msg = "model stream failed"
 				}
@@ -205,6 +221,18 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 				return
 			}
 		}
+
+		if shouldRetry {
+			select {
+			case <-ctx.Done():
+				emitAbort(ctx.Err().Error(), iteration)
+				return
+			case <-time.After(retryDelay):
+			}
+			continue
+		}
+		break
+		} // end retry loop
 
 		if agentMsg == nil {
 			// If context was cancelled during streaming, report as abort.
