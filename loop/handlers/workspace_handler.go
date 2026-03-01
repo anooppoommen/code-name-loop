@@ -38,7 +38,7 @@ func (h *WorkspaceHandler) Stats(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	id := r.PathValue("id")
 
-	ws, err := h.store.Workspaces().Get(ctx, models.WorkspaceID(id))
+	_, err := h.store.Workspaces().Get(ctx, models.WorkspaceID(id))
 	if err != nil {
 		utils.WriteError(w, http.StatusNotFound, "workspace not found")
 		return
@@ -101,8 +101,6 @@ func (h *WorkspaceHandler) Stats(w http.ResponseWriter, r *http.Request) {
 			linesAdded = added
 			linesDeleted = deleted
 		}
-	} else {
-		linesAdded, linesDeleted = workspaceLineStats(ctx, ws.RootPath)
 	}
 
 	resp := map[string]any{

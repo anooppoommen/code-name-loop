@@ -50,6 +50,12 @@ export default function App() {
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'o') {
         e.preventDefault();
         setHistoryState((prev) => {
+          // If currently in an untracked state (e.g., new thread ''), return to the top of the history
+          if (!app.selectedConversationId && prev.list.length > 0 && prev.index >= 0) {
+            isNavigatingRef.current = true;
+            app.selectConversation(prev.list[prev.index]);
+            return prev;
+          }
           if (prev.index > 0) {
             isNavigatingRef.current = true;
             app.selectConversation(prev.list[prev.index - 1]);

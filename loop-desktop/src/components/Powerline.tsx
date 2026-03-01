@@ -24,6 +24,10 @@ export function Powerline({ backendUrl, workspaceId, conversationId }: { backend
       return;
     }
 
+    // Clear stats immediately when conversation changes to prevent flashing old stats
+    // or if transitioning to a new thread.
+    setStats(null);
+
     let active = true;
     const fetchStats = async () => {
       try {
@@ -36,14 +40,14 @@ export function Powerline({ backendUrl, workspaceId, conversationId }: { backend
         
         if (res.ok && active) {
           setStats(res.data);
-        } else if (active && !stats) {
+        } else if (active) {
           // If it fails (e.g., backend not updated yet), provide empty fallback
-          setStats({ lines_added: 0, lines_deleted: 0, tokens_input: 0, tokens_output: 0, tokens_cached: 0, latest_prompt_tokens: 0, tokens_total: 0, context_limit: 1048576, context_percent: 0, model: '', cost: 0 });
+          setStats(prev => prev || { lines_added: 0, lines_deleted: 0, tokens_input: 0, tokens_output: 0, tokens_cached: 0, latest_prompt_tokens: 0, tokens_total: 0, context_limit: 1048576, context_percent: 0, model: '', cost: 0 });
         }
       } catch (err) {
         console.error("Failed to fetch powerline stats", err);
-        if (active && !stats) {
-          setStats({ lines_added: 0, lines_deleted: 0, tokens_input: 0, tokens_output: 0, tokens_cached: 0, latest_prompt_tokens: 0, tokens_total: 0, context_limit: 1048576, context_percent: 0, model: '', cost: 0 });
+        if (active) {
+          setStats(prev => prev || { lines_added: 0, lines_deleted: 0, tokens_input: 0, tokens_output: 0, tokens_cached: 0, latest_prompt_tokens: 0, tokens_total: 0, context_limit: 1048576, context_percent: 0, model: '', cost: 0 });
         }
       }
     };
@@ -65,7 +69,7 @@ export function Powerline({ backendUrl, workspaceId, conversationId }: { backend
   return (
     <div className="flex h-6 w-full items-center justify-between border-t border-neutral-700 bg-[#1e1e1e] px-3 text-[11px] text-neutral-400 font-mono shrink-0">
       <div className="flex items-center gap-4">
-        <div className="flex items-center gap-2" title="Git changes in workspace">
+        <div className="flex items-center gap-2" title="Git changes by conversation">
           <span className="text-green-500">+{displayStats.lines_added}</span>
           <span className="text-red-500">-{displayStats.lines_deleted}</span>
         </div>

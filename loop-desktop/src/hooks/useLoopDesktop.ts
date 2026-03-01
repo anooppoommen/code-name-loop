@@ -149,8 +149,30 @@ export function useLoopDesktop(): LoopDesktopController {
 
   const [activities, setActivities] = useState<ActivityEvent[]>([]);
 
-  const [messageInput, setMessageInput] = useState('');
-  const [composerImages, setComposerImages] = useState<ComposerImage[]>([]);
+  const [composerInputs, setComposerInputs] = useState<Record<string, string>>({});
+  const [composerImagesMap, setComposerImagesMap] = useState<Record<string, ComposerImage[]>>({});
+
+  const messageInput = composerInputs[selectedConversationId] || '';
+  const setMessageInput = useCallback((value: React.SetStateAction<string>) => {
+    setComposerInputs(prevMap => {
+      const prev = prevMap[selectedConversationId] || '';
+      const next = typeof value === 'function' ? (value as (prevState: string) => string)(prev) : value;
+      return { ...prevMap, [selectedConversationId]: next };
+    });
+  }, [selectedConversationId]);
+
+  const composerImages = useMemo(
+    () => composerImagesMap[selectedConversationId] || [],
+    [composerImagesMap, selectedConversationId]
+  );
+  const setComposerImages = useCallback((value: React.SetStateAction<ComposerImage[]>) => {
+    setComposerImagesMap(prevMap => {
+      const prev = prevMap[selectedConversationId] || [];
+      const next = typeof value === 'function' ? (value as (prevState: ComposerImage[]) => ComposerImage[])(prev) : value;
+      return { ...prevMap, [selectedConversationId]: next };
+    });
+  }, [selectedConversationId]);
+
   const [isLoadingWorkspaces, setIsLoadingWorkspaces] = useState(false);
   const [sendingConversations, setSendingConversations] = useState<Record<string, boolean>>({});
   const isSending = !!sendingConversations[selectedConversationId];
@@ -1137,6 +1159,8 @@ export function useLoopDesktop(): LoopDesktopController {
       sendingConversations,
       thinkingLevel,
       composerImages,
+      setComposerImages,
+      setMessageInput,
     ],
   );
 
@@ -1150,7 +1174,7 @@ export function useLoopDesktop(): LoopDesktopController {
       return;
     }
     setMessageInput(trimmed);
-  }, []);
+  }, [setMessageInput]);
 
   const sendToolResponseSuggestion = useCallback(async (text: string): Promise<void> => {
     if (!text.trim()) {
