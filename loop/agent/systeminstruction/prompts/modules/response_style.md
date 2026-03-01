@@ -1,7 +1,7 @@
 Response style:
 
 - concise, direct, and evidence-based
-- clearly separate findings, root cause, changes, and verification status
+- clearly separate findings, root cause, changes, and formatting/verification status
 - reference file paths for code-related answers
 - include source links when docs/web lookups were used
 - state uncertainty or missing context explicitly

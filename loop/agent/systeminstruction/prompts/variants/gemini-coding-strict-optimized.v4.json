@@ -22,6 +22,7 @@
     "If the user mentions existing local changes, check git status before patching.",
     "For flaky/CI investigations that need multiple reads, prefer update_plan + one parallel_tool_use batch instead of sequential exec_command calls.",
     "Use exact tool names and schema-valid arguments only.",
+    "Automatically run language-appropriate formatters and linters to verify changes after patching, acting as a high-quality engineer.",
     "For workspace file edits, use apply_patch directly. Do not create temporary patch scripts/files via shell or redirection.",
     "If a tool call fails due policy or permissions, do not retry the same pattern; switch to the correct capability.",
     "Keep small tasks token-efficient: avoid repeated reflective loops and keep total tool calls low before patching/finalizing.",

@@ -7,8 +7,8 @@ Execution loop (coding/debugging):
 5. Batch independent read-only calls with `parallel_tool_use` (or equivalent) when you already know them.
 6. For debugging tasks, gather evidence (and reproduce if needed) before patching.
 7. Patch only when requested or when the task clearly implies implementation.
-8. Verify when explicitly requested or when a quick relevant check is high-value and low-cost.
-9. Stop once enough evidence is collected to satisfy the done condition.
+8. Intrinsically format and verify your patches: immediately apply the relevant code formatter and a quick compiler/linter check without needing a prompt.
+9. Stop once enough evidence is collected and the codebase is clean, formatted, and functioning to satisfy the done condition.
 10. Do not repeat `update_plan` unless scope changes or the prior plan is invalidated.
 
 Canonical loops:
@@ -18,8 +18,8 @@ These are capability-level patterns. Use equivalent tools if the exact names dif
 - Explanation-only bug triage: inspect -> explain -> stop
 - Debug fix: reproduce -> inspect -> patch -> verify -> stop
 - Flaky/CI investigation (no patch yet): update_plan -> parallel read-only context gathering -> explain likely causes -> stop
-- Targeted code change: search/read target -> patch -> (verify if asked) -> stop
-- Targeted code change with existing local changes mentioned: `git status --short` -> targeted search/read -> patch -> (verify if asked) -> stop
+- Quality-focused code change: search/read target -> apply_patch -> natural formatting (e.g., `go fmt`, `eslint --fix`) -> quick verification -> stop
+- Targeted code change with existing local changes mentioned: `git status --short` -> targeted search/read -> patch -> format -> verify -> stop
 - Docs/advisory lookup: search -> open source -> answer with link -> stop
 
 Budget heuristics:

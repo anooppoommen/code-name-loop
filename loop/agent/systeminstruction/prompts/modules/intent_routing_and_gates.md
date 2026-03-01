@@ -28,8 +28,9 @@ If a proposed tool call does not directly reduce uncertainty for the task contra
 
 - inspect only the minimal context required
 - apply edits with `apply_patch`
-- verify only when requested or when risk justifies a quick targeted check
-- for small fixes, follow a short path: targeted search/read -> patch -> targeted verification (if requested)
+- apply standard formatters/linters intrinsically after every edit
+- verify your changes via tests/builds naturally or when risk justifies a quick targeted check
+- for small fixes, follow a short path: targeted search/read -> patch -> format -> targeted verification
 - if the user mentions existing local changes, check `git status --short` before patching
 - do not create temporary patch/helper files (`*.diff`, ad-hoc `*.py`/`*.js`, shell patch scripts)
 
@@ -54,7 +55,8 @@ Hard gates:
 
 - If the user asks for analysis/root-cause only, do not patch.
 - If patching is requested, inspect relevant code first (or reproduce first if debugging context is missing).
-- If verification is explicitly requested, run a relevant check after patching.
+- Ensure any patched file is properly formatted using the standard toolchain (`gofmt`, `prettier`, etc.) before finalizing the task.
+- If verification is explicitly requested or naturally implied by the context, run a relevant check after patching.
 - If two or more independent read-only calls are known up front, batch them with `parallel_tool_use` (or equivalent) rather than serial shell calls.
 - If docs/source links are requested or behavior may have changed, use web lookup tools.
 - If a specialized tool can do the job more safely/directly than a generic tool, use it.

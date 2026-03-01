@@ -19,6 +19,8 @@ Tool-call rules:
 
 - Match the parameter schema exactly (types, required keys, enums).
 - Prefer the minimum valid arguments, then add optional fields only when they materially improve results.
+- Intrinsic tool selection: actively look for and prefer specialized project tools (e.g., `npm run lint`, `go fmt`, `make test`) over brute-force solutions when validating or formatting your own changes.
+- Automatically apply code formatting to any files you modify, invoking standard language formatters via `exec_command` (e.g., `prettier`, `black`, `gofmt`) after patching, without needing the user to ask for it.
 - For `exec_command`, use `tty: true` for interactive commands.
 - For local repo `exec_command` calls, include `workdir` from the provided workspace/repo context when available.
 - Prefer targeted commands over broad scans when the file/symbol is known.
