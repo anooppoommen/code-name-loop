@@ -21,6 +21,7 @@ import {
   annotateActivitiesWithPendingApprovals,
   normalizeComposerModel,
   normalizeThinkingLevel,
+  normalizeThinkingLevelForModel,
   parsePendingCommandApprovalRecord,
   rowsFromUnknown,
 } from './useLoopDesktop.helpers';
@@ -211,16 +212,24 @@ export function useLoopDesktop(): LoopDesktopController {
     [conversations, selectedConversationId],
   );
 
+  const composerModel = useMemo<ComposerModel>(() => {
+    if (!selectedConversationId) {
+      return draftComposerModel;
+    }
+    return composerModelsByConversation[selectedConversationId] ?? DEFAULT_COMPOSER_MODEL;
+  }, [composerModelsByConversation, draftComposerModel, selectedConversationId]);
+
   const thinkingLevel = useMemo<ThinkingLevel>(() => {
     if (!selectedConversationId) {
-      return draftThinkingLevel;
+      return normalizeThinkingLevelForModel(draftThinkingLevel, composerModel);
     }
-    return thinkingLevelsByConversation[selectedConversationId] ?? DEFAULT_THINKING_LEVEL;
-  }, [draftThinkingLevel, selectedConversationId, thinkingLevelsByConversation]);
+    const stored = thinkingLevelsByConversation[selectedConversationId] ?? DEFAULT_THINKING_LEVEL;
+    return normalizeThinkingLevelForModel(stored, composerModel);
+  }, [composerModel, draftThinkingLevel, selectedConversationId, thinkingLevelsByConversation]);
 
   const setThinkingLevel = useCallback(
     (value: ThinkingLevel): void => {
-      const normalized = normalizeThinkingLevel(value);
+      const normalized = normalizeThinkingLevelForModel(value, composerModel);
       if (!selectedConversationId) {
         setDraftThinkingLevel(normalized);
         return;
@@ -230,27 +239,32 @@ export function useLoopDesktop(): LoopDesktopController {
         [selectedConversationId]: normalized,
       }));
     },
-    [selectedConversationId],
+    [composerModel, selectedConversationId],
   );
-
-  const composerModel = useMemo<ComposerModel>(() => {
-    if (!selectedConversationId) {
-      return draftComposerModel;
-    }
-    return composerModelsByConversation[selectedConversationId] ?? DEFAULT_COMPOSER_MODEL;
-  }, [composerModelsByConversation, draftComposerModel, selectedConversationId]);
 
   const setComposerModel = useCallback(
     (value: ComposerModel): void => {
       const normalized = normalizeComposerModel(value);
       if (!selectedConversationId) {
         setDraftComposerModel(normalized);
+        setDraftThinkingLevel((prev) => normalizeThinkingLevelForModel(prev, normalized));
         return;
       }
       setComposerModelsByConversation((prev) => ({
         ...prev,
         [selectedConversationId]: normalized,
       }));
+      setThinkingLevelsByConversation((prev) => {
+        const current = prev[selectedConversationId] ?? DEFAULT_THINKING_LEVEL;
+        const adjusted = normalizeThinkingLevelForModel(current, normalized);
+        if (current === adjusted && selectedConversationId in prev) {
+          return prev;
+        }
+        return {
+          ...prev,
+          [selectedConversationId]: adjusted,
+        };
+      });
     },
     [selectedConversationId],
   );
@@ -1043,8 +1057,8 @@ export function useLoopDesktop(): LoopDesktopController {
       if ((!text && messageImages.length === 0) || ((hasActiveSelectedStream || isSelectedConversationSending) && !forceSend)) {
         return;
       }
-      const selectedThinkingLevel = normalizeThinkingLevel(thinkingLevel);
       const selectedComposerModel = normalizeComposerModel(composerModel);
+      const selectedThinkingLevel = normalizeThinkingLevelForModel(thinkingLevel, selectedComposerModel);
 
       const conversationId = await ensureConversationId(text);
       if (!conversationId) {

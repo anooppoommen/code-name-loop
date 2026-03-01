@@ -1,6 +1,12 @@
 import type { ActivityEvent, ComposerModel, ThinkingLevel } from '../types/ui';
 import { asRecord, getField, getString } from '../utils/parsers';
-import { COMPOSER_MODELS, DEFAULT_COMPOSER_MODEL, DEFAULT_THINKING_LEVEL, THINKING_LEVELS } from './useLoopDesktop.constants';
+import {
+  COMPOSER_MODELS,
+  DEFAULT_COMPOSER_MODEL,
+  DEFAULT_THINKING_LEVEL,
+  THINKING_LEVELS,
+  THINKING_LEVELS_BY_MODEL,
+} from './useLoopDesktop.constants';
 import type { PendingCommandApproval } from './useLoopDesktop.types';
 
 export function normalizeThinkingLevel(value: unknown): ThinkingLevel {
@@ -29,6 +35,23 @@ export function normalizeComposerModel(value: unknown): ComposerModel {
     return normalized as ComposerModel;
   }
   return DEFAULT_COMPOSER_MODEL;
+}
+
+export function getAllowedThinkingLevelsForModel(model: unknown): readonly ThinkingLevel[] {
+  const normalizedModel = normalizeComposerModel(model);
+  return THINKING_LEVELS_BY_MODEL[normalizedModel] ?? THINKING_LEVELS;
+}
+
+export function normalizeThinkingLevelForModel(level: unknown, model: unknown): ThinkingLevel {
+  const normalizedLevel = normalizeThinkingLevel(level);
+  const allowed = getAllowedThinkingLevelsForModel(model);
+  if (allowed.includes(normalizedLevel)) {
+    return normalizedLevel;
+  }
+  if (allowed.includes(DEFAULT_THINKING_LEVEL)) {
+    return DEFAULT_THINKING_LEVEL;
+  }
+  return allowed[0] ?? DEFAULT_THINKING_LEVEL;
 }
 
 export function rowsFromUnknown(payload: unknown): unknown[] {

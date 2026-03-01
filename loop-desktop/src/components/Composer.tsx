@@ -2,6 +2,7 @@ import { ArrowUp, Brain, Check, ChevronDown, Plus, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ComposerModel, ThinkingLevel } from '../types/ui';
 import type { ComposerImage } from '../hooks/useLoopDesktop';
+import { getAllowedThinkingLevelsForModel } from '../hooks/useLoopDesktop.helpers';
 import { KeyboardShortcut } from './KeyboardShortcut';
 
 interface ComposerProps {
@@ -63,9 +64,13 @@ export function Composer({
   const hasContent = messageInput.trim().length > 0 || composerImages.length > 0;
   // If isSending is true, we can still Queue, so only disable if we can't compose at all
   const actionDisabled = !canCompose || !hasContent;
+  const thinkingOptionsForModel = useMemo(() => {
+    const allowed = new Set(getAllowedThinkingLevelsForModel(composerModel));
+    return THINKING_OPTIONS.filter((option) => allowed.has(option.value));
+  }, [composerModel]);
   const activeThinking = useMemo(
-    () => THINKING_OPTIONS.find((option) => option.value === thinkingLevel) ?? THINKING_OPTIONS[2],
-    [thinkingLevel],
+    () => thinkingOptionsForModel.find((option) => option.value === thinkingLevel) ?? thinkingOptionsForModel[0],
+    [thinkingLevel, thinkingOptionsForModel],
   );
   const activeModel = useMemo(
     () => MODEL_OPTIONS.find((option) => option.value === composerModel) ?? MODEL_OPTIONS[0],
@@ -307,7 +312,7 @@ export function Composer({
                     className="absolute bottom-full left-0 z-20 mb-2 w-32 rounded-xl border border-loop-700/80 bg-loop-900 p-1 shadow-2xl shadow-black/40"
                     role="menu"
                   >
-                    {THINKING_OPTIONS.map((option) => {
+                    {thinkingOptionsForModel.map((option) => {
                       const isActive = option.value === thinkingLevel;
                       return (
                         <button
