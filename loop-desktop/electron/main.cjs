@@ -9,6 +9,21 @@ const streamMetaById = new Map();
 /** @type {Map<string, string>} */
 const streamIdByConversationKey = new Map();
 
+function shortId(id) {
+  if (!id || typeof id !== 'string') {
+    return '';
+  }
+  return id.length <= 8 ? id : id.slice(0, 8);
+}
+
+function streamLog(message, details) {
+  if (details !== undefined) {
+    console.log(`[loop-stream] ${message}`, details);
+    return;
+  }
+  console.log(`[loop-stream] ${message}`);
+}
+
 function conversationKey(baseUrl, conversationId) {
   return `${String(baseUrl).replace(/\/+$/, '')}::${conversationId}`;
 }
@@ -98,9 +113,15 @@ async function streamReplyToRenderer(streamId, baseUrl, conversationId, message,
   const endpoint = buildAbsoluteUrl(baseUrl, `/conversations/${conversationId}/reply`);
   const controller = new AbortController();
   const convKey = conversationKey(baseUrl, conversationId);
+  const startedAt = Date.now();
+  let packetCount = 0;
+  /** @type {Record<string, number>} */
+  const eventCounts = {};
+  let streamResult = 'unknown';
   streamControllers.set(streamId, controller);
   streamMetaById.set(streamId, { baseUrl, conversationId, startedAt: Date.now() });
   streamIdByConversationKey.set(convKey, streamId);
+  streamLog(`start stream=${shortId(streamId)} conv=${shortId(conversationId)} thinking=${thinkingLevel || 'medium'} chars=${String(message || '').length} images=${Array.isArray(images) ? images.length : 0}`);
 
   try {
     const response = await fetch(endpoint, {
@@ -118,6 +139,8 @@ async function streamReplyToRenderer(streamId, baseUrl, conversationId, message,
 
     if (!response.ok) {
       const errorBody = await parseResponseBody(response);
+      streamResult = `http_${response.status}`;
+      streamLog(`http error stream=${shortId(streamId)} conv=${shortId(conversationId)} status=${response.status}`);
       broadcastStreamPacket({
         streamId,
         type: 'error',
@@ -127,6 +150,8 @@ async function streamReplyToRenderer(streamId, baseUrl, conversationId, message,
     }
 
     if (!response.body) {
+      streamResult = 'missing_body';
+      streamLog(`missing body stream=${shortId(streamId)} conv=${shortId(conversationId)}`);
       broadcastStreamPacket({
         streamId,
         type: 'error',
@@ -161,6 +186,11 @@ async function streamReplyToRenderer(streamId, baseUrl, conversationId, message,
           eventName: parsed.eventName,
           data: parsed.data,
         });
+        packetCount += 1;
+        eventCounts[parsed.eventName] = (eventCounts[parsed.eventName] || 0) + 1;
+        if (packetCount === 1 || packetCount % 50 === 0) {
+          streamLog(`packet stream=${shortId(streamId)} conv=${shortId(conversationId)} count=${packetCount} event=${parsed.eventName}`);
+        }
       }
     }
 
@@ -173,6 +203,8 @@ async function streamReplyToRenderer(streamId, baseUrl, conversationId, message,
           eventName: parsed.eventName,
           data: parsed.data,
         });
+        packetCount += 1;
+        eventCounts[parsed.eventName] = (eventCounts[parsed.eventName] || 0) + 1;
       }
     }
 
@@ -180,8 +212,11 @@ async function streamReplyToRenderer(streamId, baseUrl, conversationId, message,
       streamId,
       type: 'done',
     });
+    streamResult = 'done';
   } catch (error) {
     const aborted = controller.signal.aborted;
+    streamResult = aborted ? 'aborted' : 'error';
+    streamLog(`${streamResult} stream=${shortId(streamId)} conv=${shortId(conversationId)} reason=${error instanceof Error ? error.message : 'unknown'}`);
     broadcastStreamPacket({
       streamId,
       type: aborted ? 'aborted' : 'error',
@@ -197,6 +232,7 @@ async function streamReplyToRenderer(streamId, baseUrl, conversationId, message,
     if (streamIdByConversationKey.get(convKey) === streamId) {
       streamIdByConversationKey.delete(convKey);
     }
+    streamLog(`end stream=${shortId(streamId)} conv=${shortId(conversationId)} result=${streamResult} duration_ms=${Date.now() - startedAt} packets=${packetCount} events=${JSON.stringify(eventCounts)}`);
   }
 }
 
@@ -275,6 +311,7 @@ ipcMain.handle('loop-api:start-stream', async (event, payload) => {
   const convKey = conversationKey(baseUrl, conversationId);
   const existingStreamId = streamIdByConversationKey.get(convKey);
   if (existingStreamId && streamControllers.has(existingStreamId)) {
+    streamLog(`reuse active stream=${shortId(existingStreamId)} conv=${shortId(conversationId)}`);
     return {
       ok: true,
       streamId: existingStreamId,
@@ -315,6 +352,7 @@ ipcMain.handle('loop-api:cancel-stream', async (_event, payload) => {
 
   streamControllers.get(streamId)?.abort();
   streamControllers.delete(streamId);
+  streamLog(`cancel requested stream=${shortId(streamId)}`);
   return { ok: true };
 });
 

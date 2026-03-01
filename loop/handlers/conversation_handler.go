@@ -4,9 +4,11 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"loop/agent"
@@ -261,8 +263,8 @@ func (h *ConversationHandler) Timeline(w http.ResponseWriter, r *http.Request) {
 
 // replyRequest is the JSON body for the Reply endpoint.
 type replyRequest struct {
-	Message       string `json:"message"`
-	ThinkingLevel string `json:"thinking_level,omitempty"`
+	Message       string       `json:"message"`
+	ThinkingLevel string       `json:"thinking_level,omitempty"`
 	Images        []replyImage `json:"images,omitempty"`
 }
 
@@ -279,15 +281,40 @@ type replyImage struct {
 // Response: text/event-stream (SSE)
 func (h *ConversationHandler) Reply(w http.ResponseWriter, r *http.Request) {
 	convID := models.ConversationID(r.PathValue("id"))
-	threadStatusCh := make(chan string, 512)
+	streamStartedAt := time.Now()
+	var threadStatusDelivered atomic.Int64
+	var threadStatusDropped atomic.Int64
+	var threadStatusForced atomic.Int64
+
+	threadStatusCh := make(chan string, 1024)
 	emitThreadStatus := func(msg string) {
 		if strings.TrimSpace(msg) == "" {
 			return
 		}
 		select {
 		case threadStatusCh <- msg:
+			threadStatusDelivered.Add(1)
 		default:
-			// Drop if client is slow; status updates are best-effort.
+			// Preserve terminal lifecycle status even if the channel is saturated.
+			// This prevents "stuck thinking" UI when high-volume status chatter fills the queue.
+			if isTerminalThreadStatus(msg) {
+				select {
+				case <-threadStatusCh:
+				default:
+				}
+				select {
+				case threadStatusCh <- msg:
+					threadStatusDelivered.Add(1)
+					threadStatusForced.Add(1)
+					return
+				default:
+				}
+			}
+			dropped := threadStatusDropped.Add(1)
+			if dropped == 1 || dropped%25 == 0 {
+				log.Printf("[reply] conv=%s dropped thread status updates=%d latest=%q",
+					convID, dropped, truncateStatusForLog(msg))
+			}
 		}
 	}
 
@@ -319,6 +346,8 @@ func (h *ConversationHandler) Reply(w http.ResponseWriter, r *http.Request) {
 		utils.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	log.Printf("[reply] start conv=%s thinking=%s message_chars=%d images=%d",
+		convID, strings.ToLower(string(thinkingLevel)), len(req.Message), len(req.Images))
 
 	// Load the conversation.
 	conv, err := h.store.Conversations().Get(r.Context(), convID)
@@ -411,15 +440,35 @@ func (h *ConversationHandler) Reply(w http.ResponseWriter, r *http.Request) {
 	// Stream events to the client and emit keepalives while the model/tool loop is busy.
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
+	var eventCount int64
+	var keepAliveCount int64
 
 	for {
 		// Prioritize turn events so completion/error cannot be starved by
 		// high-volume thread status updates.
 		select {
 		case <-r.Context().Done():
+			log.Printf("[reply] client disconnected conv=%s after=%s events=%d keepalives=%d thread_status(delivered=%d dropped=%d forced=%d)",
+				convID,
+				time.Since(streamStartedAt).Round(time.Millisecond),
+				eventCount,
+				keepAliveCount,
+				threadStatusDelivered.Load(),
+				threadStatusDropped.Load(),
+				threadStatusForced.Load(),
+			)
 			return
 		case event, ok := <-events:
 			if !ok {
+				log.Printf("[reply] stream closed conv=%s after=%s events=%d keepalives=%d thread_status(delivered=%d dropped=%d forced=%d)",
+					convID,
+					time.Since(streamStartedAt).Round(time.Millisecond),
+					eventCount,
+					keepAliveCount,
+					threadStatusDelivered.Load(),
+					threadStatusDropped.Load(),
+					threadStatusForced.Load(),
+				)
 				return
 			}
 			data, err := json.Marshal(event)
@@ -429,9 +478,20 @@ func (h *ConversationHandler) Reply(w http.ResponseWriter, r *http.Request) {
 
 			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event.Kind, data)
 			flusher.Flush()
+			eventCount++
 
 			// Stop streaming on terminal events.
 			if event.Kind == agent.EventTurnComplete || event.Kind == agent.EventError || event.Kind == agent.EventTurnAborted {
+				log.Printf("[reply] terminal event conv=%s kind=%s after=%s events=%d keepalives=%d thread_status(delivered=%d dropped=%d forced=%d)",
+					convID,
+					event.Kind,
+					time.Since(streamStartedAt).Round(time.Millisecond),
+					eventCount,
+					keepAliveCount,
+					threadStatusDelivered.Load(),
+					threadStatusDropped.Load(),
+					threadStatusForced.Load(),
+				)
 				return
 			}
 			continue
@@ -440,6 +500,15 @@ func (h *ConversationHandler) Reply(w http.ResponseWriter, r *http.Request) {
 
 		select {
 		case <-r.Context().Done():
+			log.Printf("[reply] client disconnected conv=%s after=%s events=%d keepalives=%d thread_status(delivered=%d dropped=%d forced=%d)",
+				convID,
+				time.Since(streamStartedAt).Round(time.Millisecond),
+				eventCount,
+				keepAliveCount,
+				threadStatusDelivered.Load(),
+				threadStatusDropped.Load(),
+				threadStatusForced.Load(),
+			)
 			return
 		case statusText := <-threadStatusCh:
 			ev := agent.TurnEvent{
@@ -454,12 +523,23 @@ func (h *ConversationHandler) Reply(w http.ResponseWriter, r *http.Request) {
 			}
 			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", ev.Kind, data)
 			flusher.Flush()
+			eventCount++
 		case <-ticker.C:
 			// SSE comment line keeps proxies/clients alive during long model or tool calls.
 			fmt.Fprintf(w, ": keep-alive\n\n")
 			flusher.Flush()
+			keepAliveCount++
 		case event, ok := <-events:
 			if !ok {
+				log.Printf("[reply] stream closed conv=%s after=%s events=%d keepalives=%d thread_status(delivered=%d dropped=%d forced=%d)",
+					convID,
+					time.Since(streamStartedAt).Round(time.Millisecond),
+					eventCount,
+					keepAliveCount,
+					threadStatusDelivered.Load(),
+					threadStatusDropped.Load(),
+					threadStatusForced.Load(),
+				)
 				return
 			}
 			data, err := json.Marshal(event)
@@ -469,11 +549,42 @@ func (h *ConversationHandler) Reply(w http.ResponseWriter, r *http.Request) {
 
 			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event.Kind, data)
 			flusher.Flush()
+			eventCount++
 
 			// Stop streaming on terminal events.
 			if event.Kind == agent.EventTurnComplete || event.Kind == agent.EventError || event.Kind == agent.EventTurnAborted {
+				log.Printf("[reply] terminal event conv=%s kind=%s after=%s events=%d keepalives=%d thread_status(delivered=%d dropped=%d forced=%d)",
+					convID,
+					event.Kind,
+					time.Since(streamStartedAt).Round(time.Millisecond),
+					eventCount,
+					keepAliveCount,
+					threadStatusDelivered.Load(),
+					threadStatusDropped.Load(),
+					threadStatusForced.Load(),
+				)
 				return
 			}
 		}
 	}
+}
+
+func isTerminalThreadStatus(msg string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(msg))
+	if normalized == "" {
+		return false
+	}
+	return strings.Contains(normalized, " completed") ||
+		strings.Contains(normalized, " failed") ||
+		strings.Contains(normalized, " aborted") ||
+		strings.Contains(normalized, "turn complete")
+}
+
+func truncateStatusForLog(msg string) string {
+	const maxLen = 180
+	msg = strings.TrimSpace(msg)
+	if len(msg) <= maxLen {
+		return msg
+	}
+	return msg[:maxLen] + "...(truncated)"
 }

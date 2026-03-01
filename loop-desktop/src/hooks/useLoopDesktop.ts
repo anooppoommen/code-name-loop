@@ -28,6 +28,7 @@ import {
 const STORAGE_KEY = 'loop-desktop-settings-v3';
 const DEFAULT_THINKING_LEVEL: ThinkingLevel = 'medium';
 const THINKING_LEVELS: readonly ThinkingLevel[] = ['minimal', 'low', 'medium', 'high'];
+const TERMINAL_TURN_KINDS = new Set(['turn_complete', 'turn_aborted', 'error']);
 
 function normalizeThinkingLevel(value: unknown): ThinkingLevel {
   if (typeof value !== 'string') {
@@ -1166,7 +1167,20 @@ export function useLoopDesktop(): LoopDesktopController {
       const isViewingStreamConversation = conversationId === selectedConversationIdRef.current;
 
       if (packet.type === 'event') {
+        const eventRecord = asRecord(packet.data);
+        const kind = getString(eventRecord, ['kind']) || packet.eventName || 'message';
         if (!isViewingStreamConversation) {
+          // We intentionally skip rendering background activity to avoid mixing
+          // timeline rows across conversations, but terminal events must still
+          // close background stream state.
+          if (TERMINAL_TURN_KINDS.has(kind)) {
+            const liveState = getConversationLiveState(conversationId);
+            liveState.openToolEventIDs = {};
+            finalizeTurn(true, conversationId);
+            console.debug(
+              `[loop-stream] finalized background conversation=${shortID(conversationId)} kind=${kind}`,
+            );
+          }
           return;
         }
         handleTurnEvent(packet.eventName ?? 'message', packet.data, conversationId);
