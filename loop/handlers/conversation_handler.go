@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -17,9 +19,16 @@ import (
 
 	"loop/agent"
 	"loop/agent/tools"
+	"loop/gitcheckpoints"
 	"loop/models"
 	"loop/store"
 	"loop/utils"
+)
+
+const (
+	defaultCheckpointListLimit = 30
+	maxCheckpointListLimit     = 200
+	checkpointRetentionLimit   = 60
 )
 
 // ConversationHandler handles conversation REST endpoints.
@@ -50,6 +59,10 @@ func (h *ConversationHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /command-palette/search", h.CommandPaletteSearch)
 	mux.HandleFunc("GET /conversations/{id}/messages", h.ListMessages)
 	mux.HandleFunc("GET /conversations/{id}/timeline", h.Timeline)
+	mux.HandleFunc("GET /conversations/{id}/checkpoints", h.ListCheckpoints)
+	mux.HandleFunc("POST /conversations/{id}/checkpoints", h.CreateCheckpoint)
+	mux.HandleFunc("POST /conversations/{id}/checkpoints/{checkpointID}/restore", h.RestoreCheckpoint)
+	mux.HandleFunc("POST /conversations/{id}/undo", h.Undo)
 	mux.HandleFunc("GET /workspaces/{wsID}/conversations", h.ListByWorkspace)
 	mux.HandleFunc("GET /conversations/{id}/threads", h.ListThreads)
 	mux.HandleFunc("POST /conversations/{id}/reply", h.Reply)
@@ -102,6 +115,10 @@ type updateConversationRequest struct {
 type resolveCommandApprovalRequest struct {
 	Decision string `json:"decision"`
 	Message  string `json:"message,omitempty"`
+}
+
+type createCheckpointRequest struct {
+	Label string `json:"label,omitempty"`
 }
 
 func (h *ConversationHandler) Update(w http.ResponseWriter, r *http.Request) {
@@ -261,6 +278,354 @@ func (h *ConversationHandler) ListMessages(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	utils.WriteJSON(w, http.StatusOK, msgs)
+}
+
+func parseCheckpointLimit(raw string) int {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return defaultCheckpointListLimit
+	}
+	n, err := strconv.Atoi(trimmed)
+	if err != nil {
+		return defaultCheckpointListLimit
+	}
+	if n < 1 {
+		return defaultCheckpointListLimit
+	}
+	if n > maxCheckpointListLimit {
+		return maxCheckpointListLimit
+	}
+	return n
+}
+
+func (h *ConversationHandler) loadConversationAndWorkspace(ctx context.Context, convID models.ConversationID) (*models.Conversation, *models.Workspace, error) {
+	conv, err := h.store.Conversations().Get(ctx, convID)
+	if err != nil {
+		return nil, nil, err
+	}
+	ws, err := h.store.Workspaces().Get(ctx, conv.WorkspaceID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return conv, ws, nil
+}
+
+func workspaceGitPath(ws *models.Workspace) string {
+	if ws == nil {
+		return ""
+	}
+	if strings.TrimSpace(ws.CanonicalRootPath) != "" {
+		return strings.TrimSpace(ws.CanonicalRootPath)
+	}
+	return strings.TrimSpace(ws.RootPath)
+}
+
+func sanitizeRefComponent(raw string) string {
+	if raw == "" {
+		return "unknown"
+	}
+	b := strings.Builder{}
+	for _, r := range raw {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			b.WriteRune(r)
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == '.', r == '-', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('-')
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	if out == "" {
+		return "unknown"
+	}
+	return out
+}
+
+func checkpointRefName(conversationID models.ConversationID, checkpointID string) string {
+	return fmt.Sprintf("refs/loop/checkpoints/%s/%s",
+		sanitizeRefComponent(string(conversationID)),
+		sanitizeRefComponent(checkpointID),
+	)
+}
+
+func shortCommitID(commitID string) string {
+	id := strings.TrimSpace(commitID)
+	if len(id) <= 7 {
+		return id
+	}
+	return id[:7]
+}
+
+func (h *ConversationHandler) appendCheckpointUIEvent(ctx context.Context, conversationID models.ConversationID, kind models.UIEventKind, text string, metadata map[string]any) {
+	if err := h.store.UIEvents().Append(ctx, &models.UIEvent{
+		ConversationID: conversationID,
+		Kind:           kind,
+		Text:           text,
+		Metadata:       metadata,
+	}); err != nil {
+		log.Printf("[checkpoint] append ui event conv=%s kind=%s: %v", conversationID, kind, err)
+	}
+}
+
+func (h *ConversationHandler) createCheckpoint(ctx context.Context, ws *models.Workspace, conv *models.Conversation, label string, auto bool) (*models.Checkpoint, error) {
+	checkpointID := "chk-" + uuid.New().String()
+	gitRef := checkpointRefName(conv.ID, checkpointID)
+	checkpointLabel := strings.TrimSpace(label)
+	if checkpointLabel == "" {
+		checkpointLabel = "checkpoint"
+		if auto {
+			checkpointLabel = "auto checkpoint"
+		}
+	}
+
+	snapshot, err := gitcheckpoints.Create(ctx, workspaceGitPath(ws), gitRef, checkpointLabel)
+	if err != nil {
+		return nil, err
+	}
+
+	cp := &models.Checkpoint{
+		ID:                        checkpointID,
+		ConversationID:            conv.ID,
+		WorkspaceID:               ws.ID,
+		Label:                     checkpointLabel,
+		GitRef:                    gitRef,
+		CommitID:                  snapshot.CommitID,
+		ParentCommitID:            snapshot.Parent,
+		PreexistingUntrackedFiles: snapshot.PreexistingUntrackedFiles,
+		PreexistingUntrackedDirs:  snapshot.PreexistingUntrackedDirs,
+	}
+	if err := h.store.Checkpoints().Create(ctx, cp); err != nil {
+		_ = gitcheckpoints.DeleteRef(ctx, workspaceGitPath(ws), gitRef)
+		return nil, err
+	}
+
+	h.appendCheckpointUIEvent(ctx, conv.ID, models.UIEventKindCheckpointCreated,
+		fmt.Sprintf("checkpoint saved (%s)", shortCommitID(cp.CommitID)),
+		map[string]any{
+			"checkpoint_id": cp.ID,
+			"label":         cp.Label,
+			"commit_id":     cp.CommitID,
+			"auto":          auto,
+		},
+	)
+
+	if err := h.pruneCheckpointHistory(ctx, ws, conv.ID, checkpointRetentionLimit); err != nil {
+		log.Printf("[checkpoint] prune conv=%s: %v", conv.ID, err)
+	}
+
+	return cp, nil
+}
+
+func (h *ConversationHandler) pruneCheckpointHistory(ctx context.Context, ws *models.Workspace, convID models.ConversationID, keep int) error {
+	if keep <= 0 {
+		return nil
+	}
+
+	checkpoints, err := h.store.Checkpoints().ListByConversation(ctx, convID, keep+256)
+	if err != nil {
+		return err
+	}
+	if len(checkpoints) <= keep {
+		return nil
+	}
+
+	for _, stale := range checkpoints[keep:] {
+		if err := h.store.Checkpoints().Delete(ctx, stale.ID); err != nil {
+			log.Printf("[checkpoint] delete stale record id=%s conv=%s: %v", stale.ID, convID, err)
+		}
+		if err := gitcheckpoints.DeleteRef(ctx, workspaceGitPath(ws), stale.GitRef); err != nil && !errors.Is(err, gitcheckpoints.ErrNotGitRepository) {
+			log.Printf("[checkpoint] delete stale ref=%s conv=%s: %v", stale.GitRef, convID, err)
+		}
+	}
+	return nil
+}
+
+func toGitSnapshot(cp *models.Checkpoint) *gitcheckpoints.Snapshot {
+	if cp == nil {
+		return nil
+	}
+	return &gitcheckpoints.Snapshot{
+		CommitID:                  cp.CommitID,
+		Parent:                    cp.ParentCommitID,
+		GitRef:                    cp.GitRef,
+		PreexistingUntrackedFiles: cp.PreexistingUntrackedFiles,
+		PreexistingUntrackedDirs:  cp.PreexistingUntrackedDirs,
+	}
+}
+
+func (h *ConversationHandler) restoreCheckpoint(ctx context.Context, ws *models.Workspace, convID models.ConversationID, cp *models.Checkpoint, reason string) error {
+	if err := gitcheckpoints.Restore(ctx, workspaceGitPath(ws), toGitSnapshot(cp)); err != nil {
+		h.appendCheckpointUIEvent(ctx, convID, models.UIEventKindCheckpointRestoreFailed,
+			fmt.Sprintf("checkpoint restore failed (%s)", shortCommitID(cp.CommitID)),
+			map[string]any{
+				"checkpoint_id": cp.ID,
+				"label":         cp.Label,
+				"commit_id":     cp.CommitID,
+				"reason":        strings.TrimSpace(reason),
+				"error":         err.Error(),
+			},
+		)
+		return err
+	}
+
+	h.appendCheckpointUIEvent(ctx, convID, models.UIEventKindCheckpointRestored,
+		fmt.Sprintf("restored checkpoint (%s)", shortCommitID(cp.CommitID)),
+		map[string]any{
+			"checkpoint_id": cp.ID,
+			"label":         cp.Label,
+			"commit_id":     cp.CommitID,
+			"reason":        strings.TrimSpace(reason),
+		},
+	)
+	return nil
+}
+
+func (h *ConversationHandler) ListCheckpoints(w http.ResponseWriter, r *http.Request) {
+	convID := models.ConversationID(r.PathValue("id"))
+	if _, err := h.store.Conversations().Get(r.Context(), convID); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			utils.WriteError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		utils.WriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	limit := parseCheckpointLimit(r.URL.Query().Get("limit"))
+	checkpoints, err := h.store.Checkpoints().ListByConversation(r.Context(), convID, limit)
+	if err != nil {
+		utils.WriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	utils.WriteJSON(w, http.StatusOK, checkpoints)
+}
+
+func (h *ConversationHandler) CreateCheckpoint(w http.ResponseWriter, r *http.Request) {
+	convID := models.ConversationID(r.PathValue("id"))
+	conv, ws, err := h.loadConversationAndWorkspace(r.Context(), convID)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			utils.WriteError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		utils.WriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	var req createCheckpointRequest
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			utils.WriteError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+	}
+
+	cp, err := h.createCheckpoint(r.Context(), ws, conv, req.Label, false)
+	if err != nil {
+		if errors.Is(err, gitcheckpoints.ErrNotGitRepository) {
+			utils.WriteError(w, http.StatusConflict, "workspace is not a git repository")
+			return
+		}
+		utils.WriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	utils.WriteJSON(w, http.StatusCreated, cp)
+}
+
+func (h *ConversationHandler) RestoreCheckpoint(w http.ResponseWriter, r *http.Request) {
+	convID := models.ConversationID(r.PathValue("id"))
+	_, ws, err := h.loadConversationAndWorkspace(r.Context(), convID)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			utils.WriteError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		utils.WriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	checkpointID := strings.TrimSpace(r.PathValue("checkpointID"))
+	if checkpointID == "" {
+		utils.WriteError(w, http.StatusBadRequest, "checkpoint id is required")
+		return
+	}
+
+	cp, err := h.store.Checkpoints().Get(r.Context(), checkpointID)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			utils.WriteError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		utils.WriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if cp.ConversationID != convID {
+		utils.WriteError(w, http.StatusNotFound, "checkpoint not found")
+		return
+	}
+
+	if err := h.restoreCheckpoint(r.Context(), ws, convID, cp, "manual_restore"); err != nil {
+		if errors.Is(err, gitcheckpoints.ErrNotGitRepository) {
+			utils.WriteError(w, http.StatusConflict, "workspace is not a git repository")
+			return
+		}
+		utils.WriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	utils.WriteJSON(w, http.StatusOK, map[string]any{
+		"success":    true,
+		"checkpoint": cp,
+	})
+}
+
+func (h *ConversationHandler) Undo(w http.ResponseWriter, r *http.Request) {
+	convID := models.ConversationID(r.PathValue("id"))
+	_, ws, err := h.loadConversationAndWorkspace(r.Context(), convID)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			utils.WriteError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		utils.WriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	cp, err := h.store.Checkpoints().LatestByConversation(r.Context(), convID)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			utils.WriteError(w, http.StatusNotFound, "no checkpoints available")
+			return
+		}
+		utils.WriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	if err := h.restoreCheckpoint(r.Context(), ws, convID, cp, "undo_latest"); err != nil {
+		if errors.Is(err, gitcheckpoints.ErrNotGitRepository) {
+			utils.WriteError(w, http.StatusConflict, "workspace is not a git repository")
+			return
+		}
+		utils.WriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	if err := h.store.Checkpoints().Delete(r.Context(), cp.ID); err != nil {
+		log.Printf("[checkpoint] undo delete record id=%s conv=%s: %v", cp.ID, convID, err)
+	}
+	if err := gitcheckpoints.DeleteRef(r.Context(), workspaceGitPath(ws), cp.GitRef); err != nil && !errors.Is(err, gitcheckpoints.ErrNotGitRepository) {
+		log.Printf("[checkpoint] undo delete ref=%s conv=%s: %v", cp.GitRef, convID, err)
+	}
+
+	utils.WriteJSON(w, http.StatusOK, map[string]any{
+		"success":    true,
+		"checkpoint": cp,
+	})
 }
 
 // timelineItem is a single entry in the unified conversation timeline.

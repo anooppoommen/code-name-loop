@@ -4,6 +4,7 @@ import {
   Cog,
   GitBranch,
   Info,
+  RotateCcw,
   UserRound,
   Workflow,
   X,
@@ -36,6 +37,8 @@ export interface ActivityItemProps extends ToolReplyActions {
   visibleChars?: number;
   isCopied: boolean;
   onCopyToolCommand: (command: string, id: string) => void;
+  isRestoringCheckpoint: boolean;
+  onRestoreCheckpoint: (checkpointId: string) => void;
 }
 
 interface ActivityFrameProps {
@@ -67,6 +70,8 @@ function ActivityFrame({
 export const ActivityItem = memo(function ActivityItem({
   event,
   visibleChars,
+  isRestoringCheckpoint,
+  onRestoreCheckpoint,
   canCompose,
   isSending,
   onUseToolReply,
@@ -102,6 +107,7 @@ export const ActivityItem = memo(function ActivityItem({
 
   const toolPhase = toolPhaseLabel(event);
   const visual = visualStyleFor(event);
+  const canRestoreUserCheckpoint = event.kind === 'user' && !!event.checkpointId && !isSending && !isRestoringCheckpoint;
 
   const isUser = event.kind === 'user';
   const isAsst = event.kind === 'assistant';
@@ -216,7 +222,7 @@ export const ActivityItem = memo(function ActivityItem({
         right={null}
         contentClassName="min-w-0"
       >
-        <div className="ml-auto flex max-w-[85%] flex-col rounded-2xl rounded-tr-sm border border-loop-700/50 bg-loop-800/80 px-5 py-3 shadow-sm">
+        <div className="ml-auto flex max-w-[85%] flex-col rounded-2xl rounded-tr-sm bg-loop-800/80 px-5 pt-2.5 pb-1.5 shadow-sm">
           {event.images && event.images.length > 0 ? (
             <div className="mb-2 flex flex-wrap gap-2">
               {event.images.map((img, idx) => (
@@ -231,13 +237,29 @@ export const ActivityItem = memo(function ActivityItem({
               ))}
             </div>
           ) : null}
-          <div className="text-[14px] leading-relaxed text-loop-200">
-            <MarkdownBlock text={renderedText} />
+          <div className="text-loop-200">
+            <MarkdownBlock text={renderedText} dense />
           </div>
-          <div className="mt-1 flex justify-end">
-            <time className="text-[10px] font-medium text-loop-500">
-              {new Date(event.timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
-            </time>
+          <div className="mt-1.5 flex justify-end">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  if (event.checkpointId) {
+                    onRestoreCheckpoint(event.checkpointId);
+                  }
+                }}
+                disabled={!canRestoreUserCheckpoint}
+                className="inline-flex items-center gap-1 rounded-md border border-loop-700/80 bg-loop-900/50 px-2 py-0.5 text-[10px] font-medium text-loop-400 transition hover:border-loop-500 hover:text-loop-200 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-loop-700/80 disabled:hover:text-loop-400 disabled:hover:bg-loop-900/50"
+                title={event.checkpointId ? "Restore workspace to this user message checkpoint" : "Checkpoint not available yet"}
+              >
+                <RotateCcw size={11} />
+                <span>Restore</span>
+              </button>
+              <time className="text-[10px] font-medium text-loop-500">
+                {new Date(event.timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+              </time>
+            </div>
           </div>
         </div>
       </ActivityFrame>
@@ -649,11 +671,25 @@ function humanizeStatus(value: string): string {
     .join(' ');
 }
 
-const MarkdownBlock = memo(function MarkdownBlock({ text, compact = false }: { text: string; compact?: boolean }) {
-  const rootTextClass = compact
-    ? 'm-0 break-words text-[13px] font-normal leading-relaxed text-loop-300'
-    : 'm-0 break-words text-[15px] leading-relaxed';
-  const paragraphClass = compact ? 'm-0 mb-2 leading-6 last:mb-0' : 'm-0 mb-3 leading-7 last:mb-0';
+const MarkdownBlock = memo(function MarkdownBlock({
+  text,
+  compact = false,
+  dense = false,
+}: {
+  text: string;
+  compact?: boolean;
+  dense?: boolean;
+}) {
+  const rootTextClass = dense
+    ? 'm-0 break-words text-[14px] font-normal leading-user-message text-loop-200'
+    : compact
+      ? 'm-0 break-words text-[13px] font-normal leading-relaxed text-loop-300'
+      : 'm-0 break-words text-[15px] leading-relaxed';
+  const paragraphClass = dense
+    ? 'm-0 mb-1.5 leading-user-message last:mb-0'
+    : compact
+      ? 'm-0 mb-2 leading-6 last:mb-0'
+      : 'm-0 mb-3 leading-7 last:mb-0';
   const listClass = compact
     ? 'm-0 mb-2 list-disc space-y-1 pl-6 marker:text-loop-500'
     : 'm-0 mb-3 list-disc space-y-1 pl-6 marker:text-loop-500';

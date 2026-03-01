@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { LoopStreamPacket } from '../electron';
 import { attachReplyStream, chooseFolder, getActiveReplyStream, openReplyStream, requestJson } from '../lib/loopClient';
-import type { ActivityEvent, ComposerModel, ConversationSummary, ThinkingLevel, WorkspaceSummary } from '../types/ui';
+import type {
+  ActivityEvent,
+  CheckpointSummary,
+  ComposerModel,
+  ConversationSummary,
+  ThinkingLevel,
+  WorkspaceSummary,
+} from '../types/ui';
 import {
   type ActivityInput,
   historyRowsToActivities,
@@ -11,6 +18,7 @@ import {
   buildConversationTitle,
   getString,
   lastPathSegment,
+  parseCheckpoint,
   parseConversation,
   parseWorkspace,
   shortID,
@@ -62,6 +70,7 @@ export function useLoopDesktop(): LoopDesktopController {
   const [composerModelsByConversation, setComposerModelsByConversation] = useState<Record<string, ComposerModel>>({});
   const [conversationsByWorkspace, setConversationsByWorkspace] = useState<Record<string, ConversationSummary[]>>({});
   const [selectedConversationId, setSelectedConversationId] = useState('');
+  const [checkpointsByConversation, setCheckpointsByConversation] = useState<Record<string, CheckpointSummary[]>>({});
 
   const [activities, setActivities] = useState<ActivityEvent[]>([]);
 
@@ -155,6 +164,7 @@ export function useLoopDesktop(): LoopDesktopController {
   const [notices, setNotices] = useState<NoticeToast[]>([]);
   const [pendingCommandApprovals, setPendingCommandApprovals] = useState<PendingCommandApproval[]>([]);
   const [isResolvingCommandApproval, setIsResolvingCommandApproval] = useState(false);
+  const [isRestoringCheckpoint, setIsRestoringCheckpoint] = useState(false);
   const pendingApprovalsForSelectedConversation = useMemo(
     () => pendingCommandApprovals.filter((item) => item.conversationId === selectedConversationId),
     [pendingCommandApprovals, selectedConversationId],
@@ -210,6 +220,11 @@ export function useLoopDesktop(): LoopDesktopController {
   const selectedConversation = useMemo(
     () => conversations.find((conversation) => conversation.id === selectedConversationId) ?? null,
     [conversations, selectedConversationId],
+  );
+
+  const checkpoints = useMemo(
+    () => checkpointsByConversation[selectedConversationId] ?? [],
+    [checkpointsByConversation, selectedConversationId],
   );
 
   const composerModel = useMemo<ComposerModel>(() => {
@@ -691,6 +706,31 @@ export function useLoopDesktop(): LoopDesktopController {
     [backendUrl, pushActivity],
   );
 
+  const refreshCheckpointsForConversation = useCallback(
+    async (conversationId: string): Promise<CheckpointSummary[]> => {
+      if (!conversationId) {
+        return [];
+      }
+      const response = await requestJson<unknown>({
+        baseUrl: backendUrl,
+        endpointPath: `/conversations/${conversationId}/checkpoints?limit=60`,
+        method: 'GET',
+      });
+      if (!response.ok) {
+        return [];
+      }
+
+      const rows = rowsFromUnknown(response.data);
+      const parsed = rows
+        .map((item) => parseCheckpoint(item))
+        .filter((item): item is CheckpointSummary => item !== null);
+
+      setCheckpointsByConversation((prev) => ({ ...prev, [conversationId]: parsed }));
+      return parsed;
+    },
+    [backendUrl],
+  );
+
   const loadConversationHistory = useCallback(
     async (conversationId: string): Promise<void> => {
       const response = await requestJson<unknown>({
@@ -948,6 +988,14 @@ export function useLoopDesktop(): LoopDesktopController {
         delete next[conversationId];
         return next;
       });
+      setCheckpointsByConversation((prev) => {
+        if (!(conversationId in prev)) {
+          return prev;
+        }
+        const next = { ...prev };
+        delete next[conversationId];
+        return next;
+      });
       pushNotice('success', `Deleted conversation "${displayName}".`);
       await refreshConversationsByWorkspace(selectedWorkspaceId, selectedConversationId === '' && !wasSelected);
     },
@@ -1077,7 +1125,7 @@ export function useLoopDesktop(): LoopDesktopController {
       setSendingConversations((prev) => ({ ...prev, [conversationId]: true }));
       resetConversationLiveState(conversationId);
 
-      pushActivity({ 
+      const userEventId = pushActivity({
         kind: 'user', 
         title: 'User prompt', 
         body: text || '(Images attached)',
@@ -1130,6 +1178,18 @@ export function useLoopDesktop(): LoopDesktopController {
         ...stream,
         conversationId,
       };
+
+      // Attach the latest checkpoint to the just-sent user message row.
+      void refreshCheckpointsForConversation(conversationId).then((checkpointsList) => {
+        const latestCheckpoint = checkpointsList[0];
+        if (!latestCheckpoint) {
+          return;
+        }
+        mutateActivity(userEventId, (event) => ({
+          ...event,
+          checkpointId: event.checkpointId || latestCheckpoint.id,
+        }));
+      });
     },
     [
       backendUrl,
@@ -1137,7 +1197,9 @@ export function useLoopDesktop(): LoopDesktopController {
       ensureConversationId,
       finalizeTurn,
       handleStreamPacket,
+      mutateActivity,
       pushActivity,
+      refreshCheckpointsForConversation,
       resetConversationLiveState,
       selectedConversationId,
       sendingConversations,
@@ -1220,6 +1282,94 @@ export function useLoopDesktop(): LoopDesktopController {
     pushActivity({ kind: 'lifecycle', title: 'Turn cancel requested' });
   }, [pushActivity, selectedConversationId]);
 
+  const createCheckpoint = useCallback(async (label?: string): Promise<void> => {
+    if (!selectedConversationId) {
+      return;
+    }
+
+    const response = await requestJson<unknown>({
+      baseUrl: backendUrl,
+      endpointPath: `/conversations/${encodeURIComponent(selectedConversationId)}/checkpoints`,
+      method: 'POST',
+      body: label?.trim() ? { label: label.trim() } : {},
+    });
+
+    if (!response.ok) {
+      pushNotice('error', `Failed to create checkpoint: ${stringifyResponseError(response.data, response.error)}`);
+      return;
+    }
+
+    await refreshCheckpointsForConversation(selectedConversationId);
+    pushNotice('success', 'Checkpoint created.');
+  }, [backendUrl, pushNotice, refreshCheckpointsForConversation, selectedConversationId]);
+
+  const restoreCheckpoint = useCallback(async (checkpointId: string): Promise<void> => {
+    const checkpointID = checkpointId.trim();
+    if (!selectedConversationId || !checkpointID || isRestoringCheckpoint || isSending) {
+      return;
+    }
+
+    setIsRestoringCheckpoint(true);
+    const response = await requestJson<unknown>({
+      baseUrl: backendUrl,
+      endpointPath: `/conversations/${encodeURIComponent(selectedConversationId)}/checkpoints/${encodeURIComponent(checkpointID)}/restore`,
+      method: 'POST',
+    });
+    setIsRestoringCheckpoint(false);
+
+    if (!response.ok) {
+      pushNotice('error', `Failed to restore checkpoint: ${stringifyResponseError(response.data, response.error)}`);
+      return;
+    }
+
+    await Promise.all([
+      loadConversationHistory(selectedConversationId),
+      refreshCheckpointsForConversation(selectedConversationId),
+    ]);
+    pushNotice('success', 'Checkpoint restored.');
+  }, [
+    backendUrl,
+    isRestoringCheckpoint,
+    isSending,
+    loadConversationHistory,
+    pushNotice,
+    refreshCheckpointsForConversation,
+    selectedConversationId,
+  ]);
+
+  const undoLatestCheckpoint = useCallback(async (): Promise<void> => {
+    if (!selectedConversationId || isRestoringCheckpoint || isSending) {
+      return;
+    }
+
+    setIsRestoringCheckpoint(true);
+    const response = await requestJson<unknown>({
+      baseUrl: backendUrl,
+      endpointPath: `/conversations/${encodeURIComponent(selectedConversationId)}/undo`,
+      method: 'POST',
+    });
+    setIsRestoringCheckpoint(false);
+
+    if (!response.ok) {
+      pushNotice('error', `Failed to undo: ${stringifyResponseError(response.data, response.error)}`);
+      return;
+    }
+
+    await Promise.all([
+      loadConversationHistory(selectedConversationId),
+      refreshCheckpointsForConversation(selectedConversationId),
+    ]);
+    pushNotice('success', 'Undo completed.');
+  }, [
+    backendUrl,
+    isRestoringCheckpoint,
+    isSending,
+    loadConversationHistory,
+    pushNotice,
+    refreshCheckpointsForConversation,
+    selectedConversationId,
+  ]);
+
   const resolveCommandApproval = useCallback(async (decision: CommandApprovalDecision, message?: string): Promise<void> => {
     if (!pendingCommandApproval || isResolvingCommandApproval) {
       return;
@@ -1279,6 +1429,13 @@ export function useLoopDesktop(): LoopDesktopController {
     await refreshConversationsByWorkspace(selectedWorkspaceId, true);
   }, [refreshConversationsByWorkspace, selectedWorkspaceId]);
 
+  const refreshCheckpoints = useCallback(async (): Promise<void> => {
+    if (!selectedConversationId) {
+      return;
+    }
+    await refreshCheckpointsForConversation(selectedConversationId);
+  }, [refreshCheckpointsForConversation, selectedConversationId]);
+
   useEffect(() => {
     if (!selectedConversationId || activeStreamsRef.current[selectedConversationId]) {
       return;
@@ -1332,6 +1489,7 @@ export function useLoopDesktop(): LoopDesktopController {
     conversationsByWorkspace,
     selectedConversationId,
     selectedConversation,
+    checkpoints,
 
     activities: visibleActivities,
     feedScrollRef,
@@ -1352,6 +1510,7 @@ export function useLoopDesktop(): LoopDesktopController {
     pendingCommandApproval,
     pendingCommandApprovalCount: pendingApprovalsForSelectedConversation.length,
     isResolvingCommandApproval,
+    isRestoringCheckpoint,
     dismissNotice,
     resolveCommandApproval,
     hideLifecycle,
@@ -1367,6 +1526,7 @@ export function useLoopDesktop(): LoopDesktopController {
 
     refreshWorkspaces,
     refreshConversations,
+    refreshCheckpoints,
     pickFolder,
     createWorkspace,
     pickAndCreateWorkspace,
@@ -1379,6 +1539,9 @@ export function useLoopDesktop(): LoopDesktopController {
 
     sendMessage,
     cancelStream,
+    createCheckpoint,
+    restoreCheckpoint,
+    undoLatestCheckpoint,
     applyToolResponseSuggestion,
     sendToolResponseSuggestion,
   };

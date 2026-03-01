@@ -30,6 +30,12 @@ const (
 	UIEventKindError UIEventKind = "error"
 	// UIEventKindAbort is emitted when a turn is intentionally cancelled.
 	UIEventKindAbort UIEventKind = "abort"
+	// UIEventKindCheckpointCreated is emitted when a restore checkpoint is captured.
+	UIEventKindCheckpointCreated UIEventKind = "checkpoint_created"
+	// UIEventKindCheckpointRestored is emitted when a checkpoint is restored.
+	UIEventKindCheckpointRestored UIEventKind = "checkpoint_restored"
+	// UIEventKindCheckpointRestoreFailed is emitted when checkpoint restore fails.
+	UIEventKindCheckpointRestoreFailed UIEventKind = "checkpoint_restore_failed"
 )
 
 // UIEvent is a concrete, persisted timeline entry for the UI.

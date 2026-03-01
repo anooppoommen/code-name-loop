@@ -1,4 +1,4 @@
-import type { ConversationSummary, WorkspaceSummary } from '../types/ui';
+import type { CheckpointSummary, ConversationSummary, WorkspaceSummary } from '../types/ui';
 
 export function parseWorkspace(input: unknown): WorkspaceSummary | null {
   const record = asRecord(input);
@@ -62,6 +62,29 @@ export function parseConversation(input: unknown): ConversationSummary | null {
     title: getString(record, ['Title', 'title']) || id,
     isThread: parentConversationID !== '',
     updatedAt: getString(record, ['UpdatedAt', 'updatedAt', 'updated_at']),
+  };
+}
+
+export function parseCheckpoint(input: unknown): CheckpointSummary | null {
+  const record = asRecord(input);
+  const id = getString(record, ['id', 'ID']);
+  const conversationId = getString(record, ['conversation_id', 'conversationId', 'ConversationID']);
+  const workspaceId = getString(record, ['workspace_id', 'workspaceId', 'WorkspaceID']);
+  const commitId = getString(record, ['commit_id', 'commitId', 'CommitID']);
+  const createdAt = getString(record, ['created_at', 'createdAt', 'CreatedAt']);
+
+  if (!id || !conversationId || !workspaceId || !commitId) {
+    return null;
+  }
+
+  return {
+    id,
+    conversationId,
+    workspaceId,
+    label: getString(record, ['label', 'Label']) || 'checkpoint',
+    commitId,
+    parentCommitId: getString(record, ['parent_commit_id', 'parentCommitId', 'ParentCommitID']),
+    createdAt,
   };
 }
 

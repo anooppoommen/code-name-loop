@@ -1,5 +1,12 @@
 import type { Dispatch, RefObject, SetStateAction } from 'react';
-import type { ActivityEvent, ComposerModel, ConversationSummary, ThinkingLevel, WorkspaceSummary } from '../types/ui';
+import type {
+  ActivityEvent,
+  CheckpointSummary,
+  ComposerModel,
+  ConversationSummary,
+  ThinkingLevel,
+  WorkspaceSummary,
+} from '../types/ui';
 
 export interface StreamHandle {
   streamId: string;
@@ -64,6 +71,7 @@ export interface LoopDesktopController {
   conversationsByWorkspace: Record<string, ConversationSummary[]>;
   selectedConversationId: string;
   selectedConversation: ConversationSummary | null;
+  checkpoints: CheckpointSummary[];
 
   activities: ActivityEvent[];
   feedScrollRef: RefObject<HTMLDivElement | null>;
@@ -84,6 +92,7 @@ export interface LoopDesktopController {
   pendingCommandApproval: PendingCommandApproval | null;
   pendingCommandApprovalCount: number;
   isResolvingCommandApproval: boolean;
+  isRestoringCheckpoint: boolean;
   hideLifecycle: boolean;
   setHideLifecycle: (value: boolean) => void;
   showMascot: boolean;
@@ -100,6 +109,7 @@ export interface LoopDesktopController {
 
   refreshWorkspaces: () => Promise<void>;
   refreshConversations: () => Promise<void>;
+  refreshCheckpoints: () => Promise<void>;
   pickFolder: () => Promise<void>;
   createWorkspace: () => Promise<void>;
   pickAndCreateWorkspace: () => Promise<void>;
@@ -112,6 +122,9 @@ export interface LoopDesktopController {
 
   sendMessage: () => Promise<void>;
   cancelStream: () => Promise<void>;
+  createCheckpoint: (label?: string) => Promise<void>;
+  restoreCheckpoint: (checkpointId: string) => Promise<void>;
+  undoLatestCheckpoint: () => Promise<void>;
   applyToolResponseSuggestion: (text: string) => void;
   sendToolResponseSuggestion: (text: string) => Promise<void>;
 }

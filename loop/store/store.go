@@ -16,6 +16,7 @@ type Store interface {
 	Conversations() ConversationStore
 	Messages() MessageStore
 	UIEvents() UIEventStore
+	Checkpoints() CheckpointStore
 
 	// Close releases all resources held by the store.
 	Close() error
@@ -76,4 +77,25 @@ type UIEventStore interface {
 
 	// GetByMessage returns all UIEvents associated with a specific message.
 	GetByMessage(ctx context.Context, msgID models.MessageID) ([]*models.UIEvent, error)
+}
+
+// CheckpointStore persists conversation-scoped workspace snapshots for restore/undo.
+type CheckpointStore interface {
+	// Create persists a checkpoint record.
+	Create(ctx context.Context, cp *models.Checkpoint) error
+
+	// Get loads a checkpoint by ID.
+	Get(ctx context.Context, id string) (*models.Checkpoint, error)
+
+	// ListByConversation returns latest checkpoints first.
+	ListByConversation(ctx context.Context, convID models.ConversationID, limit int) ([]*models.Checkpoint, error)
+
+	// LatestByConversation returns the newest checkpoint for a conversation.
+	LatestByConversation(ctx context.Context, convID models.ConversationID) (*models.Checkpoint, error)
+
+	// Delete removes a checkpoint by ID.
+	Delete(ctx context.Context, id string) error
+
+	// PruneByConversation keeps only the latest `keep` checkpoints for a conversation.
+	PruneByConversation(ctx context.Context, convID models.ConversationID, keep int) error
 }

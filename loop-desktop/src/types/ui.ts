@@ -22,6 +22,7 @@ export interface ActivityEvent {
   kind: ActivityKind;
   title: string;
   body?: string;
+  checkpointId?: string;
   timestamp: number;
   streaming?: boolean;
   tool?: ToolActivityMeta;
@@ -39,4 +40,14 @@ export interface ConversationSummary {
   title: string;
   isThread: boolean;
   updatedAt: string;
+}
+
+export interface CheckpointSummary {
+  id: string;
+  conversationId: string;
+  workspaceId: string;
+  label: string;
+  commitId: string;
+  parentCommitId: string;
+  createdAt: string;
 }

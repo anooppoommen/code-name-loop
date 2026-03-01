@@ -15,6 +15,7 @@ func migrate(db *sql.DB) error {
 		migrationMessages,
 		migrationUIEvents,
 		migrationTimelineCursors,
+		migrationCheckpoints,
 	}
 	for i, m := range migrations {
 		if _, err := db.Exec(m); err != nil {
@@ -132,6 +133,24 @@ CREATE TABLE IF NOT EXISTS conversation_timeline_cursors (
     conversation_id   TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
     next_timeline_seq INTEGER NOT NULL
 );
+`
+
+const migrationCheckpoints = `
+CREATE TABLE IF NOT EXISTS checkpoints (
+    id                                  TEXT PRIMARY KEY,
+    conversation_id                     TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    workspace_id                        TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    label                               TEXT NOT NULL DEFAULT '',
+    git_ref                             TEXT NOT NULL DEFAULT '',
+    commit_id                           TEXT NOT NULL,
+    parent_commit_id                    TEXT NOT NULL DEFAULT '',
+    preexisting_untracked_files_json    TEXT NOT NULL DEFAULT '[]',
+    preexisting_untracked_dirs_json     TEXT NOT NULL DEFAULT '[]',
+    created_at                          DATETIME NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_checkpoints_conversation_created
+    ON checkpoints(conversation_id, created_at DESC);
 `
 
 // migrateThreadFields adds sub-agent lifecycle columns to the conversations table.

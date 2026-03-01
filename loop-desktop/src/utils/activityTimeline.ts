@@ -188,12 +188,15 @@ export function historyRowsToActivities(items: unknown[]): ActivityEvent[] {
       if (sentBy === 'user') {
         const text = extractMessageText(msg);
         const images = extractMessageImages(msg);
+        const metadata = asRecord(getField(msg, ['Metadata', 'metadata']));
+        const checkpointId = getString(metadata, ['checkpoint_id', 'checkpointId']);
         if (text || images.length > 0) {
           activityRows.push({
             id: getString(msg, ['ID', 'id']) || crypto.randomUUID(),
             kind: 'user',
             title: 'User prompt',
             body: text || '(Images attached)',
+            checkpointId: checkpointId || undefined,
             timestamp: messageTimestamp(msg),
             images,
           });
@@ -401,6 +404,36 @@ export function historyRowsToActivities(items: unknown[]): ActivityEvent[] {
         }
         case 'abort': {
           activityRows.push({ id, kind: 'lifecycle', title: 'Turn aborted', body: text || undefined, timestamp });
+          break;
+        }
+        case 'checkpoint_created': {
+          activityRows.push({
+            id,
+            kind: 'lifecycle',
+            title: 'Checkpoint created',
+            body: text || undefined,
+            timestamp,
+          });
+          break;
+        }
+        case 'checkpoint_restored': {
+          activityRows.push({
+            id,
+            kind: 'lifecycle',
+            title: 'Checkpoint restored',
+            body: text || undefined,
+            timestamp,
+          });
+          break;
+        }
+        case 'checkpoint_restore_failed': {
+          activityRows.push({
+            id,
+            kind: 'error',
+            title: 'Checkpoint restore failed',
+            body: text || undefined,
+            timestamp,
+          });
           break;
         }
       }
