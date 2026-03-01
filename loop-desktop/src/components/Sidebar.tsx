@@ -32,21 +32,43 @@ interface SidebarProps {
 
   conversations: ConversationSummary[];
   selectedConversationId: string;
+  sendingConversations: Record<string, boolean>;
   onSelectConversation: (conversationId: string) => void;
   onNewConversation: () => void;
   onDeleteConversation: (conversationId: string) => void;
   onRenameConversation: (conversationId: string, title: string) => void;
 }
 
+const SPINNER_FRAMES = ['⣾', '⣷', '⣯', '⣟', '⡿', '⢿', '⣻', '⣽'];
+
+function BrailleSpinner() {
+  const [frame, setFrame] = useState(0);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setFrame((f) => (f + 1) % SPINNER_FRAMES.length);
+    }, 100);
+    return () => clearInterval(timer);
+  }, []);
+
+  return (
+    <span className="inline-block animate-googleText font-sans font-normal text-[15px] leading-none mt-[-1px]">
+      {SPINNER_FRAMES[frame]}
+    </span>
+  );
+}
+
 function ThreadItem({
   conversation,
   isActive,
+  isWorking,
   onSelect,
   onDelete,
   onRename,
 }: {
   conversation: ConversationSummary;
   isActive: boolean;
+  isWorking: boolean;
   onSelect: () => void;
   onDelete: () => void;
   onRename: (title: string) => void;
@@ -105,7 +127,7 @@ function ThreadItem({
     <div
       role="button"
       tabIndex={0}
-      className={`group relative flex w-full cursor-pointer items-center justify-between rounded-lg pl-8 pr-2 py-1.5 text-[13px] transition-all ${isActive
+      className={`group relative flex w-full cursor-pointer items-center justify-between rounded-lg px-2 py-1.5 text-[13px] transition-all ${isActive
         ? 'bg-blue-500/10 text-blue-400 font-medium'
         : 'text-neutral-400 hover:bg-neutral-700 hover:text-neutral-200'
         }`}
@@ -122,33 +144,38 @@ function ThreadItem({
       }}
     >
       <div className="flex min-w-0 flex-1 items-center gap-2">
-        {isEditing ? (
-          <input
-            ref={inputRef}
-            className="w-full bg-neutral-900 border border-blue-500/50 rounded px-1.5 py-0.5 text-neutral-200 outline-none"
-            value={editValue}
-            onChange={(e) => setEditValue(e.target.value)}
-            onClick={(e) => e.stopPropagation()}
-            onKeyDown={(e) => {
-              e.stopPropagation();
-              if (e.key === 'Enter') handleRenameSubmit();
-              if (e.key === 'Escape') {
-                setEditValue(conversation.title);
-                setIsEditing(false);
-              }
-            }}
-            onBlur={handleRenameSubmit}
-          />
-        ) : (
-          <div className="flex flex-col min-w-0">
-            <span className="truncate leading-tight pl-0">{conversation.title}</span>
-            {conversation.updatedAt && (
-              <span className="truncate text-[10px] text-neutral-500">
-                {formatRelativeTime(conversation.updatedAt)}
-              </span>
-            )}
-          </div>
-        )}
+        <div className="flex w-[15px] shrink-0 items-center justify-center">
+          {isWorking && <BrailleSpinner />}
+        </div>
+        <div className="flex min-w-0 flex-1 items-center justify-between gap-2 pr-1">
+          {isEditing ? (
+            <input
+              ref={inputRef}
+              className="w-full bg-neutral-900 border border-blue-500/50 rounded px-1.5 py-0.5 text-neutral-200 outline-none"
+              value={editValue}
+              onChange={(e) => setEditValue(e.target.value)}
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => {
+                e.stopPropagation();
+                if (e.key === 'Enter') handleRenameSubmit();
+                if (e.key === 'Escape') {
+                  setEditValue(conversation.title);
+                  setIsEditing(false);
+                }
+              }}
+              onBlur={handleRenameSubmit}
+            />
+          ) : (
+            <>
+              <span className="truncate leading-tight">{conversation.title}</span>
+              {conversation.updatedAt && (
+                <span className="shrink-0 text-[10px] text-neutral-500 whitespace-nowrap opacity-60 transition-opacity group-hover:opacity-0">
+                  {formatRelativeTime(conversation.updatedAt)}
+                </span>
+              )}
+            </>
+          )}
+        </div>
       </div>
 
       {!isEditing && (
@@ -228,6 +255,7 @@ export function Sidebar({
   onSelectWorkspace,
   conversations,
   selectedConversationId,
+  sendingConversations,
   onSelectConversation,
   onNewConversation,
   onDeleteConversation,
@@ -273,18 +301,20 @@ export function Sidebar({
                 <div className="group/ws relative flex w-full flex-col">
                   {/* Workspace Folder Header */}
                   <button
-                    className="flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-left text-[13px] text-neutral-300 transition-colors hover:bg-neutral-700"
+                    className="flex w-full items-center justify-between rounded-lg px-2 py-1 text-left text-[13px] text-neutral-300 transition-colors hover:bg-neutral-700"
                     onClick={() => onSelectWorkspace(ws.id)}
                   >
-                    <div className="flex min-w-0 items-center gap-2">
-                      {isSelected ? (
-                        <FolderOpen size={15} className="text-neutral-400 shrink-0" />
-                      ) : (
-                        <Folder size={15} className="text-neutral-400 shrink-0" />
-                      )}
-                      <div className="flex flex-col min-w-0">
+                    <div className="flex min-w-0 flex-1 items-center gap-2">
+                      <div className="flex w-[15px] shrink-0 items-center justify-center">
+                        {isSelected ? (
+                          <FolderOpen size={15} className="text-neutral-400" />
+                        ) : (
+                          <Folder size={15} className="text-neutral-400" />
+                        )}
+                      </div>
+                      <div className="flex min-w-0 flex-1 items-center justify-between gap-2 pr-1">
                         <span className="truncate leading-tight font-medium text-neutral-200">{ws.name}</span>
-                        <span className="truncate text-[10px] text-neutral-400 font-mono" title={ws.rootPath}>{shortID(ws.id)} • {ws.rootPath}</span>
+                        <span className="shrink-0 text-[10px] text-neutral-500 font-mono opacity-60" title={ws.rootPath}>{shortID(ws.id)}</span>
                       </div>
                     </div>
                   </button>
@@ -301,7 +331,7 @@ export function Sidebar({
 
                 {/* Workspace Threads (if expanded) */}
                 {isSelected && (
-                  <div className="flex flex-col gap-0.5 pr-2">
+                  <div className="flex flex-col gap-0.5">
                     {conversations.length === 0 ? (
                       <p className="pl-8 text-[12px] text-neutral-500 py-1">No threads</p>
                     ) : (
@@ -312,6 +342,7 @@ export function Sidebar({
                             key={conversation.id}
                             conversation={conversation}
                             isActive={isActive}
+                            isWorking={!!sendingConversations[conversation.id]}
                             onSelect={() => onSelectConversation(conversation.id)}
                             onDelete={() => onDeleteConversation(conversation.id)}
                             onRename={(title) => onRenameConversation(conversation.id, title)}

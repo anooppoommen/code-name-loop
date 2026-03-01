@@ -1,6 +1,5 @@
 import {
   AlertTriangle,
-  Bot,
   Brain,
   Cog,
   GitBranch,
@@ -9,6 +8,7 @@ import {
   Workflow,
   X,
 } from 'lucide-react';
+import { motion } from 'framer-motion';
 import { memo, useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -206,56 +206,9 @@ export const ActivityItem = memo(function ActivityItem({
 
   return (
     <>
-    <article
-      className={`group flex gap-4 border-l-2 px-6 py-3 transition-colors ${visual.row}`}
-    >
-      <div className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${visual.icon}`}>
-        {isUser ? <UserRound size={20} /> : isAsst ? <Bot size={20} /> : icon}
-      </div>
-
-      <div className="flex min-w-0 flex-col gap-1">
-        <div className="flex flex-wrap items-baseline gap-2">
-          <span className="font-semibold text-neutral-200">
-            {isUser ? 'You' : isAsst ? 'Agent' : 'System'}
-          </span>
-          <time className="text-[11px] font-medium text-neutral-500">
-            {new Date(event.timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
-          </time>
-
-          {isSystemEvent ? (
-            <div className="ml-2 flex items-center gap-2">
-              <span className="text-[10px] font-semibold uppercase tracking-wider text-neutral-500">
-                {labelFor(event.kind)}
-              </span>
-              {event.tool?.callId ? (
-                <span className="font-mono text-[10px] text-neutral-500">
-                  {shortID(event.tool.callId)}
-                </span>
-              ) : null}
-              {event.tool ? (
-                <span
-                  className={`rounded px-1.5 py-0.5 text-[9px] font-bold uppercase ${event.tool.success === false
-                      ? 'bg-red-500/10 text-red-500'
-                      : 'bg-blue-500/10 text-blue-500'
-                    }`}
-                >
-                  {toolPhase}
-                </span>
-              ) : null}
-              {copyCommand ? (
-                <button
-                  type="button"
-                  className="rounded border border-neutral-700 px-1.5 py-0.5 text-[10px] text-neutral-400 hover:border-neutral-500 hover:text-neutral-200"
-                  onClick={() => onCopyToolCommand(copyCommand, event.id)}
-                >
-                  {isCopied ? 'Copied' : 'Copy cmd'}
-                </button>
-              ) : null}
-            </div>
-          ) : null}
-        </div>
-
-        <div className={`text-[15px] leading-relaxed ${visual.copy}`}>
+    {isUser ? (
+      <article className="flex justify-end px-6 py-4">
+        <div className="flex flex-col max-w-[85%] bg-neutral-800/80 rounded-2xl rounded-tr-sm px-5 py-3 border border-neutral-700/50 shadow-sm">
           {event.images && event.images.length > 0 ? (
             <div className="flex flex-wrap gap-2 mb-2">
               {event.images.map((img, idx) => (
@@ -270,32 +223,108 @@ export const ActivityItem = memo(function ActivityItem({
               ))}
             </div>
           ) : null}
-
-          <MarkdownBlock text={renderedText} />
-
-          {requestInputPayload ? (
-            <RequestUserInputCard
-              payload={requestInputPayload}
-              canCompose={canCompose}
-              isSending={isSending}
-              onUseToolReply={onUseToolReply}
-              onSendToolReply={onSendToolReply}
-            />
-          ) : commandToolPayload ? (
-            <CommandToolCard payload={commandToolPayload} />
-          ) : updatePlanPayload ? (
-            <UpdatePlanCard payload={updatePlanPayload} />
-          ) : fileToolPayload ? (
-            <FileToolCard payload={fileToolPayload} />
-          ) : isSystemEvent && event.body ? (
-            <pre className={`mt-2 max-h-96 overflow-y-auto whitespace-pre-wrap rounded-md px-3 py-2 text-xs leading-relaxed scrollbar-thin ${visual.detail}`}>
-              {event.body}
-            </pre>
-          ) : null}
-          {event.streaming ? <span className="animate-pulse text-neutral-500">▍</span> : null}
+          <div className="text-[14px] leading-relaxed text-neutral-200">
+            <MarkdownBlock text={renderedText} />
+          </div>
+          <div className="flex justify-end mt-1">
+            <time className="text-[10px] text-neutral-500 font-medium">
+              {new Date(event.timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+            </time>
+          </div>
         </div>
-      </div>
-    </article>
+      </article>
+    ) : (
+      <article
+        className={`group flex gap-4 transition-colors ${visual.row}`}
+      >
+        <div className={`${visual.icon}`}>
+          {icon}
+        </div>
+
+        <div className="flex min-w-0 flex-col gap-1 w-full">
+          <div className="flex flex-wrap items-baseline gap-2 mb-1">
+            <span className="font-semibold text-neutral-200">
+              {isAsst ? 'Gemini' : 'System'}
+            </span>
+            <time className="text-[11px] font-medium text-neutral-500">
+              {new Date(event.timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+            </time>
+
+            {isSystemEvent ? (
+              <div className="ml-2 flex items-center gap-2">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-neutral-500">
+                  {labelFor(event.kind)}
+                </span>
+                {event.tool?.callId ? (
+                  <span className="font-mono text-[10px] text-neutral-500">
+                    {shortID(event.tool.callId)}
+                  </span>
+                ) : null}
+                {event.tool ? (
+                  <span
+                    className={`rounded px-1.5 py-0.5 text-[9px] font-bold uppercase ${event.tool.success === false
+                        ? 'bg-red-500/10 text-red-500'
+                        : 'bg-blue-500/10 text-blue-500'
+                      }`}
+                  >
+                    {toolPhase}
+                  </span>
+                ) : null}
+                {copyCommand ? (
+                  <button
+                    type="button"
+                    className="rounded border border-neutral-700 px-1.5 py-0.5 text-[10px] text-neutral-400 hover:border-neutral-500 hover:text-neutral-200"
+                    onClick={() => onCopyToolCommand(copyCommand, event.id)}
+                  >
+                    {isCopied ? 'Copied' : 'Copy cmd'}
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+
+          <div className={`text-[15px] leading-relaxed ${visual.copy}`}>
+            {event.images && event.images.length > 0 ? (
+              <div className="flex flex-wrap gap-2 mb-2">
+                {event.images.map((img, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    className="rounded-md border border-neutral-700 overflow-hidden w-16 h-16 bg-neutral-900 cursor-pointer hover:opacity-80 transition-opacity"
+                    onClick={() => setSelectedImage(img.dataUrl)}
+                  >
+                    <img src={img.dataUrl} alt="attached" className="w-full h-full object-cover" />
+                  </button>
+                ))}
+              </div>
+            ) : null}
+
+            <MarkdownBlock text={renderedText} />
+
+            {requestInputPayload ? (
+              <RequestUserInputCard
+                payload={requestInputPayload}
+                canCompose={canCompose}
+                isSending={isSending}
+                onUseToolReply={onUseToolReply}
+                onSendToolReply={onSendToolReply}
+              />
+            ) : commandToolPayload ? (
+              <CommandToolCard payload={commandToolPayload} />
+            ) : updatePlanPayload ? (
+              <UpdatePlanCard payload={updatePlanPayload} />
+            ) : fileToolPayload ? (
+              <FileToolCard payload={fileToolPayload} />
+            ) : isSystemEvent && event.body ? (
+              <pre className={`mt-2 max-h-96 overflow-y-auto whitespace-pre-wrap rounded-md px-3 py-2 text-xs leading-relaxed scrollbar-thin ${visual.detail}`}>
+                {event.body}
+              </pre>
+            ) : null}
+            {event.streaming ? <span className="animate-pulse text-neutral-500">▍</span> : null}
+          </div>
+        </div>
+      </article>
+    )}
 
     {selectedImage && (
       <div 
@@ -360,7 +389,7 @@ const ThoughtMessage = memo(function ThoughtMessage({
   renderedText: string;
   isStreaming: boolean;
 }) {
-  const [isExpanded, setIsExpanded] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(isStreaming);
   const [isOverflowing, setIsOverflowing] = useState(renderedText.length > 150);
   const contentRef = useRef<HTMLDivElement>(null);
 
@@ -370,12 +399,21 @@ const ThoughtMessage = memo(function ThoughtMessage({
     }
   }, [renderedText]);
 
+  useEffect(() => {
+    if (isStreaming) {
+      setIsExpanded(true);
+    }
+  }, [isStreaming]);
+
   return (
     <article className="py-2">
       <div className="px-6">
         <div className="max-w-[620px] text-neutral-400">
-          <div
-            className={`overflow-hidden relative transition-[max-height] duration-300 ease-in-out ${isExpanded ? 'max-h-[5000px]' : (isOverflowing ? 'max-h-[64px]' : 'max-h-[5000px]')}`}
+          <motion.div
+            initial={false}
+            animate={{ height: isExpanded ? 'auto' : (isOverflowing ? 64 : 'auto') }}
+            transition={{ duration: 0.3, ease: 'easeInOut' }}
+            className="relative overflow-hidden"
           >
             <div ref={contentRef}>
               <MarkdownBlock text={renderedText} compact />
@@ -384,7 +422,7 @@ const ThoughtMessage = memo(function ThoughtMessage({
             {!isExpanded && isOverflowing && (
               <div className="absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-neutral-900 to-transparent pointer-events-none" />
             )}
-          </div>
+          </motion.div>
           {isOverflowing && (
             <button
               onClick={() => setIsExpanded(!isExpanded)}
@@ -428,8 +466,8 @@ function toolPhaseLabel(event: ActivityEvent): string {
 function visualStyleFor(event: ActivityEvent): { row: string; icon: string; copy: string; detail: string } {
   if (event.kind === 'error' || event.tool?.success === false) {
     return {
-      row: 'border-l-red-500/70 hover:bg-red-950/10',
-      icon: 'bg-red-900/25 text-red-300',
+      row: 'border-l-2 border-l-red-500/70 px-6 py-3 hover:bg-red-950/10',
+      icon: 'mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-red-900/25 text-red-300',
       copy: 'text-red-100',
       detail: 'bg-red-950/20 text-red-100',
     };
@@ -437,8 +475,8 @@ function visualStyleFor(event: ActivityEvent): { row: string; icon: string; copy
 
   if (event.kind === 'tool') {
     return {
-      row: 'border-l-blue-500/50 hover:bg-blue-950/10',
-      icon: 'bg-blue-900/25 text-blue-200',
+      row: 'border-l-2 border-l-blue-500/50 px-6 py-3 hover:bg-blue-950/10',
+      icon: 'mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-blue-900/25 text-blue-200',
       copy: 'text-neutral-200',
       detail: 'bg-neutral-900/40 text-blue-100',
     };
@@ -446,16 +484,25 @@ function visualStyleFor(event: ActivityEvent): { row: string; icon: string; copy
 
   if (event.kind === 'thought') {
     return {
-      row: 'border-l-neutral-500/80 hover:bg-neutral-800/35',
-      icon: 'bg-neutral-700/70 text-neutral-200',
+      row: 'border-l-2 border-l-neutral-500/80 px-6 py-3 hover:bg-neutral-800/35',
+      icon: 'mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-neutral-700/70 text-neutral-200',
+      copy: 'text-neutral-200',
+      detail: 'bg-neutral-900/50 text-neutral-300',
+    };
+  }
+
+  if (event.kind === 'assistant') {
+    return {
+      row: 'px-6 py-5 hover:bg-neutral-800/20',
+      icon: 'mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center',
       copy: 'text-neutral-200',
       detail: 'bg-neutral-900/50 text-neutral-300',
     };
   }
 
   return {
-    row: 'border-l-neutral-700/80 hover:bg-neutral-800/35',
-    icon: 'bg-neutral-800/80 text-neutral-400',
+    row: 'border-l-2 border-l-neutral-700/80 px-6 py-3 hover:bg-neutral-800/35',
+    icon: 'mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-neutral-800/80 text-neutral-400',
     copy: 'text-neutral-300',
     detail: 'bg-neutral-900/50 text-neutral-400',
   };
@@ -578,9 +625,9 @@ function labelFor(kind: ActivityKind): string {
 function iconFor(kind: ActivityKind) {
   switch (kind) {
     case 'user':
-      return <UserRound size={14} />;
+      return <UserRound size={18} />;
     case 'assistant':
-      return <Bot size={14} />;
+      return <img src="/gemini-color.svg" width={22} height={22} alt="Gemini" />;
     case 'thought':
       return <Brain size={14} />;
     case 'status':

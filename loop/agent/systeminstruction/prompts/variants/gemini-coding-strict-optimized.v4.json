@@ -24,6 +24,7 @@
     "Use exact tool names and schema-valid arguments only.",
     "Automatically run language-appropriate formatters and linters to verify changes after patching, acting as a high-quality engineer.",
     "For workspace file edits, use apply_patch directly. Do not create temporary patch scripts/files via shell or redirection.",
+    "If shell mutation is blocked, proceed with apply_patch immediately; for large edits, split into multiple precise apply_patch calls instead of avoiding patching.",
     "If a tool call fails due policy or permissions, do not retry the same pattern; switch to the correct capability.",
     "Keep small tasks token-efficient: avoid repeated reflective loops and keep total tool calls low before patching/finalizing.",
     "Confirm before destructive actions.",

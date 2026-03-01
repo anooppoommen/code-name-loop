@@ -12,6 +12,7 @@ interface ComposerProps {
   onThinkingLevelChange: (value: ThinkingLevel) => void;
   onSubmit: () => Promise<void>;
   onStop: () => Promise<void>;
+  onQueue?: () => void;
   conversationId: string | null;
   composerImages: ComposerImage[];
   setComposerImages: React.Dispatch<React.SetStateAction<ComposerImage[]>>;
@@ -37,6 +38,7 @@ export function Composer({
   onThinkingLevelChange,
   onSubmit,
   onStop,
+  onQueue,
   conversationId,
   composerImages,
   setComposerImages,
@@ -46,7 +48,8 @@ export function Composer({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [isThinkingMenuOpen, setIsThinkingMenuOpen] = useState(false);
   const hasContent = messageInput.trim().length > 0 || composerImages.length > 0;
-  const sendDisabled = !canCompose || !hasContent || isSending;
+  // If isSending is true, we can still Queue, so only disable if we can't compose at all
+  const actionDisabled = !canCompose || !hasContent;
   const activeThinking = useMemo(
     () => THINKING_OPTIONS.find((option) => option.value === thinkingLevel) ?? THINKING_OPTIONS[2],
     [thinkingLevel],
@@ -130,10 +133,14 @@ export function Composer({
       <form
         onSubmit={(event) => {
           event.preventDefault();
-          if (sendDisabled) {
+          if (actionDisabled) {
             return;
           }
-          void onSubmit();
+          if (isSending && onQueue) {
+            onQueue();
+          } else {
+            void onSubmit();
+          }
         }}
         className="no-drag relative flex shrink-0 flex-col rounded-xl border border-neutral-700/50 bg-neutral-800 p-2 shadow-sm transition-all focus-within:border-blue-500/50 focus-within:ring-1 focus-within:ring-blue-500/50"
       >
@@ -163,14 +170,18 @@ export function Composer({
               return;
             }
             event.preventDefault();
-            if (sendDisabled) {
+            if (actionDisabled) {
               return;
             }
-            void onSubmit();
+            if (isSending && onQueue) {
+              onQueue();
+            } else {
+              void onSubmit();
+            }
           }}
           className="max-h-[132px] min-h-[36px] w-full resize-none bg-transparent px-1 py-0.5 text-[13px] leading-relaxed text-neutral-200 outline-none placeholder:text-neutral-500 disabled:cursor-not-allowed disabled:opacity-50"
           placeholder={canCompose ? 'Ask for follow-up changes...' : 'Select a workspace to start chatting'}
-          disabled={!canCompose || isSending}
+          disabled={!canCompose}
         />
 
         <div className="mt-1.5 flex items-center justify-between px-0.5">
@@ -244,23 +255,31 @@ export function Composer({
             </div>
           </div>
 
+          <div className="flex items-center gap-1.5">
+          {isSending && (
+            <button
+              className="inline-flex h-7 min-w-[32px] items-center justify-center gap-1.5 rounded-full bg-neutral-700 px-2.5 text-[11px] font-semibold text-neutral-300 shadow-sm transition hover:bg-neutral-600 hover:text-white"
+              type="button"
+              onClick={() => void onStop()}
+            >
+              <div className="h-3 w-3 animate-spin rounded-full border-2 border-white/20 border-t-white" />
+              <span>Stop</span>
+            </button>
+          )}
           <button
             className="inline-flex h-7 min-w-[32px] items-center justify-center gap-1.5 rounded-full bg-blue-600 px-2.5 text-[11px] font-semibold text-white shadow-sm transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-neutral-800 disabled:text-neutral-500"
-            type={isSending ? 'button' : 'submit'}
-            onClick={isSending ? () => void onStop() : undefined}
-            disabled={!isSending && sendDisabled}
+            type="submit"
+            disabled={actionDisabled}
           >
             {isSending ? (
-              <>
-                <div className="h-3 w-3 animate-spin rounded-full border-2 border-white/20 border-t-white" />
-                <span>Stop</span>
-              </>
+              'Queue'
             ) : hasContent ? (
               'Send'
             ) : (
               <ArrowUp size={13} />
             )}
           </button>
+          </div>
         </div>
       </form>
     </div>

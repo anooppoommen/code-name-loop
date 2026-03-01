@@ -6,6 +6,7 @@ import { Composer } from './components/Composer';
 import { Sidebar } from './components/Sidebar';
 import { ToastStack } from './components/ToastStack';
 import { useLoopDesktop } from './hooks/useLoopDesktop';
+import { QueuedMessages } from './components/QueuedMessages';
 import { Powerline } from './components/Powerline';
 
 const MOBILE_SIDEBAR_BREAKPOINT_PX = 920;
@@ -47,6 +48,9 @@ export default function App() {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'n') {
         e.preventDefault();
         void app.newConversation();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'b') {
+        e.preventDefault();
+        setIsSidebarOpen((prev) => !prev);
       } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'o') {
         e.preventDefault();
         setHistoryState((prev) => {
@@ -120,6 +124,7 @@ export default function App() {
               onSelectWorkspace={app.selectWorkspace}
               conversations={app.conversations}
               selectedConversationId={app.selectedConversationId}
+              sendingConversations={app.sendingConversations}
               onSelectConversation={app.selectConversation}
               onNewConversation={() => void app.newConversation()}
               onDeleteConversation={(conversationId) => {
@@ -170,6 +175,12 @@ export default function App() {
                   </motion.div>
                 )}
               </AnimatePresence>
+              <QueuedMessages
+                messages={app.queuedMessages}
+                onReorder={app.reorderQueuedMessage}
+                onRemove={app.removeQueuedMessage}
+                onSteer={app.steerQueuedMessage}
+              />
               <Composer
                 messageInput={app.messageInput}
                 onMessageInputChange={app.setMessageInput}
@@ -179,6 +190,7 @@ export default function App() {
                 onThinkingLevelChange={app.setThinkingLevel}
                 onSubmit={app.sendMessage}
                 onStop={app.cancelStream}
+                onQueue={app.queueMessage}
                 conversationId={app.selectedConversationId}
                 composerImages={app.composerImages}
                 setComposerImages={app.setComposerImages}

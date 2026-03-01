@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -816,6 +817,13 @@ func (s *Session) emitUIEvent(
 	msgID models.MessageID,
 	metadata map[string]any,
 ) {
+	persistCtx := ctx
+	if persistCtx == nil || persistCtx.Err() != nil {
+		detachedCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		persistCtx = detachedCtx
+	}
+
 	evt := &models.UIEvent{
 		ConversationID: s.Conversation.ID,
 		MessageID:      msgID,
@@ -823,7 +831,10 @@ func (s *Session) emitUIEvent(
 		Text:           text,
 		Metadata:       metadata,
 	}
-	if err := s.Store.UIEvents().Append(ctx, evt); err != nil {
+	if err := s.Store.UIEvents().Append(persistCtx, evt); err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return
+		}
 		log.Printf("[session] emitUIEvent %s: %v", kind, err)
 	}
 }

@@ -10,6 +10,7 @@ export default {
       animation: {
         shimmer: 'shimmer 2.5s linear infinite',
         googleStatus: 'shimmer 2s linear infinite, googleColors 3s ease-in-out infinite',
+        googleText: 'googleTextColors 3s ease-in-out infinite',
       },
       keyframes: {
         shimmer: {
@@ -21,6 +22,12 @@ export default {
           '25%': { backgroundColor: '#f28b82' },
           '50%': { backgroundColor: '#fde293' },
           '75%': { backgroundColor: '#81c995' },
+        },
+        googleTextColors: {
+          '0%, 100%': { color: '#8ab4f8' },
+          '25%': { color: '#f28b82' },
+          '50%': { color: '#fde293' },
+          '75%': { color: '#81c995' },
         },
       },
     },

@@ -65,7 +65,20 @@ interface StreamHandle {
   dispose: () => void;
 }
 
+interface ConversationLiveState {
+  draftAssistantId: string | null;
+  draftThoughtId: string | null;
+  lastStatus: string;
+  openToolEventIDs: Record<string, string>;
+}
+
 export type NoticeTone = 'success' | 'error' | 'info';
+
+export interface QueuedMessage {
+  id: string;
+  text: string;
+  images: ComposerImage[];
+}
 
 export interface ComposerImage {
   id: string;
@@ -100,12 +113,18 @@ export interface LoopDesktopController {
   activities: ActivityEvent[];
   feedScrollRef: RefObject<HTMLDivElement | null>;
 
+  queuedMessages: QueuedMessage[];
+  queueMessage: () => void;
+  removeQueuedMessage: (id: string) => void;
+  reorderQueuedMessage: (id: string, direction: 'up' | 'down') => void;
+  steerQueuedMessage: (id: string) => Promise<void>;
   messageInput: string;
   setMessageInput: (value: string) => void;
   composerImages: ComposerImage[];
   setComposerImages: React.Dispatch<React.SetStateAction<ComposerImage[]>>;
   canCompose: boolean;
   isSending: boolean;
+  sendingConversations: Record<string, boolean>;
   notices: NoticeToast[];
   hideLifecycle: boolean;
   setHideLifecycle: (value: boolean) => void;
@@ -151,6 +170,7 @@ export function useLoopDesktop(): LoopDesktopController {
 
   const [composerInputs, setComposerInputs] = useState<Record<string, string>>({});
   const [composerImagesMap, setComposerImagesMap] = useState<Record<string, ComposerImage[]>>({});
+  const [queuedMessagesMap, setQueuedMessagesMap] = useState<Record<string, QueuedMessage[]>>({});
 
   const messageInput = composerInputs[selectedConversationId] || '';
   const setMessageInput = useCallback((value: React.SetStateAction<string>) => {
@@ -173,6 +193,50 @@ export function useLoopDesktop(): LoopDesktopController {
     });
   }, [selectedConversationId]);
 
+  const queuedMessages = useMemo(
+    () => queuedMessagesMap[selectedConversationId] || [],
+    [queuedMessagesMap, selectedConversationId]
+  );
+
+  const queueMessage = useCallback(() => {
+    const text = messageInput.trim();
+    if (!text && composerImages.length === 0) return;
+    setQueuedMessagesMap(prevMap => {
+      const prev = prevMap[selectedConversationId] || [];
+      return {
+        ...prevMap,
+        [selectedConversationId]: [...prev, { id: crypto.randomUUID(), text, images: composerImages }]
+      };
+    });
+    setMessageInput('');
+    setComposerImages([]);
+  }, [messageInput, composerImages, selectedConversationId, setMessageInput, setComposerImages]);
+
+  const removeQueuedMessage = useCallback((id: string) => {
+    setQueuedMessagesMap(prevMap => {
+      const prev = prevMap[selectedConversationId] || [];
+      return { ...prevMap, [selectedConversationId]: prev.filter(m => m.id !== id) };
+    });
+  }, [selectedConversationId]);
+
+  const reorderQueuedMessage = useCallback((id: string, direction: 'up' | 'down') => {
+    setQueuedMessagesMap(prevMap => {
+      const prev = prevMap[selectedConversationId] || [];
+      const idx = prev.findIndex(m => m.id === id);
+      if (idx < 0) return prevMap;
+      
+      const next = [...prev];
+      if (direction === 'up' && idx > 0) {
+        [next[idx - 1], next[idx]] = [next[idx], next[idx - 1]];
+      } else if (direction === 'down' && idx < prev.length - 1) {
+        [next[idx], next[idx + 1]] = [next[idx + 1], next[idx]];
+      }
+      return { ...prevMap, [selectedConversationId]: next };
+    });
+  }, [selectedConversationId]);
+
+  // Auto-process queue when not sending
+
   const [isLoadingWorkspaces, setIsLoadingWorkspaces] = useState(false);
   const [sendingConversations, setSendingConversations] = useState<Record<string, boolean>>({});
   const isSending = !!sendingConversations[selectedConversationId];
@@ -181,11 +245,36 @@ export function useLoopDesktop(): LoopDesktopController {
 
   const activeStreamsRef = useRef<Record<string, StreamHandle>>({});
   const feedScrollRef = useRef<HTMLDivElement | null>(null);
-  const draftAssistantIdRef = useRef<string | null>(null);
-  const draftThoughtIdRef = useRef<string | null>(null);
-  const lastStatusRef = useRef('');
-  const openToolEventIDsRef = useRef<Record<string, string>>({});
+  const conversationLiveStateRef = useRef<Record<string, ConversationLiveState>>({});
+  const handleStreamPacketRef = useRef<((packet: LoopStreamPacket, conversationId: string) => void) | null>(null);
   const selectedConversationIdRef = useRef('');
+
+  const getConversationLiveState = useCallback((conversationId: string): ConversationLiveState => {
+    const existing = conversationLiveStateRef.current[conversationId];
+    if (existing) {
+      return existing;
+    }
+    const fresh: ConversationLiveState = {
+      draftAssistantId: null,
+      draftThoughtId: null,
+      lastStatus: '',
+      openToolEventIDs: {},
+    };
+    conversationLiveStateRef.current[conversationId] = fresh;
+    return fresh;
+  }, []);
+
+  const resetConversationLiveState = useCallback((conversationId: string): void => {
+    if (!conversationId) {
+      return;
+    }
+    conversationLiveStateRef.current[conversationId] = {
+      draftAssistantId: null,
+      draftThoughtId: null,
+      lastStatus: '',
+      openToolEventIDs: {},
+    };
+  }, []);
 
   const selectedWorkspace = useMemo(
     () => workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? null,
@@ -263,20 +352,25 @@ export function useLoopDesktop(): LoopDesktopController {
   }, []);
 
   const appendStreamingText = useCallback(
-    (kind: 'assistant' | 'thought', text: string): void => {
+    (conversationId: string, kind: 'assistant' | 'thought', text: string): void => {
       if (!text) {
         return;
       }
 
-      const ref = kind === 'assistant' ? draftAssistantIdRef : draftThoughtIdRef;
-      const existing = ref.current;
+      const liveState = getConversationLiveState(conversationId);
+      const existing = kind === 'assistant' ? liveState.draftAssistantId : liveState.draftThoughtId;
       if (!existing) {
-        ref.current = pushActivity({
+        const draftID = pushActivity({
           kind,
           title: kind === 'assistant' ? 'Assistant response' : 'Model thought',
           body: text,
           streaming: true,
         });
+        if (kind === 'assistant') {
+          liveState.draftAssistantId = draftID;
+        } else {
+          liveState.draftThoughtId = draftID;
+        }
         return;
       }
 
@@ -286,11 +380,15 @@ export function useLoopDesktop(): LoopDesktopController {
         streaming: true,
       }));
     },
-    [mutateActivity, pushActivity],
+    [getConversationLiveState, mutateActivity, pushActivity],
   );
 
-  const settleDrafts = useCallback((): void => {
-    const draftIDs = [draftAssistantIdRef.current, draftThoughtIdRef.current].filter(
+  const settleDrafts = useCallback((conversationId: string): void => {
+    if (!conversationId) {
+      return;
+    }
+    const liveState = getConversationLiveState(conversationId);
+    const draftIDs = [liveState.draftAssistantId, liveState.draftThoughtId].filter(
       (id): id is string => typeof id === 'string' && id.length > 0,
     );
 
@@ -305,32 +403,47 @@ export function useLoopDesktop(): LoopDesktopController {
       );
     }
 
-    draftAssistantIdRef.current = null;
-    draftThoughtIdRef.current = null;
-  }, []);
+    liveState.draftAssistantId = null;
+    liveState.draftThoughtId = null;
+  }, [getConversationLiveState]);
 
-  const settleThoughtDraft = useCallback((): void => {
-    const draftID = draftThoughtIdRef.current;
+  const settleThoughtDraft = useCallback((conversationId: string): void => {
+    if (!conversationId) {
+      return;
+    }
+    const liveState = getConversationLiveState(conversationId);
+    const draftID = liveState.draftThoughtId;
     if (!draftID) {
       return;
     }
 
     mutateActivity(draftID, (event) => ({ ...event, streaming: false }));
-    draftThoughtIdRef.current = null;
-  }, [mutateActivity]);
+    liveState.draftThoughtId = null;
+  }, [getConversationLiveState, mutateActivity]);
 
   const finalizeTurn = useCallback(
     (closeStream: boolean, conversationId?: string): void => {
-      if (!conversationId || conversationId === selectedConversationIdRef.current) {
-        settleDrafts();
+      const targetConversationId = conversationId ?? selectedConversationIdRef.current;
+      if (targetConversationId && (conversationId === undefined || targetConversationId === selectedConversationIdRef.current)) {
+        settleDrafts(targetConversationId);
+      }
+
+      if (targetConversationId) {
+        const liveState = getConversationLiveState(targetConversationId);
+        liveState.lastStatus = '';
+        liveState.openToolEventIDs = {};
       }
 
       if (conversationId) {
-        setSendingConversations((prev) => ({ ...prev, [conversationId]: false }));
-      } else {
+        if (closeStream) {
+          setSendingConversations((prev) => ({ ...prev, [conversationId]: false }));
+        }
+      } else if (closeStream) {
         setSendingConversations({});
       }
-      setCurrentStatus('');
+      if (!conversationId || conversationId === selectedConversationIdRef.current) {
+        setCurrentStatus('');
+      }
 
       if (closeStream && conversationId) {
         const stream = activeStreamsRef.current[conversationId];
@@ -340,16 +453,14 @@ export function useLoopDesktop(): LoopDesktopController {
         }
       }
     },
-    [settleDrafts],
+    [getConversationLiveState, settleDrafts],
   );
 
   const clearConversationView = useCallback((): void => {
     setActivities([]);
-    draftAssistantIdRef.current = null;
-    draftThoughtIdRef.current = null;
-    openToolEventIDsRef.current = {};
+    resetConversationLiveState(selectedConversationIdRef.current);
     setCurrentStatus('');
-  }, []);
+  }, [resetConversationLiveState]);
 
   const visibleActivities = useMemo(() => {
     if (!hideLifecycle) return activities;
@@ -494,6 +605,25 @@ export function useLoopDesktop(): LoopDesktopController {
 
       setConversations(rootsOnly);
 
+      // Restore active streams for any root conversation that is currently running
+      for (const conv of rootsOnly) {
+        if (!activeStreamsRef.current[conv.id]) {
+          void (async () => {
+            const active = await getActiveReplyStream({
+              baseUrl: backendUrl,
+              conversationId: conv.id,
+            });
+            if (active.ok && active.streamId && !activeStreamsRef.current[conv.id]) {
+              const attached = attachReplyStream(active.streamId, (packet) => {
+                handleStreamPacketRef.current?.(packet, conv.id);
+              });
+              activeStreamsRef.current[conv.id] = { ...attached, conversationId: conv.id };
+              setSendingConversations((prev) => ({ ...prev, [conv.id]: true }));
+            }
+          })();
+        }
+      }
+
       const currentSelectedId = selectedConversationIdRef.current;
 
       if (preserveEmpty && currentSelectedId === '') {
@@ -537,14 +667,10 @@ export function useLoopDesktop(): LoopDesktopController {
 
       setActivities(historyRowsToActivities(rows));
       clearNotices();
-      lastStatusRef.current = '';
-      draftAssistantIdRef.current = null;
-      draftThoughtIdRef.current = null;
-      openToolEventIDsRef.current = {};
-      setCurrentStatus('');
+      resetConversationLiveState(conversationId);
       setCurrentStatus('');
     },
-    [backendUrl, clearNotices, pushActivity, pushNotice],
+    [backendUrl, clearNotices, pushActivity, pushNotice, resetConversationLiveState],
   );
 
   useEffect(() => {
@@ -577,6 +703,7 @@ export function useLoopDesktop(): LoopDesktopController {
         }
       }
       activeStreamsRef.current = {};
+      conversationLiveStateRef.current = {};
     };
   }, []);
 
@@ -824,22 +951,23 @@ export function useLoopDesktop(): LoopDesktopController {
     (eventName: string, data: unknown, conversationId: string): void => {
       const eventRecord = asRecord(data);
       const kind = getString(eventRecord, ['kind']) || eventName;
+      const liveState = getConversationLiveState(conversationId);
 
       if (kind === 'status') {
         const statusText = getString(asRecord(getField(eventRecord, ['status'])), ['text']);
         if (!statusText) {
           return;
         }
-        if (statusText === lastStatusRef.current) {
+        if (statusText === liveState.lastStatus) {
           return;
         }
-        lastStatusRef.current = statusText;
+        liveState.lastStatus = statusText;
         setCurrentStatus(statusText);
 
         const parsed = parseStatusLine(statusText);
         if (parsed?.kind === 'lifecycle' && parsed.title.startsWith('Executing ')) {
           // Match history grouping: once tool execution begins, next thought chunk starts a new row.
-          settleThoughtDraft();
+          settleThoughtDraft(conversationId);
         }
         if (parsed && parsed.kind !== 'tool') {
           pushActivity(parsed);
@@ -855,13 +983,13 @@ export function useLoopDesktop(): LoopDesktopController {
           return;
         }
 
-        appendStreamingText(isThought ? 'thought' : 'assistant', text);
+        appendStreamingText(conversationId, isThought ? 'thought' : 'assistant', text);
         return;
       }
 
       if (kind === 'tool_call_start') {
         // Start a fresh thought segment after this tool boundary.
-        settleThoughtDraft();
+        settleThoughtDraft(conversationId);
 
         const toolCall = asRecord(getField(eventRecord, ['tool_call']));
         const toolName = getString(toolCall, ['name']) || 'unknown tool';
@@ -882,14 +1010,14 @@ export function useLoopDesktop(): LoopDesktopController {
           },
         });
         if (callID) {
-          openToolEventIDsRef.current[callID] = eventID;
+          liveState.openToolEventIDs[callID] = eventID;
         }
         return;
       }
 
       if (kind === 'tool_result') {
         // Defensive split for streams that may emit result without a prior start event.
-        settleThoughtDraft();
+        settleThoughtDraft(conversationId);
 
         const toolResult = asRecord(getField(eventRecord, ['tool_result']));
         const toolName = getString(toolResult, ['name']) || 'unknown tool';
@@ -901,7 +1029,7 @@ export function useLoopDesktop(): LoopDesktopController {
         const summary = summarizeToolBody(toolName, resultText, errorText);
         const parsedPayload = parseToolResultPayload(resultText);
         const parsedArgs = parseToolResultPayload(argsText);
-        const openEventID = callID ? openToolEventIDsRef.current[callID] : '';
+        const openEventID = callID ? liveState.openToolEventIDs[callID] : '';
 
         if (openEventID) {
           mutateActivity(openEventID, (event) => ({
@@ -923,7 +1051,7 @@ export function useLoopDesktop(): LoopDesktopController {
             },
             streaming: false,
           }));
-          delete openToolEventIDsRef.current[callID];
+          delete liveState.openToolEventIDs[callID];
         } else {
           pushActivity({
             kind: 'tool',
@@ -979,9 +1107,9 @@ export function useLoopDesktop(): LoopDesktopController {
           return;
         }
 
-        const draftID = draftAssistantIdRef.current;
+        const draftID = liveState.draftAssistantId;
         if (!draftID) {
-          draftAssistantIdRef.current = pushActivity({
+          liveState.draftAssistantId = pushActivity({
             kind: 'assistant',
             title: 'Assistant response',
             body: messageText,
@@ -997,7 +1125,7 @@ export function useLoopDesktop(): LoopDesktopController {
       if (kind === 'error') {
         const errorText = getString(eventRecord, ['error']) || 'Agent returned an error event.';
         pushActivity({ kind: 'error', title: 'Model execution error', body: errorText });
-        openToolEventIDsRef.current = {};
+        liveState.openToolEventIDs = {};
         finalizeTurn(false, conversationId);
         return;
       }
@@ -1012,20 +1140,20 @@ export function useLoopDesktop(): LoopDesktopController {
           title: 'Turn aborted',
           body: getString(eventRecord, ['error']) || undefined,
         });
-        openToolEventIDsRef.current = {};
+        liveState.openToolEventIDs = {};
         finalizeTurn(false, conversationId);
         return;
       }
 
       if (kind === 'turn_complete') {
-        openToolEventIDsRef.current = {};
+        liveState.openToolEventIDs = {};
         finalizeTurn(false, conversationId);
         return;
       }
 
       pushActivity({ kind: 'status', title: `Event: ${kind}` });
     },
-    [appendStreamingText, finalizeTurn, mutateActivity, pushActivity, settleThoughtDraft],
+    [appendStreamingText, finalizeTurn, getConversationLiveState, mutateActivity, pushActivity, settleThoughtDraft],
   );
 
   const handleStreamPacket = useCallback(
@@ -1049,7 +1177,8 @@ export function useLoopDesktop(): LoopDesktopController {
         if (isViewingStreamConversation) {
           pushActivity({ kind: 'error', title: 'Stream transport error', body: packet.error ?? '' });
         }
-        openToolEventIDsRef.current = {};
+        const liveState = getConversationLiveState(conversationId);
+        liveState.openToolEventIDs = {};
         finalizeTurn(true, conversationId);
         return;
       }
@@ -1058,23 +1187,36 @@ export function useLoopDesktop(): LoopDesktopController {
         if (isViewingStreamConversation && packet.error) {
           pushActivity({ kind: 'lifecycle', title: 'Turn canceled', body: packet.error });
         }
-        openToolEventIDsRef.current = {};
+        const liveState = getConversationLiveState(conversationId);
+        liveState.openToolEventIDs = {};
         finalizeTurn(true, conversationId);
         return;
       }
 
       if (packet.type === 'done') {
-        openToolEventIDsRef.current = {};
+        const liveState = getConversationLiveState(conversationId);
+        liveState.openToolEventIDs = {};
         finalizeTurn(true, conversationId);
       }
     },
-    [finalizeTurn, handleTurnEvent, pushActivity],
+    [finalizeTurn, getConversationLiveState, handleTurnEvent, pushActivity],
   );
 
+  useEffect(() => {
+    handleStreamPacketRef.current = handleStreamPacket;
+  }, [handleStreamPacket]);
+
   const sendMessageText = useCallback(
-    async (messageText: string, clearComposer: boolean): Promise<void> => {
+    async (
+      messageText: string,
+      messageImages: ComposerImage[],
+      clearComposer: boolean,
+      forceSend = false,
+    ): Promise<void> => {
       const text = messageText.trim();
-      if ((!text && composerImages.length === 0) || (selectedConversationId && sendingConversations[selectedConversationId])) {
+      const hasActiveSelectedStream = !!(selectedConversationId && activeStreamsRef.current[selectedConversationId]);
+      const isSelectedConversationSending = !!(selectedConversationId && sendingConversations[selectedConversationId]);
+      if ((!text && messageImages.length === 0) || ((hasActiveSelectedStream || isSelectedConversationSending) && !forceSend)) {
         return;
       }
       const selectedThinkingLevel = normalizeThinkingLevel(thinkingLevel);
@@ -1090,16 +1232,13 @@ export function useLoopDesktop(): LoopDesktopController {
 
       clearNotices();
       setSendingConversations((prev) => ({ ...prev, [conversationId]: true }));
-      lastStatusRef.current = '';
-      draftAssistantIdRef.current = null;
-      draftThoughtIdRef.current = null;
-      openToolEventIDsRef.current = {};
+      resetConversationLiveState(conversationId);
 
       pushActivity({ 
         kind: 'user', 
         title: 'User prompt', 
         body: text || '(Images attached)',
-        images: composerImages.map(img => ({ mimeType: img.mimeType, dataUrl: img.dataUrl })),
+        images: messageImages.map(img => ({ mimeType: img.mimeType, dataUrl: img.dataUrl })),
       });
       pushActivity({ kind: 'lifecycle', title: 'Turn started' });
       if (clearComposer) {
@@ -1121,7 +1260,7 @@ export function useLoopDesktop(): LoopDesktopController {
           conversationId,
           message: text,
           thinkingLevel: selectedThinkingLevel,
-          images: composerImages.length > 0 ? composerImages.map(img => ({
+          images: messageImages.length > 0 ? messageImages.map(img => ({
             mime_type: img.mimeType,
             data: img.data,
           })) : undefined,
@@ -1155,18 +1294,51 @@ export function useLoopDesktop(): LoopDesktopController {
       finalizeTurn,
       handleStreamPacket,
       pushActivity,
+      resetConversationLiveState,
       selectedConversationId,
       sendingConversations,
       thinkingLevel,
-      composerImages,
       setComposerImages,
       setMessageInput,
     ],
   );
 
+  const steerQueuedMessage = useCallback(async (id: string) => {
+    if (!selectedConversationId) {
+      return;
+    }
+    const msg = queuedMessagesMap[selectedConversationId]?.find(m => m.id === id);
+    if (!msg) return;
+
+    removeQueuedMessage(id);
+
+    const stream = activeStreamsRef.current[selectedConversationId];
+    if (stream) {
+       await stream.cancel();
+       stream.dispose();
+       delete activeStreamsRef.current[selectedConversationId];
+       pushActivity({ kind: 'lifecycle', title: 'Turn cancel requested for steering' });
+    }
+
+    setSendingConversations((prev) => ({ ...prev, [selectedConversationId]: false }));
+    await sendMessageText(msg.text, msg.images, false, true);
+  }, [queuedMessagesMap, selectedConversationId, removeQueuedMessage, pushActivity, sendMessageText]);
+
   const sendMessage = useCallback(async (): Promise<void> => {
-    await sendMessageText(messageInput, true);
-  }, [messageInput, sendMessageText]);
+    await sendMessageText(messageInput, composerImages, true);
+  }, [messageInput, composerImages, sendMessageText]);
+
+  useEffect(() => {
+    const hasActiveSelectedStream = !!(selectedConversationId && activeStreamsRef.current[selectedConversationId]);
+    if (!isSending && !hasActiveSelectedStream && queuedMessages.length > 0 && selectedConversationId) {
+      const nextMsg = queuedMessages[0];
+      setQueuedMessagesMap(prevMap => {
+        const prev = prevMap[selectedConversationId] || [];
+        return { ...prevMap, [selectedConversationId]: prev.slice(1) };
+      });
+      void sendMessageText(nextMsg.text, nextMsg.images, false);
+    }
+  }, [isSending, queuedMessages, selectedConversationId, sendMessageText]);
 
   const applyToolResponseSuggestion = useCallback((text: string): void => {
     const trimmed = text.trim();
@@ -1180,7 +1352,7 @@ export function useLoopDesktop(): LoopDesktopController {
     if (!text.trim()) {
       return;
     }
-    await sendMessageText(text, false);
+    await sendMessageText(text, [], false);
   }, [sendMessageText]);
 
   const cancelStream = useCallback(async (): Promise<void> => {
@@ -1280,12 +1452,18 @@ export function useLoopDesktop(): LoopDesktopController {
     activities: visibleActivities,
     feedScrollRef,
 
+    queuedMessages,
+    queueMessage,
+    removeQueuedMessage,
+    reorderQueuedMessage,
+    steerQueuedMessage,
     messageInput,
     setMessageInput,
     composerImages,
     setComposerImages,
     canCompose: selectedWorkspaceId !== '',
     isSending,
+    sendingConversations,
     notices,
     dismissNotice,
     hideLifecycle,

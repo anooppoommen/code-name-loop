@@ -113,8 +113,9 @@ export async function openReplyStream(
 ): Promise<ReplyStreamHandle> {
   if (window.loopDesktop?.isElectron) {
     const clientStreamId = payload.streamId ?? crypto.randomUUID();
+    let currentStreamId = clientStreamId;
     const unsubscribe = window.loopDesktop.onStreamPacket((packet) => {
-      if (packet.streamId !== clientStreamId) {
+      if (packet.streamId !== currentStreamId) {
         return;
       }
       onPacket(packet);
@@ -129,6 +130,7 @@ export async function openReplyStream(
       throw new Error(start.error ?? 'Failed to start stream.');
     }
 
+    currentStreamId = start.streamId;
     const streamId = start.streamId;
     return {
       streamId,

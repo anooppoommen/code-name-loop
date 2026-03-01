@@ -40,6 +40,8 @@ Tool-call rules:
 - `*** Begin Patch`
 - one or more file hunks
 - `*** End Patch`
+- `apply_patch` remains the correct tool for large edits (including hundreds of lines); if needed, split into several precise patches instead of one fragile mega-patch.
+- Do not stall on patch size/format anxiety after a blocked shell mutation; move forward with `apply_patch`.
 - Do not use `apply_patch` when the user asked only for explanation/review.
 - Keep the tool sequence minimal; do not enumerate unrelated files once the target file is identified.
 - For tiny single-file fixes, cap pre-patch search/read calls at about 2 unless the target line is still not identified.

@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react';
 import { ChevronDown, ChevronRight, FileCode2, FileJson, FileText, FileImage, File } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 
 export interface PatchFile {
   action: string;
@@ -145,8 +146,15 @@ function FilePatchView({ file }: { file: PatchFile }) {
         </div>
       </button>
 
-      {expanded && (
-        <div className="border-t border-neutral-700/60 bg-[#1e1e1e] overflow-x-auto text-[12px] font-mono whitespace-pre flex flex-col">
+      <AnimatePresence initial={false}>
+        {expanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2, ease: 'easeInOut' }}
+            className="border-t border-neutral-700/60 bg-[#1e1e1e] overflow-x-auto text-[12px] font-mono whitespace-pre flex flex-col"
+          >
           {file.hunks.map((hunk, idx) => (
             <div key={idx} className="flex flex-col min-w-max">
               <div className="px-3 py-1 bg-blue-500/10 text-blue-300 text-[11px] border-b border-neutral-700/60 w-full">
@@ -163,20 +171,32 @@ function FilePatchView({ file }: { file: PatchFile }) {
                         : 'text-neutral-300'
                       }`}
                   >
-                    <div className="flex shrink-0 select-none border-r border-neutral-700/50 text-[10px] text-neutral-500 bg-[#1a1a1a] sticky left-0 z-10">
+                    <div
+                      className={`flex shrink-0 items-center select-none border-r border-neutral-700/50 text-[10px] text-neutral-500 sticky left-0 z-10 ${
+                        line.type === 'add'
+                          ? 'bg-[#1e2e24]'
+                          : line.type === 'remove'
+                            ? 'bg-[#332222]'
+                            : 'bg-[#1a1a1a]'
+                      }`}
+                    >
                       <div className="w-8 text-right pr-1.5">{line.oldLn ?? ' '}</div>
                       <div className="w-8 text-right pr-1.5">{line.newLn ?? ' '}</div>
+                      <div className={`w-5 text-center text-[12px] font-bold ${line.type === 'add' ? 'text-green-500' : line.type === 'remove' ? 'text-red-500' : 'text-neutral-500'}`}>
+                        {line.type === 'add' ? '+' : line.type === 'remove' ? '-' : ' '}
+                      </div>
                     </div>
-                    <div className="pl-4 pr-3 whitespace-pre">
-                      {line.text}
+                    <div className="pl-2 pr-3 whitespace-pre">
+                      {(line.text.startsWith('+') || line.text.startsWith('-') || line.text.startsWith(' ')) ? line.text.slice(1) : line.text}
                     </div>
                   </div>
                 ))}
               </div>
             </div>
           ))}
-        </div>
-      )}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

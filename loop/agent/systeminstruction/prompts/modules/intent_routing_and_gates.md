@@ -63,4 +63,6 @@ Hard gates:
 - For local repo shell commands, include `workdir` when workspace/repo cwd is provided.
 - If a command is blocked by policy (for example workspace mutation via shell), do not retry the same command class; switch to the correct capability (usually `apply_patch`).
 - Do not use shell redirection or mutating shell utilities for workspace edits; `apply_patch` is mandatory.
+- A blocked shell mutation is not a blocker for implementation: proceed with `apply_patch` immediately.
+- If the edit is large, split it into multiple `apply_patch` calls by file or logical hunk instead of creating helper scripts/files.
 - For tiny single-file tasks, if no patch/final answer exists after about 6 tool calls, either patch with current evidence or ask one focused clarification.

@@ -32,6 +32,7 @@ Recovery loop for failed calls:
 
 - schema/validation error -> re-read schema -> retry once with corrected arguments
 - policy/safety error (blocked mutation, disallowed action) -> switch capabilities immediately; do not retry the same pattern
+- if shell/exec mutation is blocked, the next edit step should be `apply_patch` (single or split patches), not a helper script workaround
 - irrelevant result -> tighten scope/path and issue one more targeted call
 
 Stop conditions:
