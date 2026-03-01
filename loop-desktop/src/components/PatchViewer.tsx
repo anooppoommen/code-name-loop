@@ -25,7 +25,7 @@ function parsePatchData(patchText: string): PatchFile[] {
   const lines = patchText.split('\n');
   const files: PatchFile[] = [];
   let currentFile: PatchFile | null = null;
-  let currentHunk: any = null;
+  let currentHunk: (PatchHunk & { oldStart: number; newStart: number }) | null = null;
 
   for (const line of lines) {
     if (line.startsWith('*** ')) {
@@ -40,6 +40,9 @@ function parsePatchData(patchText: string): PatchFile[] {
         };
         files.push(currentFile);
         currentHunk = null;
+      }
+      else if (line.trim() === '*** End Patch') {
+        break;
       }
     } else if (line.startsWith('@@ ') && currentFile) {
       const match = line.match(/@@\s+-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@/);
@@ -57,6 +60,13 @@ function parsePatchData(patchText: string): PatchFile[] {
       } else if (line.startsWith('-') && currentFile) {
         currentFile.removed++;
         currentHunk.lines.push({ type: 'remove', text: line, oldLn: currentHunk.oldStart++ });
+      } else if (line.startsWith('\\')) {
+        currentHunk.lines.push({
+          type: 'context',
+          text: line,
+          oldLn: undefined,
+          newLn: undefined,
+        });
       } else {
         currentHunk.lines.push({
           type: 'context',
@@ -146,7 +156,7 @@ function FilePatchView({ file }: { file: PatchFile }) {
                 {hunk.lines.map((line, lIdx) => (
                   <div
                     key={lIdx}
-                    className={`flex items-start w-full ${line.type === 'add'
+                    className={`flex items-stretch w-full ${line.type === 'add'
                       ? 'bg-green-500/10 text-green-300'
                       : line.type === 'remove'
                         ? 'bg-red-500/10 text-red-300'

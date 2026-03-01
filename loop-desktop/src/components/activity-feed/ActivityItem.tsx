@@ -7,6 +7,7 @@ import {
   Info,
   UserRound,
   Workflow,
+  X,
 } from 'lucide-react';
 import { memo, useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
@@ -46,7 +47,18 @@ export const ActivityItem = memo(function ActivityItem({
   onUseToolReply,
   onSendToolReply,
 }: ActivityItemProps) {
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const icon = iconFor(event.kind);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && selectedImage) {
+        setSelectedImage(null);
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [selectedImage]);
 
   if (event.kind === 'status') {
     return (
@@ -193,6 +205,7 @@ export const ActivityItem = memo(function ActivityItem({
   }
 
   return (
+    <>
     <article
       className={`group flex gap-4 border-l-2 px-6 py-3 transition-colors ${visual.row}`}
     >
@@ -246,9 +259,14 @@ export const ActivityItem = memo(function ActivityItem({
           {event.images && event.images.length > 0 ? (
             <div className="flex flex-wrap gap-2 mb-2">
               {event.images.map((img, idx) => (
-                <div key={idx} className="rounded-md border border-neutral-700 overflow-hidden w-48 h-auto bg-neutral-900">
-                  <img src={img.dataUrl} alt="attached" className="w-full h-auto object-cover" />
-                </div>
+                <button
+                  key={idx}
+                  type="button"
+                  className="rounded-md border border-neutral-700 overflow-hidden w-16 h-16 bg-neutral-900 cursor-pointer hover:opacity-80 transition-opacity"
+                  onClick={() => setSelectedImage(img.dataUrl)}
+                >
+                  <img src={img.dataUrl} alt="attached" className="w-full h-full object-cover" />
+                </button>
               ))}
             </div>
           ) : null}
@@ -278,6 +296,27 @@ export const ActivityItem = memo(function ActivityItem({
         </div>
       </div>
     </article>
+
+    {selectedImage && (
+      <div 
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+        onClick={() => setSelectedImage(null)}
+      >
+        <button 
+          className="absolute top-6 right-6 text-white bg-neutral-800 rounded-full p-2 hover:bg-neutral-700 border border-neutral-600 shadow-lg z-50 transition-colors"
+          onClick={(e) => {
+            e.stopPropagation();
+            setSelectedImage(null);
+          }}
+        >
+          <X size={20} />
+        </button>
+        <div className="relative flex max-w-[50vw] max-h-[50vh] items-center justify-center">
+          <img src={selectedImage} alt="full size" className="max-w-full max-h-full object-contain rounded-md shadow-2xl" />
+        </div>
+      </div>
+    )}
+    </>
   );
 });
 
