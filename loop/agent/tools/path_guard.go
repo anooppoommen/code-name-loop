@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"loop/models"
 )
@@ -15,6 +16,7 @@ type pathGuard struct {
 	workspaceRoot  string
 	allowedRoots   []string
 	gitIgnoreCache map[string]bool
+	cacheMu        sync.RWMutex
 	initErr        error
 }
 
@@ -142,7 +144,10 @@ func (g *pathGuard) isGitIgnored(ctx context.Context, canonPath string) (bool, e
 		return false, nil
 	}
 
-	if ignored, ok := g.gitIgnoreCache[canonPath]; ok {
+	g.cacheMu.RLock()
+	ignored, ok := g.gitIgnoreCache[canonPath]
+	g.cacheMu.RUnlock()
+	if ok {
 		return ignored, nil
 	}
 
@@ -155,14 +160,20 @@ func (g *pathGuard) isGitIgnored(ctx context.Context, canonPath string) (bool, e
 	err = cmd.Run()
 	switch {
 	case err == nil:
+		g.cacheMu.Lock()
 		g.gitIgnoreCache[canonPath] = true
+		g.cacheMu.Unlock()
 		return true, nil
 	case isExitCode(err, 1):
+		g.cacheMu.Lock()
 		g.gitIgnoreCache[canonPath] = false
+		g.cacheMu.Unlock()
 		return false, nil
 	case isExitCode(err, 128), isNotFound(err):
 		// Not a git repo or git unavailable: do not block.
+		g.cacheMu.Lock()
 		g.gitIgnoreCache[canonPath] = false
+		g.cacheMu.Unlock()
 		return false, nil
 	default:
 		return false, nil
