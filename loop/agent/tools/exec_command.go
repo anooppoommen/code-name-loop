@@ -119,7 +119,7 @@ func NewWriteStdinTool(pm *ProcessManager) *agent.ToolDef {
 	}
 }
 
-func handleExecCommand(_ context.Context, args json.RawMessage, pm *ProcessManager, guard *pathGuard) (json.RawMessage, error) {
+func handleExecCommand(ctx context.Context, args json.RawMessage, pm *ProcessManager, guard *pathGuard) (json.RawMessage, error) {
 	var a execCommandArgs
 	if err := json.Unmarshal(args, &a); err != nil {
 		return nil, fmt.Errorf("failed to parse arguments: %w", err)
@@ -131,6 +131,13 @@ func handleExecCommand(_ context.Context, args json.RawMessage, pm *ProcessManag
 	if err := validateWorkspaceEditPolicy(a.Cmd); err != nil {
 		return nil, err
 	}
+	workdir, err := guard.requireAllowedWorkdir(a.Workdir)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateGitIgnoreReadPolicy(ctx, a.Cmd, workdir, guard); err != nil {
+		return nil, err
+	}
 
 	yieldMs := int64(defaultExecYieldTimeMs)
 	if a.YieldTimeMs != nil {
@@ -138,10 +145,6 @@ func handleExecCommand(_ context.Context, args json.RawMessage, pm *ProcessManag
 	}
 
 	command := buildExecCommand(a.Cmd, a.Shell)
-	workdir, err := guard.requireAllowedWorkdir(a.Workdir)
-	if err != nil {
-		return nil, err
-	}
 
 	result, err := pm.ExecCommand(command, workdir, nil, yieldMs, a.Tty)
 	if err != nil {

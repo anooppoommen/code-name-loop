@@ -201,3 +201,31 @@ func TestShell_BlocksWorkspaceMutationCommands(t *testing.T) {
 		t.Fatal("expected mutation command to be blocked")
 	}
 }
+
+func TestShell_BlocksGitIgnoredPathReads(t *testing.T) {
+	pm := NewProcessManager()
+	defer pm.Cleanup()
+	dir := t.TempDir()
+	initGitRepo(t, dir)
+	writeGitignore(t, dir, "build/\n")
+	if err := os.MkdirAll(filepath.Join(dir, "build"), 0o755); err != nil {
+		t.Fatalf("mkdir build: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "build", "artifact.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	guard := newPathGuard(testWorkspace(dir))
+
+	args, _ := json.Marshal(map[string]any{
+		"command": "cat build/artifact.txt",
+		"workdir": dir,
+	})
+
+	_, err := handleShell(context.Background(), args, pm, guard)
+	if err == nil {
+		t.Fatal("expected ignored-path read command to be blocked")
+	}
+	if !strings.Contains(err.Error(), ".gitignore") {
+		t.Fatalf("expected .gitignore message, got %v", err)
+	}
+}

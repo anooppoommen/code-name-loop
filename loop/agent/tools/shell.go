@@ -67,7 +67,7 @@ func NewShellTool(pm *ProcessManager, ws *models.Workspace) *agent.ToolDef {
 	}
 }
 
-func handleShell(_ context.Context, args json.RawMessage, pm *ProcessManager, guard *pathGuard) (json.RawMessage, error) {
+func handleShell(ctx context.Context, args json.RawMessage, pm *ProcessManager, guard *pathGuard) (json.RawMessage, error) {
 	var a shellArgs
 	if err := json.Unmarshal(args, &a); err != nil {
 		return nil, fmt.Errorf("failed to parse arguments: %w", err)
@@ -79,16 +79,19 @@ func handleShell(_ context.Context, args json.RawMessage, pm *ProcessManager, gu
 	if err := validateWorkspaceEditPolicy(a.Command); err != nil {
 		return nil, err
 	}
+	workdir, err := guard.requireAllowedWorkdir(a.Workdir)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateGitIgnoreReadPolicy(ctx, a.Command, workdir, guard); err != nil {
+		return nil, err
+	}
 
 	timeoutMs := int64(shellDefaultTimeoutMs)
 	if a.TimeoutMs != nil {
 		timeoutMs = *a.TimeoutMs
 	}
 
-	workdir, err := guard.requireAllowedWorkdir(a.Workdir)
-	if err != nil {
-		return nil, err
-	}
 	command := buildExecCommand(a.Command, "")
 	result, err := pm.ExecCommand(command, workdir, nil, timeoutMs, false)
 	if err != nil {
