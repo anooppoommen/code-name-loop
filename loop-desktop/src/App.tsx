@@ -44,7 +44,10 @@ export default function App() {
   // Global keybindings for navigation
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'o') {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'n') {
+        e.preventDefault();
+        void app.newConversation();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'o') {
         e.preventDefault();
         setHistoryState((prev) => {
           if (prev.index > 0) {
@@ -69,7 +72,7 @@ export default function App() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [app.selectConversation]);
+  }, [app]);
 
   useEffect(() => {
     const mediaQuery = window.matchMedia(`(max-width: ${MOBILE_SIDEBAR_BREAKPOINT_PX}px)`);
@@ -170,7 +173,6 @@ export default function App() {
                 onThinkingLevelChange={app.setThinkingLevel}
                 onSubmit={app.sendMessage}
                 onStop={app.cancelStream}
-                onNewConversation={() => void app.newConversation()}
                 conversationId={app.selectedConversationId}
                 composerImages={app.composerImages}
                 setComposerImages={app.setComposerImages}
@@ -178,7 +180,7 @@ export default function App() {
             </div>
           </div>
         </div>
-        
+
         <Powerline
           backendUrl={app.backendUrl}
           workspaceId={app.selectedWorkspaceId}

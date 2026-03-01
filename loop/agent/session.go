@@ -157,81 +157,81 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 		retryDelay := 30 * time.Second
 
 		for attempt := 0; attempt <= maxRetries; attempt++ {
-		thoughtChunkCount := 0
-		thoughtCharsSinceStatus := 0
-		lastThoughtSummary := ""
-		shouldRetry := false
+			thoughtChunkCount := 0
+			thoughtCharsSinceStatus := 0
+			lastThoughtSummary := ""
+			shouldRetry := false
 
 		StreamLoop:
 			for event := range s.Client.StreamMessage(ctx, history, config) {
-			switch event.Kind {
-			case EventDelta:
-				ch <- event
-				if event.Delta != nil && event.Delta.IsThought {
-					thoughtChunkCount++
-					if strings.TrimSpace(event.Delta.Text) != "" {
-						s.emitUIEvent(ctx, models.UIEventKindThought, event.Delta.Text, agentMsgID, map[string]any{
-							"iteration":   iteration,
-							"chunk_index": thoughtChunkCount,
-						})
-					}
-					thoughtCharsSinceStatus += len(strings.TrimSpace(event.Delta.Text))
+				switch event.Kind {
+				case EventDelta:
+					ch <- event
+					if event.Delta != nil && event.Delta.IsThought {
+						thoughtChunkCount++
+						if strings.TrimSpace(event.Delta.Text) != "" {
+							s.emitUIEvent(ctx, models.UIEventKindThought, event.Delta.Text, agentMsgID, map[string]any{
+								"iteration":   iteration,
+								"chunk_index": thoughtChunkCount,
+							})
+						}
+						thoughtCharsSinceStatus += len(strings.TrimSpace(event.Delta.Text))
 
-					if summary := extractThoughtSummary(event.Delta.Text); summary != "" && summary != lastThoughtSummary {
-						lastThoughtSummary = summary
-						emitStatus("thinking: "+summary, iteration)
-						thoughtCharsSinceStatus = 0
-					} else if thoughtCharsSinceStatus >= thoughtStatusMinChars || thoughtChunkCount%thoughtStatusChunkInterval == 0 {
-						emitStatus(fmt.Sprintf("thinking... (%d thought updates)", thoughtChunkCount), iteration)
-						thoughtCharsSinceStatus = 0
+						if summary := extractThoughtSummary(event.Delta.Text); summary != "" && summary != lastThoughtSummary {
+							lastThoughtSummary = summary
+							emitStatus("thinking: "+summary, iteration)
+							thoughtCharsSinceStatus = 0
+						} else if thoughtCharsSinceStatus >= thoughtStatusMinChars || thoughtChunkCount%thoughtStatusChunkInterval == 0 {
+							emitStatus(fmt.Sprintf("thinking... (%d thought updates)", thoughtChunkCount), iteration)
+							thoughtCharsSinceStatus = 0
+						}
 					}
-				}
 
-			case EventMessageDone:
-				msg, ok := event.Message.(*models.Message)
-				if !ok {
-					emitError(fmt.Errorf("unexpected message type"), iteration)
+				case EventMessageDone:
+					msg, ok := event.Message.(*models.Message)
+					if !ok {
+						emitError(fmt.Errorf("unexpected message type"), iteration)
+						return
+					}
+					agentMsg = msg
+
+				case EventError:
+					// Check if this was a cancellation that manifested as a stream error.
+					if ctx.Err() != nil {
+						emitAbort(ctx.Err().Error(), iteration)
+						return
+					}
+					msg := strings.TrimSpace(event.ErrorText)
+					if msg == "" && event.Error != nil {
+						msg = event.Error.Error()
+					}
+
+					if strings.Contains(msg, "503") || strings.Contains(msg, "Service Unavailable") || strings.Contains(msg, "ServiceUnavailable") {
+						if attempt < maxRetries {
+							emitStatus(fmt.Sprintf("Service unavailable (503). Retrying in %d seconds... (attempt %d/%d)", int(retryDelay.Seconds()), attempt+1, maxRetries), iteration)
+							shouldRetry = true
+							break StreamLoop
+						}
+					}
+
+					if msg == "" {
+						msg = "model stream failed"
+					}
+					emitError(fmt.Errorf("%s", msg), iteration)
 					return
 				}
-				agentMsg = msg
+			}
 
-			case EventError:
-				// Check if this was a cancellation that manifested as a stream error.
-				if ctx.Err() != nil {
+			if shouldRetry {
+				select {
+				case <-ctx.Done():
 					emitAbort(ctx.Err().Error(), iteration)
 					return
+				case <-time.After(retryDelay):
 				}
-				msg := strings.TrimSpace(event.ErrorText)
-				if msg == "" && event.Error != nil {
-					msg = event.Error.Error()
-				}
-
-				if strings.Contains(msg, "503") || strings.Contains(msg, "Service Unavailable") || strings.Contains(msg, "ServiceUnavailable") {
-					if attempt < maxRetries {
-						emitStatus(fmt.Sprintf("Service unavailable (503). Retrying in %d seconds... (attempt %d/%d)", int(retryDelay.Seconds()), attempt+1, maxRetries), iteration)
-						shouldRetry = true
-						break StreamLoop
-					}
-				}
-
-				if msg == "" {
-					msg = "model stream failed"
-				}
-				emitError(fmt.Errorf("%s", msg), iteration)
-				return
+				continue
 			}
-		}
-
-		if shouldRetry {
-			select {
-			case <-ctx.Done():
-				emitAbort(ctx.Err().Error(), iteration)
-				return
-			case <-time.After(retryDelay):
-			}
-			continue
-		}
-		break
+			break
 		} // end retry loop
 
 		if agentMsg == nil {

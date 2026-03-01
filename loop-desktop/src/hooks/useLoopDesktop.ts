@@ -846,6 +846,7 @@ export function useLoopDesktop(): LoopDesktopController {
         const callID = getString(toolCall, ['call_id']);
         const args = getString(toolCall, ['args']);
         const command = parseToolCommand(toolName, args);
+        const parsedArgs = parseToolResultPayload(args);
         const eventID = pushActivity({
           kind: 'tool',
           title: 'Tool call started',
@@ -855,6 +856,7 @@ export function useLoopDesktop(): LoopDesktopController {
             phase: 'start',
             callId: callID || undefined,
             command: command || undefined,
+            args: parsedArgs,
           },
         });
         if (callID) {
@@ -872,9 +874,11 @@ export function useLoopDesktop(): LoopDesktopController {
         const success = getBoolean(toolResult, ['success']);
         const resultText = getString(toolResult, ['result']);
         const errorText = getString(toolResult, ['error']);
+        const argsText = getString(toolResult, ['args']);
         const callID = getString(toolResult, ['call_id']);
         const summary = summarizeToolBody(toolName, resultText, errorText);
         const parsedPayload = parseToolResultPayload(resultText);
+        const parsedArgs = parseToolResultPayload(argsText);
         const openEventID = callID ? openToolEventIDsRef.current[callID] : '';
 
         if (openEventID) {
@@ -892,6 +896,7 @@ export function useLoopDesktop(): LoopDesktopController {
               success,
               resultSummary: summary.title,
               error: errorText || undefined,
+              args: event.tool?.args ?? parsedArgs,
               payload: parsedPayload,
             },
             streaming: false,
@@ -911,6 +916,7 @@ export function useLoopDesktop(): LoopDesktopController {
               success,
               resultSummary: summary.title,
               error: errorText || undefined,
+              args: parsedArgs,
               payload: parsedPayload,
             },
           });

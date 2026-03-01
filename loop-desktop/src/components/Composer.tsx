@@ -12,7 +12,6 @@ interface ComposerProps {
   onThinkingLevelChange: (value: ThinkingLevel) => void;
   onSubmit: () => Promise<void>;
   onStop: () => Promise<void>;
-  onNewConversation: () => void;
   conversationId: string | null;
   composerImages: ComposerImage[];
   setComposerImages: React.Dispatch<React.SetStateAction<ComposerImage[]>>;
@@ -38,7 +37,6 @@ export function Composer({
   onThinkingLevelChange,
   onSubmit,
   onStop,
-  onNewConversation,
   conversationId,
   composerImages,
   setComposerImages,
@@ -161,12 +159,6 @@ export function Composer({
           onPaste={handlePaste}
           onChange={(event) => onMessageInputChange(event.target.value)}
           onKeyDown={(event) => {
-            // Cmd + N (Mac) or Ctrl + N (Windows/Linux) to start a new thread
-            if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'n') {
-              event.preventDefault();
-              onNewConversation();
-              return;
-            }
             if (event.key !== 'Enter' || event.shiftKey) {
               return;
             }
