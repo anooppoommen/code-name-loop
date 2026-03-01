@@ -16,6 +16,10 @@ type Message struct {
 	// and deterministic history replay. Assigned at append time.
 	Seq int64
 
+	// Monotonic per-conversation sequence shared across message and UIEvent rows.
+	// This is the canonical ordering field for deterministic timeline replay.
+	TimelineSeq int64 `json:"timeline_seq,omitempty"`
+
 	// ReplyToMessageID expresses the logical parent in this conversation's
 	// message chain. For linear threads this equals the previous message;
 	// retries/branches share the same ReplyToMessageID.

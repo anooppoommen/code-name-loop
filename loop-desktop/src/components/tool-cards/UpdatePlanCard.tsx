@@ -9,7 +9,7 @@ export const UpdatePlanCard = memo(function UpdatePlanCard({ payload }: { payloa
 
   return (
     <div className="mt-3 rounded-lg border border-emerald-500/25 bg-emerald-500/5 p-3 text-xs">
-      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-emerald-300">Plan Update</p>
+      <p className="mb-2 text-xs font-semibold text-emerald-300">Plan update</p>
       <div className="space-y-1.5">
         {payload.plan.map((item, index) => (
           <div key={`${item.step}:${index}`} className="flex items-start gap-2">

@@ -35,7 +35,7 @@ export const RequestUserInputCard = memo(function RequestUserInputCard({
   return (
     <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 text-sm">
       <div className="flex items-center justify-between gap-2">
-        <p className="text-xs font-semibold uppercase tracking-wide text-amber-300">User Input Required</p>
+        <p className="text-xs font-semibold text-amber-300">User input required</p>
         <span className="rounded bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-200">
           {payload.questions.length} question{payload.questions.length === 1 ? '' : 's'}
         </span>

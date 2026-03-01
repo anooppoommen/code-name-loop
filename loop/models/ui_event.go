@@ -18,6 +18,14 @@ const (
 	UIEventKindToolResult UIEventKind = "tool_result"
 	// UIEventKindThreadStatus is emitted for sub-agent lifecycle events (spawned, started, completed, failed).
 	UIEventKindThreadStatus UIEventKind = "thread_status"
+	// UIEventKindStateTransition is emitted when the turn FSM transitions between states.
+	UIEventKindStateTransition UIEventKind = "state_transition"
+	// UIEventKindModelWaitStarted is emitted when a model attempt begins.
+	UIEventKindModelWaitStarted UIEventKind = "model_wait_started"
+	// UIEventKindModelWaitFinished is emitted when a model attempt ends with timing metadata.
+	UIEventKindModelWaitFinished UIEventKind = "model_wait_finished"
+	// UIEventKindApprovalRequest is emitted when command approval is required.
+	UIEventKindApprovalRequest UIEventKind = "approval_request"
 	// UIEventKindError is emitted when a turn encounters an unrecoverable error.
 	UIEventKindError UIEventKind = "error"
 	// UIEventKindAbort is emitted when a turn is intentionally cancelled.
@@ -47,6 +55,10 @@ type UIEvent struct {
 	// Monotonic per-conversation order. Assigned at Append time, starting at 1.
 	// Combined with messages.seq this guarantees a deterministic interleaved timeline.
 	Seq int64 `json:"seq"`
+
+	// Monotonic per-conversation sequence shared with messages.
+	// This is the canonical ordering field for timeline replay.
+	TimelineSeq int64 `json:"timeline_seq,omitempty"`
 
 	Kind UIEventKind `json:"kind"`
 

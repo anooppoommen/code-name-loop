@@ -315,7 +315,77 @@ export function historyRowsToActivities(items: unknown[]): ActivityEvent[] {
           const parsed = parseStatusLine(text);
           if (parsed) {
             activityRows.push(statusInputToEvent(id, timestamp, parsed));
+          } else {
+            activityRows.push({
+              id,
+              kind: 'thread',
+              title: text || 'Thread update',
+              timestamp,
+            });
           }
+          break;
+        }
+        case 'state_transition': {
+          const from = getString(metadata, ['from']);
+          const to = getString(metadata, ['to']);
+          const reason = getString(metadata, ['reason']);
+          activityRows.push({
+            id,
+            kind: 'lifecycle',
+            title: from && to ? `State: ${from} -> ${to}` : text || 'State transition',
+            body: reason || undefined,
+            timestamp,
+          });
+          break;
+        }
+        case 'model_wait_started': {
+          const attempt = getNumber(metadata, ['attempt']);
+          const model = getString(metadata, ['model']);
+          activityRows.push({
+            id,
+            kind: 'lifecycle',
+            title: attempt !== null ? `Model wait started (attempt ${attempt})` : (text || 'Model wait started'),
+            body: model ? `Model: ${model}` : undefined,
+            timestamp,
+          });
+          break;
+        }
+        case 'model_wait_finished': {
+          const outcome = getString(metadata, ['outcome']);
+          const timings = asRecord(getField(metadata, ['timings']));
+          const totalMS = getNumber(timings, ['total_ms', 'totalMS']);
+          const waitMS = getNumber(timings, ['wait_for_first_token_ms', 'waitForFirstTokenMS']);
+          const streamMS = getNumber(timings, ['stream_ms', 'streamMS']);
+          const parts: string[] = [];
+          if (waitMS !== null) {
+            parts.push(`TTFT ${Math.round(waitMS)}ms`);
+          }
+          if (streamMS !== null) {
+            parts.push(`Stream ${Math.round(streamMS)}ms`);
+          }
+          if (totalMS !== null) {
+            parts.push(`Total ${Math.round(totalMS)}ms`);
+          }
+          const error = getString(metadata, ['error']);
+          activityRows.push({
+            id,
+            kind: outcome === 'error' ? 'error' : 'status',
+            title: outcome ? `Model wait finished (${outcome})` : (text || 'Model wait finished'),
+            body: [parts.join(' · '), error].filter(Boolean).join('\n') || undefined,
+            timestamp,
+          });
+          break;
+        }
+        case 'approval_request': {
+          const command = getString(metadata, ['command']);
+          const toolName = getString(metadata, ['tool_name']);
+          activityRows.push({
+            id,
+            kind: 'lifecycle',
+            title: 'Command approval required',
+            body: `${toolName || 'tool'}: ${command || text}`.trim(),
+            timestamp,
+          });
           break;
         }
         case 'status': {

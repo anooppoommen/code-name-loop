@@ -18,9 +18,17 @@ const (
 	EventToolResult TurnEventKind = "tool_result"
 	// EventStatus is emitted for agent progress updates between deltas/tool events.
 	EventStatus TurnEventKind = "status"
+	// EventStateTransition is emitted whenever the turn FSM transitions state.
+	EventStateTransition TurnEventKind = "state_transition"
+	// EventModelWaitStarted is emitted at the beginning of a model attempt.
+	EventModelWaitStarted TurnEventKind = "model_wait_started"
+	// EventModelWaitFinished is emitted at the end of a model attempt with timings.
+	EventModelWaitFinished TurnEventKind = "model_wait_finished"
 	// EventRetry is emitted for transient model failures when the server is
 	// waiting to retry a model call.
 	EventRetry TurnEventKind = "retry"
+	// EventThreadStatus is emitted for structured thread lifecycle updates.
+	EventThreadStatus TurnEventKind = "thread_status"
 	// EventApprovalRequest is emitted when a command tool asks for user approval.
 	EventApprovalRequest TurnEventKind = "approval_request"
 	// EventTurnComplete is emitted when the entire turn is finished
@@ -39,6 +47,8 @@ const (
 // Session.HandleUserMessage().
 type TurnEvent struct {
 	Kind TurnEventKind `json:"kind"`
+	// StreamSeq is assigned by the SSE writer to enforce transport ordering.
+	StreamSeq int64 `json:"stream_seq,omitempty"`
 
 	// Delta contains partial text content for EventDelta events.
 	Delta *StreamDelta `json:"delta,omitempty"`
@@ -50,8 +60,16 @@ type TurnEvent struct {
 	ToolResult *ToolResultEvent `json:"tool_result,omitempty"`
 	// Status is populated for EventStatus events.
 	Status *StatusEvent `json:"status,omitempty"`
+	// StateTransition is populated for EventStateTransition events.
+	StateTransition *StateTransitionEvent `json:"state_transition,omitempty"`
+	// ModelWaitStarted is populated for EventModelWaitStarted events.
+	ModelWaitStarted *ModelWaitStartedEvent `json:"model_wait_started,omitempty"`
+	// ModelWaitFinished is populated for EventModelWaitFinished events.
+	ModelWaitFinished *ModelWaitFinishedEvent `json:"model_wait_finished,omitempty"`
 	// Retry is populated for EventRetry events.
 	Retry *RetryEvent `json:"retry,omitempty"`
+	// ThreadStatus is populated for EventThreadStatus events.
+	ThreadStatus *ThreadStatusEvent `json:"thread_status,omitempty"`
 	// ApprovalRequest is populated for EventApprovalRequest events.
 	ApprovalRequest *ApprovalRequestEvent `json:"approval_request,omitempty"`
 	// Error is populated for EventError events.
@@ -91,6 +109,43 @@ type StatusEvent struct {
 	Iteration int    `json:"iteration,omitempty"`
 }
 
+type StateTransitionEvent struct {
+	From      string `json:"from,omitempty"`
+	To        string `json:"to"`
+	Reason    string `json:"reason,omitempty"`
+	Iteration int    `json:"iteration,omitempty"`
+	Attempt   int    `json:"attempt,omitempty"`
+}
+
+type ModelWaitStartedEvent struct {
+	Iteration int    `json:"iteration,omitempty"`
+	Attempt   int    `json:"attempt,omitempty"`
+	StartedAt string `json:"started_at"`
+	Model     string `json:"model,omitempty"`
+}
+
+type ModelTiming struct {
+	WaitForFirstTokenMS int64 `json:"wait_for_first_token_ms,omitempty"`
+	StreamMS            int64 `json:"stream_ms,omitempty"`
+	TotalMS             int64 `json:"total_ms,omitempty"`
+	RetryDelayMS        int64 `json:"retry_delay_ms,omitempty"`
+}
+
+type ModelTokenUsage struct {
+	Input  int64 `json:"input,omitempty"`
+	Output int64 `json:"output,omitempty"`
+	Cached int64 `json:"cached,omitempty"`
+}
+
+type ModelWaitFinishedEvent struct {
+	Iteration int              `json:"iteration,omitempty"`
+	Attempt   int              `json:"attempt,omitempty"`
+	Outcome   string           `json:"outcome"`
+	Timings   ModelTiming      `json:"timings"`
+	Tokens    *ModelTokenUsage `json:"tokens,omitempty"`
+	Error     string           `json:"error,omitempty"`
+}
+
 // RetryEvent represents retry/backoff state for transient model failures.
 type RetryEvent struct {
 	// Message is a human-readable status line suitable for direct UI display.
@@ -114,4 +169,12 @@ type ApprovalRequestEvent struct {
 	ToolName       string `json:"tool_name"`
 	Command        string `json:"command"`
 	Workdir        string `json:"workdir,omitempty"`
+}
+
+type ThreadStatusEvent struct {
+	Text     string `json:"text"`
+	ThreadID string `json:"thread_id,omitempty"`
+	Status   string `json:"status,omitempty"`
+	Phase    string `json:"phase,omitempty"`
+	Error    string `json:"error,omitempty"`
 }

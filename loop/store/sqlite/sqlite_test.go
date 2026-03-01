@@ -859,6 +859,69 @@ func TestMessageDelete(t *testing.T) {
 	}
 }
 
+func TestSharedTimelineSeqAcrossMessagesAndUIEvents(t *testing.T) {
+	dir := t.TempDir()
+	s, err := sqlite.New(filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	ctx := context.Background()
+	ws := &models.Workspace{ID: "ws-tl", Name: "TL", RootPath: "/tl", CanonicalRootPath: "/tl"}
+	if err := s.Workspaces().Create(ctx, ws); err != nil {
+		t.Fatal(err)
+	}
+	conv := &models.Conversation{ID: "conv-tl", WorkspaceID: "ws-tl", Title: "Timeline"}
+	if err := s.Conversations().Create(ctx, conv); err != nil {
+		t.Fatal(err)
+	}
+
+	m1 := &models.Message{
+		ID:             "msg-tl-1",
+		ConversationID: conv.ID,
+		SentBy:         models.SentByUser,
+		State:          models.MessageStateCompleted,
+		Parts:          []models.MessagePart{{Kind: models.PartText, Text: &models.TextPart{Text: "one"}}},
+	}
+	if err := s.Messages().Append(ctx, m1); err != nil {
+		t.Fatal(err)
+	}
+
+	e1 := &models.UIEvent{
+		ConversationID: conv.ID,
+		Kind:           models.UIEventKindStatus,
+		Text:           "status one",
+	}
+	if err := s.UIEvents().Append(ctx, e1); err != nil {
+		t.Fatal(err)
+	}
+
+	m2 := &models.Message{
+		ID:             "msg-tl-2",
+		ConversationID: conv.ID,
+		SentBy:         models.SentByAgent,
+		State:          models.MessageStateCompleted,
+		Parts:          []models.MessagePart{{Kind: models.PartText, Text: &models.TextPart{Text: "two"}}},
+	}
+	if err := s.Messages().Append(ctx, m2); err != nil {
+		t.Fatal(err)
+	}
+
+	e2 := &models.UIEvent{
+		ConversationID: conv.ID,
+		Kind:           models.UIEventKindStatus,
+		Text:           "status two",
+	}
+	if err := s.UIEvents().Append(ctx, e2); err != nil {
+		t.Fatal(err)
+	}
+
+	if m1.TimelineSeq != 1 || e1.TimelineSeq != 2 || m2.TimelineSeq != 3 || e2.TimelineSeq != 4 {
+		t.Fatalf("unexpected timeline order m1=%d e1=%d m2=%d e2=%d", m1.TimelineSeq, e1.TimelineSeq, m2.TimelineSeq, e2.TimelineSeq)
+	}
+}
+
 // ─────────────────────────────────────────────────────────────────
 // Conversation-Root back-pointer on workspace
 // ─────────────────────────────────────────────────────────────────

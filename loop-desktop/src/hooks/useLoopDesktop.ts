@@ -1,301 +1,49 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { RefObject } from 'react';
 import type { LoopStreamPacket } from '../electron';
 import { attachReplyStream, chooseFolder, getActiveReplyStream, openReplyStream, requestJson } from '../lib/loopClient';
 import type { ActivityEvent, ConversationSummary, ThinkingLevel, WorkspaceSummary } from '../types/ui';
 import {
   type ActivityInput,
   historyRowsToActivities,
-  parseToolCommand,
-  parseStatusLine,
-  summarizeToolBody,
 } from '../utils/activityTimeline';
 import {
   asRecord,
   buildConversationTitle,
-  extractMessageText,
-  getBoolean,
-  getField,
   getString,
   lastPathSegment,
   parseConversation,
-  parseToolResultPayload,
   parseWorkspace,
   shortID,
   stringifyResponseError,
 } from '../utils/parsers';
+import { DEFAULT_THINKING_LEVEL, STORAGE_KEY } from './useLoopDesktop.constants';
+import {
+  annotateActivitiesWithPendingApprovals,
+  normalizeThinkingLevel,
+  parsePendingCommandApprovalRecord,
+  rowsFromUnknown,
+} from './useLoopDesktop.helpers';
+import { createHandleStreamPacket, createHandleTurnEvent } from './useLoopDesktop.stream';
+import type {
+  CommandApprovalDecision,
+  ComposerImage,
+  ConversationLiveState,
+  LoopDesktopController,
+  NoticeTone,
+  NoticeToast,
+  PendingCommandApproval,
+  QueuedMessage,
+  StreamHandle,
+} from './useLoopDesktop.types';
 
-const STORAGE_KEY = 'loop-desktop-settings-v3';
-const DEFAULT_THINKING_LEVEL: ThinkingLevel = 'medium';
-const THINKING_LEVELS: readonly ThinkingLevel[] = ['minimal', 'low', 'medium', 'high'];
-const TERMINAL_TURN_KINDS = new Set(['turn_complete', 'turn_aborted', 'error']);
-const COMMAND_APPROVAL_KINDS = new Set(['approval_request']);
-
-function normalizeThinkingLevel(value: unknown): ThinkingLevel {
-  if (typeof value !== 'string') {
-    return DEFAULT_THINKING_LEVEL;
-  }
-  const normalized = value.trim().toLowerCase();
-  if (THINKING_LEVELS.includes(normalized as ThinkingLevel)) {
-    return normalized as ThinkingLevel;
-  }
-  return DEFAULT_THINKING_LEVEL;
-}
-
-function rowsFromUnknown(payload: unknown): unknown[] {
-  if (Array.isArray(payload)) {
-    return payload;
-  }
-
-  const record = asRecord(payload);
-  if (!record) {
-    return [];
-  }
-
-  const direct = getField(record, ['rows', 'items', 'data', 'messages', 'conversations', 'workspaces']);
-  if (Array.isArray(direct)) {
-    return direct;
-  }
-
-  return [];
-}
-
-function parseCommandApprovalEvent(
-  eventRecord: Record<string, unknown> | null,
-  fallbackConversationId: string,
-): PendingCommandApproval | null {
-  if (!eventRecord) {
-    return null;
-  }
-  const approvalRecord = asRecord(getField(eventRecord, ['approval_request', 'approvalRequest']));
-  return parsePendingCommandApprovalRecord(approvalRecord, fallbackConversationId);
-}
-
-function parsePendingCommandApprovalRecord(
-  approvalRecord: Record<string, unknown> | null,
-  fallbackConversationId = '',
-): PendingCommandApproval | null {
-  if (!approvalRecord) {
-    return null;
-  }
-
-  const id = getString(approvalRecord, ['id']);
-  const command = getString(approvalRecord, ['command']);
-  if (!id || !command) {
-    return null;
-  }
-
-  return {
-    id,
-    conversationId: getString(approvalRecord, ['conversation_id', 'conversationId']) || fallbackConversationId,
-    toolName: getString(approvalRecord, ['tool_name', 'toolName']) || 'exec_command',
-    command,
-    workdir: getString(approvalRecord, ['workdir']),
-  };
-}
-
-function getNumber(record: Record<string, unknown> | null, keys: string[]): number {
-  const value = getField(record, keys);
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return value;
-  }
-  return Number.NaN;
-}
-
-function toolNameMatches(toolName: string, canonical: string): boolean {
-  return (
-    toolName === canonical ||
-    toolName.endsWith(`:${canonical}`) ||
-    toolName.endsWith(`.${canonical}`)
-  );
-}
-
-function normalizeApprovalToolName(toolName: string): string {
-  const normalized = toolName.trim();
-  if (toolNameMatches(normalized, 'exec_command')) {
-    return 'exec_command';
-  }
-  if (toolNameMatches(normalized, 'shell')) {
-    return 'shell';
-  }
-  return normalized;
-}
-
-function buildApprovalKey(toolName: string, command: string): string {
-  const normalizedCommand = command.trim();
-  const normalizedToolName = normalizeApprovalToolName(toolName);
-  if (!normalizedCommand || !normalizedToolName) {
-    return '';
-  }
-  return `${normalizedToolName}::${normalizedCommand}`;
-}
-
-function annotateActivitiesWithPendingApprovals(
-  events: ActivityEvent[],
-  pendingApprovals: PendingCommandApproval[],
-): ActivityEvent[] {
-  if (events.length === 0) {
-    return events;
-  }
-
-  const pendingByKey = new Map<string, number>();
-  for (const approval of pendingApprovals) {
-    const key = buildApprovalKey(approval.toolName, approval.command);
-    if (!key) {
-      continue;
-    }
-    pendingByKey.set(key, (pendingByKey.get(key) ?? 0) + 1);
-  }
-
-  let changed = false;
-  const waitingByEventID = new Map<string, boolean>();
-  for (let i = events.length - 1; i >= 0; i -= 1) {
-    const event = events[i];
-    const tool = event.tool;
-    if (!tool || tool.phase !== 'start' || !tool.command) {
-      waitingByEventID.set(event.id, false);
-      continue;
-    }
-    const key = buildApprovalKey(tool.name, tool.command);
-    const remaining = key ? (pendingByKey.get(key) ?? 0) : 0;
-    const isWaiting = remaining > 0;
-    waitingByEventID.set(event.id, isWaiting);
-    if (isWaiting && key) {
-      pendingByKey.set(key, remaining - 1);
-    }
-  }
-
-  const next = events.map((event) => {
-    const tool = event.tool;
-    if (!tool) {
-      return event;
-    }
-    const waitingApproval = waitingByEventID.get(event.id) ?? false;
-    if (Boolean(tool.waitingApproval) === waitingApproval) {
-      return event;
-    }
-    changed = true;
-    return {
-      ...event,
-      tool: {
-        ...tool,
-        waitingApproval,
-      },
-    };
-  });
-
-  return changed ? next : events;
-}
-
-interface StreamHandle {
-  streamId: string;
-  conversationId: string;
-  cancel: () => Promise<void>;
-  dispose: () => void;
-}
-
-interface ConversationLiveState {
-  draftAssistantId: string | null;
-  draftThoughtId: string | null;
-  lastStatus: string;
-  openToolEventIDs: Record<string, string>;
-  retryStatusEventID: string | null;
-}
-
-export type CommandApprovalDecision = 'deny' | 'allow_once' | 'allow_session';
-
-export interface PendingCommandApproval {
-  id: string;
-  conversationId: string;
-  toolName: string;
-  command: string;
-  workdir: string;
-}
-
-export type NoticeTone = 'success' | 'error' | 'info';
-
-export interface QueuedMessage {
-  id: string;
-  text: string;
-  images: ComposerImage[];
-}
-
-export interface ComposerImage {
-  id: string;
-  data: string;
-  mimeType: string;
-  dataUrl: string;
-}
-
-export interface NoticeToast {
-  id: string;
-  tone: NoticeTone;
-  message: string;
-}
-
-export interface LoopDesktopController {
-  backendUrl: string;
-  setBackendUrl: (value: string) => void;
-
-  workspaces: WorkspaceSummary[];
-  selectedWorkspaceId: string;
-  selectedWorkspace: WorkspaceSummary | null;
-  workspacePath: string;
-  setWorkspacePath: (value: string) => void;
-  workspaceName: string;
-  setWorkspaceName: (value: string) => void;
-  isLoadingWorkspaces: boolean;
-
-  conversations: ConversationSummary[];
-  selectedConversationId: string;
-  selectedConversation: ConversationSummary | null;
-
-  activities: ActivityEvent[];
-  feedScrollRef: RefObject<HTMLDivElement | null>;
-
-  queuedMessages: QueuedMessage[];
-  queueMessage: () => void;
-  removeQueuedMessage: (id: string) => void;
-  reorderQueuedMessage: (id: string, direction: 'up' | 'down') => void;
-  steerQueuedMessage: (id: string) => Promise<void>;
-  messageInput: string;
-  setMessageInput: (value: string) => void;
-  composerImages: ComposerImage[];
-  setComposerImages: React.Dispatch<React.SetStateAction<ComposerImage[]>>;
-  canCompose: boolean;
-  isSending: boolean;
-  sendingConversations: Record<string, boolean>;
-  notices: NoticeToast[];
-  pendingCommandApproval: PendingCommandApproval | null;
-  pendingCommandApprovalCount: number;
-  isResolvingCommandApproval: boolean;
-  hideLifecycle: boolean;
-  setHideLifecycle: (value: boolean) => void;
-  thinkingLevel: ThinkingLevel;
-  setThinkingLevel: (value: ThinkingLevel) => void;
-  currentStatus: string;
-  setCurrentStatus: (value: string) => void;
-
-  dismissNotice: (id: string) => void;
-  resolveCommandApproval: (decision: CommandApprovalDecision, message?: string) => Promise<void>;
-
-  refreshWorkspaces: () => Promise<void>;
-  refreshConversations: () => Promise<void>;
-  pickFolder: () => Promise<void>;
-  createWorkspace: () => Promise<void>;
-  pickAndCreateWorkspace: () => Promise<void>;
-  deleteWorkspace: (workspaceId: string) => Promise<void>;
-  selectWorkspace: (workspaceId: string) => void;
-  selectConversation: (conversationId: string) => void;
-  newConversation: () => Promise<void>;
-  deleteConversation: (conversationId: string) => Promise<void>;
-  renameConversation: (conversationId: string, title: string) => Promise<void>;
-
-  sendMessage: () => Promise<void>;
-  cancelStream: () => Promise<void>;
-  applyToolResponseSuggestion: (text: string) => void;
-  sendToolResponseSuggestion: (text: string) => Promise<void>;
-}
+export type {
+  CommandApprovalDecision,
+  ComposerImage,
+  LoopDesktopController,
+  NoticeToast,
+  PendingCommandApproval,
+  QueuedMessage,
+} from './useLoopDesktop.types';
 
 export function useLoopDesktop(): LoopDesktopController {
   const [backendUrl, setBackendUrl] = useState('http://localhost:8080');
@@ -1179,336 +927,32 @@ export function useLoopDesktop(): LoopDesktopController {
     [createConversation, selectedConversationId],
   );
 
-  const handleTurnEvent = useCallback(
-    (eventName: string, data: unknown, conversationId: string): void => {
-      const eventRecord = asRecord(data);
-      const kind = getString(eventRecord, ['kind']) || eventName;
-      const liveState = getConversationLiveState(conversationId);
-
-      if (kind === 'retry') {
-        const retryRecord = asRecord(getField(eventRecord, ['retry'])) ?? eventRecord;
-        const message = getString(retryRecord, ['message']) || 'Temporary server issue. Retrying...';
-        const attempt = getNumber(retryRecord, ['attempt']);
-        const maxAttempts = getNumber(retryRecord, ['max_attempts', 'maxAttempts']);
-        const secondsRemaining = getNumber(retryRecord, ['seconds_remaining', 'secondsRemaining']);
-        const hasAttempt = Number.isFinite(attempt) && Number.isFinite(maxAttempts) && attempt > 0 && maxAttempts > 0;
-        const body = hasAttempt ? `Server retry ${attempt}/${maxAttempts}` : undefined;
-
-        if (message && message !== liveState.lastStatus) {
-          liveState.lastStatus = message;
-          setCurrentStatus(message);
-        }
-
-        if (liveState.retryStatusEventID) {
-          mutateActivity(liveState.retryStatusEventID, (event) => ({
-            ...event,
-            title: message || event.title,
-            body,
-            timestamp: Date.now(),
-          }));
-        } else {
-          liveState.retryStatusEventID = pushActivity({
-            kind: 'status',
-            title: message,
-            body,
-          });
-        }
-
-        if (Number.isFinite(secondsRemaining) && secondsRemaining <= 0) {
-          liveState.retryStatusEventID = null;
-        }
-        return;
-      }
-
-      if (kind === 'status') {
-        const statusText = getString(asRecord(getField(eventRecord, ['status'])), ['text']);
-        if (!statusText) {
-          return;
-        }
-        if (statusText === liveState.lastStatus) {
-          return;
-        }
-        liveState.lastStatus = statusText;
-        setCurrentStatus(statusText);
-
-        if (statusText.startsWith('Service unavailable (503). Retrying in ')) {
-          if (liveState.retryStatusEventID) {
-            mutateActivity(liveState.retryStatusEventID, (event) => ({
-              ...event,
-              title: statusText,
-              timestamp: Date.now(),
-            }));
-          } else {
-            liveState.retryStatusEventID = pushActivity({ kind: 'status', title: statusText });
-          }
-          return;
-        }
-        liveState.retryStatusEventID = null;
-
-        const parsed = parseStatusLine(statusText);
-        if (parsed?.kind === 'lifecycle' && parsed.title.startsWith('Executing ')) {
-          // Match history grouping: once tool execution begins, next thought chunk starts a new row.
-          settleThoughtDraft(conversationId);
-        }
-        if (parsed && parsed.kind !== 'tool') {
-          pushActivity(parsed);
-        }
-        return;
-      }
-
-      if (kind === 'delta') {
-        const deltaRecord = asRecord(getField(eventRecord, ['delta']));
-        const text = getString(deltaRecord, ['text']);
-        const isThought = getBoolean(deltaRecord, ['is_thought']);
-        if (!text) {
-          return;
-        }
-
-        appendStreamingText(conversationId, isThought ? 'thought' : 'assistant', text);
-        return;
-      }
-
-      if (kind === 'tool_call_start') {
-        // Start a fresh thought segment after this tool boundary.
-        settleThoughtDraft(conversationId);
-
-        const toolCall = asRecord(getField(eventRecord, ['tool_call']));
-        const toolName = getString(toolCall, ['name']) || 'unknown tool';
-        const callID = getString(toolCall, ['call_id']);
-        const args = getString(toolCall, ['args']);
-        const command = parseToolCommand(toolName, args);
-        const parsedArgs = parseToolResultPayload(args);
-        const eventID = pushActivity({
-          kind: 'tool',
-          title: 'Tool call started',
-          body: command || args || undefined,
-          tool: {
-            name: toolName,
-            phase: 'start',
-            callId: callID || undefined,
-            command: command || undefined,
-            args: parsedArgs,
-          },
-        });
-        if (callID) {
-          liveState.openToolEventIDs[callID] = eventID;
-        }
-        return;
-      }
-
-      if (kind === 'tool_result') {
-        // Defensive split for streams that may emit result without a prior start event.
-        settleThoughtDraft(conversationId);
-
-        const toolResult = asRecord(getField(eventRecord, ['tool_result']));
-        const toolName = getString(toolResult, ['name']) || 'unknown tool';
-        const success = getBoolean(toolResult, ['success']);
-        const resultText = getString(toolResult, ['result']);
-        const errorText = getString(toolResult, ['error']);
-        const argsText = getString(toolResult, ['args']);
-        const callID = getString(toolResult, ['call_id']);
-        const summary = summarizeToolBody(toolName, resultText, errorText);
-        const parsedPayload = parseToolResultPayload(resultText);
-        const parsedArgs = parseToolResultPayload(argsText);
-        const openEventID = callID ? liveState.openToolEventIDs[callID] : '';
-
-        if (openEventID) {
-          mutateActivity(openEventID, (event) => ({
-            ...event,
-            title: success
-              ? `${toolName} completed${summary.title ? ` (${summary.title})` : ''}`
-              : `${toolName} failed`,
-            body: summary.body || undefined,
-            tool: {
-              ...(event.tool ?? { name: toolName, phase: 'start' as const }),
-              name: toolName,
-              phase: 'result',
-              callId: callID || undefined,
-              success,
-              resultSummary: summary.title,
-              error: errorText || undefined,
-              args: event.tool?.args ?? parsedArgs,
-              payload: parsedPayload,
-            },
-            streaming: false,
-          }));
-          delete liveState.openToolEventIDs[callID];
-        } else {
-          pushActivity({
-            kind: 'tool',
-            title: success
-              ? `${toolName} completed${summary.title ? ` (${summary.title})` : ''}`
-              : `${toolName} failed`,
-            body: summary.body || undefined,
-            tool: {
-              name: toolName,
-              phase: 'result',
-              callId: callID || undefined,
-              success,
-              resultSummary: summary.title,
-              error: errorText || undefined,
-              args: parsedArgs,
-              payload: parsedPayload,
-            },
-          });
-        }
-
-        const parsedResult = parseToolResultPayload(resultText);
-        if (toolName === 'spawn_thread' && parsedResult) {
-          const threadID = getString(parsedResult, ['thread_id']);
-          if (threadID) {
-            const anchorID = getString(parsedResult, ['anchor_message_id']);
-            const mode = getString(parsedResult, ['mode']);
-            pushActivity({
-              kind: 'thread',
-              title: `Thread spawned: ${shortID(threadID)}${mode ? ` (${mode})` : ''}`,
-              body: anchorID ? `anchor ${shortID(anchorID)}` : undefined,
-            });
-          }
-        }
-
-        if (toolName === 'await_thread' && parsedResult) {
-          const threadID = getString(parsedResult, ['thread_id']);
-          const status = getString(parsedResult, ['status']);
-          if (threadID) {
-            pushActivity({
-              kind: 'thread',
-              title: `Thread awaited: ${shortID(threadID)}`,
-              body: status ? `Status: ${status}` : undefined,
-            });
-          }
-        }
-        return;
-      }
-
-      if (kind === 'message_done') {
-        const messageRecord = getField(eventRecord, ['message']);
-        const messageText = extractMessageText(messageRecord);
-        if (!messageText) {
-          return;
-        }
-
-        const draftID = liveState.draftAssistantId;
-        if (!draftID) {
-          liveState.draftAssistantId = pushActivity({
-            kind: 'assistant',
-            title: 'Assistant response',
-            body: messageText,
-            streaming: true,
-          });
-          return;
-        }
-
-        mutateActivity(draftID, (event) => ({ ...event, body: messageText, streaming: true }));
-        return;
-      }
-
-      if (kind === 'error') {
-        const errorText = getString(eventRecord, ['error']) || 'Agent returned an error event.';
-        pushActivity({ kind: 'error', title: 'Model execution error', body: errorText });
-        liveState.openToolEventIDs = {};
-        finalizeTurn(false, conversationId);
-        return;
-      }
-
-      if (kind === 'turn_started') {
-        return;
-      }
-
-      if (kind === 'turn_aborted') {
-        pushActivity({
-          kind: 'lifecycle',
-          title: 'Turn aborted',
-          body: getString(eventRecord, ['error']) || undefined,
-        });
-        liveState.openToolEventIDs = {};
-        finalizeTurn(false, conversationId);
-        return;
-      }
-
-      if (kind === 'turn_complete') {
-        liveState.openToolEventIDs = {};
-        finalizeTurn(false, conversationId);
-        return;
-      }
-
-      pushActivity({ kind: 'status', title: `Event: ${kind}` });
-    },
-    [appendStreamingText, finalizeTurn, getConversationLiveState, mutateActivity, pushActivity, settleThoughtDraft],
+  const handleTurnEvent = useMemo(
+    () =>
+      createHandleTurnEvent({
+        appendStreamingText,
+        finalizeTurn,
+        getConversationLiveState,
+        mutateActivity,
+        pushActivity,
+        settleThoughtDraft,
+        setCurrentStatus,
+      }),
+    [appendStreamingText, finalizeTurn, getConversationLiveState, mutateActivity, pushActivity, settleThoughtDraft, setCurrentStatus],
   );
 
-  const handleStreamPacket = useCallback(
-    (packet: LoopStreamPacket, conversationId: string): void => {
-      const stream = activeStreamsRef.current[conversationId];
-      if (!stream || packet.streamId !== stream.streamId) {
-        return;
-      }
-
-      const isViewingStreamConversation = conversationId === selectedConversationIdRef.current;
-
-      if (packet.type === 'event') {
-        const eventRecord = asRecord(packet.data);
-        const kind = getString(eventRecord, ['kind']) || packet.eventName || 'message';
-        if (COMMAND_APPROVAL_KINDS.has(kind)) {
-          const approval = parseCommandApprovalEvent(eventRecord, conversationId);
-          if (approval) {
-            enqueueCommandApproval(approval);
-            if (isViewingStreamConversation) {
-              pushActivity({
-                kind: 'lifecycle',
-                title: 'Command approval required',
-                body: `${approval.toolName}: ${approval.command}`,
-              });
-            } else {
-              pushNotice('info', `Command approval required for ${shortID(approval.conversationId)}.`);
-            }
-          }
-          return;
-        }
-        if (!isViewingStreamConversation) {
-          // We intentionally skip rendering background activity to avoid mixing
-          // timeline rows across conversations, but terminal events must still
-          // close background stream state.
-          if (TERMINAL_TURN_KINDS.has(kind)) {
-            const liveState = getConversationLiveState(conversationId);
-            liveState.openToolEventIDs = {};
-            finalizeTurn(true, conversationId);
-            console.debug(
-              `[loop-stream] finalized background conversation=${shortID(conversationId)} kind=${kind}`,
-            );
-          }
-          return;
-        }
-        handleTurnEvent(packet.eventName ?? 'message', packet.data, conversationId);
-        return;
-      }
-
-      if (packet.type === 'error') {
-        if (isViewingStreamConversation) {
-          pushActivity({ kind: 'error', title: 'Stream transport error', body: packet.error ?? '' });
-        }
-        const liveState = getConversationLiveState(conversationId);
-        liveState.openToolEventIDs = {};
-        finalizeTurn(true, conversationId);
-        return;
-      }
-
-      if (packet.type === 'aborted') {
-        if (isViewingStreamConversation && packet.error) {
-          pushActivity({ kind: 'lifecycle', title: 'Turn canceled', body: packet.error });
-        }
-        const liveState = getConversationLiveState(conversationId);
-        liveState.openToolEventIDs = {};
-        finalizeTurn(true, conversationId);
-        return;
-      }
-
-      if (packet.type === 'done') {
-        const liveState = getConversationLiveState(conversationId);
-        liveState.openToolEventIDs = {};
-        finalizeTurn(true, conversationId);
-      }
-    },
+  const handleStreamPacket = useMemo(
+    () =>
+      createHandleStreamPacket({
+        enqueueCommandApproval,
+        finalizeTurn,
+        getActiveStreamId: (conversationId: string) => activeStreamsRef.current[conversationId]?.streamId,
+        getConversationLiveState,
+        handleTurnEvent,
+        pushActivity,
+        pushNotice,
+        getSelectedConversationId: () => selectedConversationIdRef.current,
+      }),
     [enqueueCommandApproval, finalizeTurn, getConversationLiveState, handleTurnEvent, pushActivity, pushNotice],
   );
 

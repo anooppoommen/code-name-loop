@@ -32,6 +32,22 @@ const (
 	defaultRetryTick           = 1 * time.Second
 )
 
+type TurnState string
+
+const (
+	StateTurnStarted      TurnState = "turn_started"
+	StateHistoryReady     TurnState = "history_ready"
+	StateModelWaiting     TurnState = "model_waiting"
+	StateModelStreaming   TurnState = "model_streaming"
+	StateMessagePersisted TurnState = "message_persisted"
+	StateToolDispatching  TurnState = "tool_dispatching"
+	StateToolExecuting    TurnState = "tool_executing"
+	StateRetryWaiting     TurnState = "retry_waiting"
+	StateTurnCompleted    TurnState = "turn_completed"
+	StateTurnAborted      TurnState = "turn_aborted"
+	StateTurnFailed       TurnState = "turn_failed"
+)
+
 // Turn represents a single model interaction cycle within a session.
 // A turn may involve multiple model calls if the model requests tool
 // execution (the agentic loop).
@@ -73,6 +89,8 @@ func (t *Turn) Run(ctx context.Context) <-chan TurnEvent {
 func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 	s := t.session
 	var agentMsgID models.MessageID // set after the current iteration's agent message is persisted
+	currentState := TurnState("")
+	modelName := resolveModelName(s.Client)
 
 	statusMeta := func(iteration int) map[string]any {
 		if iteration <= 0 {
@@ -94,6 +112,93 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 		s.emitUIEvent(ctx, models.UIEventKindStatus, text, agentMsgID, statusMeta(iteration))
 	}
 
+	emitStateTransition := func(from, to TurnState, reason string, iteration, attempt int) {
+		ch <- TurnEvent{
+			Kind: EventStateTransition,
+			StateTransition: &StateTransitionEvent{
+				From:      string(from),
+				To:        string(to),
+				Reason:    reason,
+				Iteration: iteration,
+				Attempt:   attempt,
+			},
+		}
+		s.emitUIEvent(ctx, models.UIEventKindStateTransition,
+			fmt.Sprintf("%s -> %s", from, to), agentMsgID,
+			map[string]any{
+				"from":      string(from),
+				"to":        string(to),
+				"reason":    reason,
+				"iteration": iteration,
+				"attempt":   attempt,
+			},
+		)
+	}
+
+	transition := func(to TurnState, reason string, iteration, attempt int) {
+		from := currentState
+		if from == to {
+			return
+		}
+		emitStateTransition(from, to, reason, iteration, attempt)
+		currentState = to
+	}
+
+	emitModelWaitStarted := func(iteration, attempt int, startedAt time.Time) {
+		startedISO := startedAt.UTC().Format(time.RFC3339Nano)
+		ch <- TurnEvent{
+			Kind: EventModelWaitStarted,
+			ModelWaitStarted: &ModelWaitStartedEvent{
+				Iteration: iteration,
+				Attempt:   attempt,
+				StartedAt: startedISO,
+				Model:     modelName,
+			},
+		}
+		s.emitUIEvent(ctx, models.UIEventKindModelWaitStarted, "model wait started", agentMsgID, map[string]any{
+			"iteration":  iteration,
+			"attempt":    attempt,
+			"started_at": startedISO,
+			"model":      modelName,
+		})
+	}
+
+	emitModelWaitFinished := func(iteration, attempt int, outcome string, timings ModelTiming, tokens *ModelTokenUsage, errText string) {
+		ch <- TurnEvent{
+			Kind: EventModelWaitFinished,
+			ModelWaitFinished: &ModelWaitFinishedEvent{
+				Iteration: iteration,
+				Attempt:   attempt,
+				Outcome:   outcome,
+				Timings:   timings,
+				Tokens:    tokens,
+				Error:     errText,
+			},
+		}
+		meta := map[string]any{
+			"iteration": iteration,
+			"attempt":   attempt,
+			"outcome":   outcome,
+			"timings": map[string]any{
+				"wait_for_first_token_ms": timings.WaitForFirstTokenMS,
+				"stream_ms":               timings.StreamMS,
+				"total_ms":                timings.TotalMS,
+				"retry_delay_ms":          timings.RetryDelayMS,
+			},
+		}
+		if tokens != nil {
+			meta["tokens"] = map[string]any{
+				"input":  tokens.Input,
+				"output": tokens.Output,
+				"cached": tokens.Cached,
+			}
+		}
+		if errText != "" {
+			meta["error"] = errText
+		}
+		s.emitUIEvent(ctx, models.UIEventKindModelWaitFinished, "model wait finished", agentMsgID, meta)
+	}
+
 	emitRetry := func(message string, attempt, maxAttempts, secondsRemaining, delaySeconds, iteration int) {
 		ch <- TurnEvent{
 			Kind: EventRetry,
@@ -108,10 +213,11 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 		}
 	}
 
-	emitError := func(err error, iteration int) {
+	emitError := func(err error, iteration, attempt int) {
 		if err == nil {
 			return
 		}
+		transition(StateTurnFailed, err.Error(), iteration, attempt)
 		ch <- TurnEvent{
 			Kind:      EventError,
 			Error:     err,
@@ -120,13 +226,15 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 		s.emitUIEvent(ctx, models.UIEventKindError, err.Error(), agentMsgID, statusMeta(iteration))
 	}
 
-	emitAbort := func(text string, iteration int) {
+	emitAbort := func(text string, iteration, attempt int) {
+		transition(StateTurnAborted, text, iteration, attempt)
 		ch <- TurnEvent{Kind: EventTurnAborted, ErrorText: text}
 		s.emitUIEvent(ctx, models.UIEventKindAbort, text, agentMsgID, statusMeta(iteration))
 	}
 
 	// Emit TurnStarted.
 	ch <- TurnEvent{Kind: EventTurnStarted}
+	transition(StateTurnStarted, "turn started", 0, 0)
 	emitStatus("turn started", 0)
 
 	iteration := 0
@@ -138,25 +246,25 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 
 		// Guard against runaway tool call loops.
 		if iteration > maxIterations {
-			emitError(fmt.Errorf("max tool call iterations (%d) exceeded", maxIterations), iteration)
+			emitError(fmt.Errorf("max tool call iterations (%d) exceeded", maxIterations), iteration, 0)
 			return
 		}
 
 		// Check cancellation — emit TurnAborted instead of Error.
 		if ctx.Err() != nil {
-			emitAbort(ctx.Err().Error(), iteration)
+			emitAbort(ctx.Err().Error(), iteration, 0)
 			return
 		}
 
 		// Step 1: Build conversation history.
 		history, err := t.buildHistory(ctx)
 		if err != nil {
-			emitError(err, iteration)
+			emitError(err, iteration, 0)
 			return
 		}
+		transition(StateHistoryReady, "history built", iteration, 0)
 
 		// Step 2: Stream model response.
-		emitStatus("model call started", iteration)
 		thinkingLevel, err := ParseThinkingLevel(s.ThinkingLevel)
 		if err != nil {
 			thinkingLevel = DefaultThinkingLevel
@@ -176,26 +284,73 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 		retryTick := s.modelRetryTick(retryDelay)
 
 		for attempt := 0; attempt <= maxRetries; attempt++ {
+			attemptNumber := attempt + 1
 			thoughtChunkCount := 0
 			thoughtCharsSinceStatus := 0
 			lastThoughtSummary := ""
 			shouldRetry := false
-			retryAttempt := attempt + 1
 			delaySeconds := int(retryDelay.Round(time.Second).Seconds())
 			if delaySeconds <= 0 {
 				delaySeconds = 1
 			}
+			attemptStartedAt := time.Now().UTC()
+			firstTokenAt := time.Time{}
+			var attemptTokens *ModelTokenUsage
+			waitEventEmitted := false
+
+			transition(StateModelWaiting, "model attempt started", iteration, attemptNumber)
+			emitModelWaitStarted(iteration, attemptNumber, attemptStartedAt)
 
 			if attempt > 0 {
 				emitStatus(fmt.Sprintf("model call started (retry attempt %d/%d)", attempt, maxRetries), iteration)
 				log.Printf("[turn] conv=%s retrying model call attempt=%d/%d",
 					s.Conversation.ID, attempt, maxRetries)
+			} else {
+				emitStatus("model call started", iteration)
+			}
+
+			recordFirstToken := func() {
+				if firstTokenAt.IsZero() {
+					firstTokenAt = time.Now().UTC()
+					transition(StateModelStreaming, "model produced output", iteration, attemptNumber)
+				}
+			}
+
+			emitWaitFinished := func(outcome, errText string, retryDelayMillis int64) {
+				if waitEventEmitted {
+					return
+				}
+				waitEventEmitted = true
+				endedAt := time.Now().UTC()
+				waitMS := int64(0)
+				streamMS := int64(0)
+				if !firstTokenAt.IsZero() {
+					waitMS = firstTokenAt.Sub(attemptStartedAt).Milliseconds()
+					if waitMS < 0 {
+						waitMS = 0
+					}
+					streamMS = endedAt.Sub(firstTokenAt).Milliseconds()
+					if streamMS < 0 {
+						streamMS = 0
+					}
+				}
+				totalMS := endedAt.Sub(attemptStartedAt).Milliseconds()
+				if totalMS < 0 {
+					totalMS = 0
+				}
+				emitModelWaitFinished(iteration, attemptNumber, outcome, ModelTiming{
+					WaitForFirstTokenMS: waitMS,
+					StreamMS:            streamMS,
+					TotalMS:             totalMS,
+					RetryDelayMS:        retryDelayMillis,
+				}, attemptTokens, errText)
 			}
 
 		StreamLoop:
 			for event := range s.Client.StreamMessage(ctx, history, config) {
 				switch event.Kind {
 				case EventDelta:
+					recordFirstToken()
 					ch <- event
 					if event.Delta != nil && event.Delta.IsThought {
 						thoughtChunkCount++
@@ -218,17 +373,21 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 					}
 
 				case EventMessageDone:
+					recordFirstToken()
 					msg, ok := event.Message.(*models.Message)
 					if !ok {
-						emitError(fmt.Errorf("unexpected message type"), iteration)
+						emitWaitFinished("error", "unexpected message type", 0)
+						emitError(fmt.Errorf("unexpected message type"), iteration, attemptNumber)
 						return
 					}
 					agentMsg = msg
+					attemptTokens = extractTokenUsage(msg)
 
 				case EventError:
 					// Check if this was a cancellation that manifested as a stream error.
 					if ctx.Err() != nil {
-						emitAbort(ctx.Err().Error(), iteration)
+						emitWaitFinished("aborted", ctx.Err().Error(), 0)
+						emitAbort(ctx.Err().Error(), iteration, attemptNumber)
 						return
 					}
 					msg := strings.TrimSpace(event.ErrorText)
@@ -238,11 +397,13 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 
 					if isServiceUnavailableError(msg) {
 						if attempt < maxRetries {
-							retryMsg := fmt.Sprintf("Service unavailable (503). Retrying in %d seconds... (attempt %d/%d)", delaySeconds, retryAttempt, maxRetries)
+							emitWaitFinished("retry", msg, retryDelay.Milliseconds())
+							transition(StateRetryWaiting, "retryable model error", iteration, attemptNumber)
+							retryMsg := fmt.Sprintf("Service unavailable (503). Retrying in %d seconds... (attempt %d/%d)", delaySeconds, attemptNumber, maxRetries)
 							emitStatus(retryMsg, iteration)
-							emitRetry(retryMsg, retryAttempt, maxRetries, delaySeconds, delaySeconds, iteration)
+							emitRetry(retryMsg, attemptNumber, maxRetries, delaySeconds, delaySeconds, iteration)
 							log.Printf("[turn] conv=%s transient 503; scheduling retry attempt=%d/%d delay=%s",
-								s.Conversation.ID, retryAttempt, maxRetries, retryDelay)
+								s.Conversation.ID, attemptNumber, maxRetries, retryDelay)
 							shouldRetry = true
 							break StreamLoop
 						}
@@ -253,7 +414,8 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 					if msg == "" {
 						msg = "model stream failed"
 					}
-					emitError(fmt.Errorf("%s", msg), iteration)
+					emitWaitFinished("error", msg, 0)
+					emitError(fmt.Errorf("%s", msg), iteration, attemptNumber)
 					return
 				}
 			}
@@ -268,7 +430,7 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 
 					select {
 					case <-ctx.Done():
-						emitAbort(ctx.Err().Error(), iteration)
+						emitAbort(ctx.Err().Error(), iteration, attemptNumber)
 						return
 					case <-time.After(wait):
 					}
@@ -282,23 +444,28 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 					if secondsRemaining <= 0 {
 						secondsRemaining = 1
 					}
-					retryMsg := fmt.Sprintf("Service unavailable (503). Retrying in %d seconds... (attempt %d/%d)", secondsRemaining, retryAttempt, maxRetries)
-					emitRetry(retryMsg, retryAttempt, maxRetries, secondsRemaining, delaySeconds, iteration)
+					retryMsg := fmt.Sprintf("Service unavailable (503). Retrying in %d seconds... (attempt %d/%d)", secondsRemaining, attemptNumber, maxRetries)
+					emitRetry(retryMsg, attemptNumber, maxRetries, secondsRemaining, delaySeconds, iteration)
 				}
-				emitRetry(fmt.Sprintf("Retrying now... (attempt %d/%d)", retryAttempt, maxRetries),
-					retryAttempt, maxRetries, 0, delaySeconds, iteration)
+				emitRetry(fmt.Sprintf("Retrying now... (attempt %d/%d)", attemptNumber, maxRetries),
+					attemptNumber, maxRetries, 0, delaySeconds, iteration)
 				continue
 			}
+			if agentMsg == nil {
+				emitWaitFinished("error", "no response from model", 0)
+				break
+			}
+			emitWaitFinished("success", "", 0)
 			break
 		} // end retry loop
 
 		if agentMsg == nil {
 			// If context was cancelled during streaming, report as abort.
 			if ctx.Err() != nil {
-				emitAbort(ctx.Err().Error(), iteration)
+				emitAbort(ctx.Err().Error(), iteration, 0)
 				return
 			}
-			emitError(fmt.Errorf("no response from model"), iteration)
+			emitError(fmt.Errorf("no response from model"), iteration, 0)
 			return
 		}
 
@@ -310,9 +477,10 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 		agentMsg.State = models.MessageStateCompleted
 
 		if err := s.Store.Messages().Append(ctx, agentMsg); err != nil {
-			emitError(err, iteration)
+			emitError(err, iteration, 0)
 			return
 		}
+		transition(StateMessagePersisted, "agent message persisted", iteration, 0)
 		// Record the persisted message ID so subsequent UIEvents reference it.
 		agentMsgID = agentMsg.ID
 
@@ -323,9 +491,11 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 		if len(functionCalls) == 0 {
 			emitStatus("model produced final response", iteration)
 			emitStatus("turn complete", iteration)
+			transition(StateTurnCompleted, "turn complete", iteration, 0)
 			ch <- TurnEvent{Kind: EventTurnComplete}
 			return
 		}
+		transition(StateToolDispatching, "tool calls requested", iteration, 0)
 		emitStatus(fmt.Sprintf("executing %d tool call(s): %s", len(functionCalls), summarizeToolList(functionCalls)), iteration)
 
 		// Step 5: Execute tool calls.
@@ -358,6 +528,7 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 				},
 			)
 		}
+		transition(StateToolExecuting, "tool execution started", iteration, 0)
 
 		registry := NewToolRegistry(s.Tools)
 		toolRequests := make([]ToolCallRequest, len(functionCalls))
@@ -429,13 +600,14 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 		}
 
 		if err := s.Store.Messages().Append(ctx, toolMsg); err != nil {
-			emitError(err, iteration)
+			emitError(err, iteration, 0)
 			return
 		}
 
 		log.Printf("[turn] tool call cycle complete (%d/%d), %d results sent back to model",
 			iteration, maxIterations, len(results))
 		emitStatus(fmt.Sprintf("tool call cycle complete (%d success, %d failed)", successCount, len(results)-successCount), iteration)
+		transition(StateHistoryReady, "tool results persisted", iteration, 0)
 	}
 }
 
@@ -805,6 +977,67 @@ func shortThreadID(id string) string {
 		return id
 	}
 	return id[:8]
+}
+
+func resolveModelName(client ModelClient) string {
+	if client == nil {
+		return ""
+	}
+	type modelNamer interface {
+		Model() string
+	}
+	if namer, ok := client.(modelNamer); ok {
+		return namer.Model()
+	}
+	return ""
+}
+
+func extractTokenUsage(msg *models.Message) *ModelTokenUsage {
+	if msg == nil || msg.Metadata == nil {
+		return nil
+	}
+	input, inOK := numberToInt64(msg.Metadata["tokens_input"])
+	output, outOK := numberToInt64(msg.Metadata["tokens_output"])
+	cached, cacheOK := numberToInt64(msg.Metadata["tokens_cached"])
+	if !inOK && !outOK && !cacheOK {
+		return nil
+	}
+	return &ModelTokenUsage{
+		Input:  input,
+		Output: output,
+		Cached: cached,
+	}
+}
+
+func numberToInt64(v any) (int64, bool) {
+	switch t := v.(type) {
+	case int:
+		return int64(t), true
+	case int8:
+		return int64(t), true
+	case int16:
+		return int64(t), true
+	case int32:
+		return int64(t), true
+	case int64:
+		return t, true
+	case uint:
+		return int64(t), true
+	case uint8:
+		return int64(t), true
+	case uint16:
+		return int64(t), true
+	case uint32:
+		return int64(t), true
+	case uint64:
+		return int64(t), true
+	case float32:
+		return int64(t), true
+	case float64:
+		return int64(t), true
+	default:
+		return 0, false
+	}
 }
 
 // Session represents an active agent session tied to a workspace and

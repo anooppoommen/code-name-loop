@@ -40,6 +40,12 @@ func (s *sqliteUIEventStore) Append(ctx context.Context, evt *models.UIEvent) er
 	}
 	evt.Seq = nextSeq
 
+	timelineSeq, err := nextTimelineSeqTx(ctx, tx, string(evt.ConversationID))
+	if err != nil {
+		return fmt.Errorf("next timeline seq: %w", err)
+	}
+	evt.TimelineSeq = timelineSeq
+
 	metaJSON, err := marshalJSON(evt.Metadata)
 	if err != nil {
 		return fmt.Errorf("marshal metadata: %w", err)
@@ -47,12 +53,13 @@ func (s *sqliteUIEventStore) Append(ctx context.Context, evt *models.UIEvent) er
 
 	_, err = tx.ExecContext(ctx,
 		`INSERT INTO ui_events
-		 (id, conversation_id, message_id, seq, kind, text, metadata_json, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		 (id, conversation_id, message_id, seq, timeline_seq, kind, text, metadata_json, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		evt.ID,
 		string(evt.ConversationID),
 		string(evt.MessageID),
 		evt.Seq,
+		evt.TimelineSeq,
 		string(evt.Kind),
 		evt.Text,
 		metaJSON,
@@ -67,10 +74,10 @@ func (s *sqliteUIEventStore) Append(ctx context.Context, evt *models.UIEvent) er
 
 func (s *sqliteUIEventStore) GetByConversation(ctx context.Context, convID models.ConversationID) ([]*models.UIEvent, error) {
 	rows, err := s.readDB.QueryContext(ctx,
-		`SELECT id, conversation_id, message_id, seq, kind, text, metadata_json, created_at
+		`SELECT id, conversation_id, message_id, seq, timeline_seq, kind, text, metadata_json, created_at
 		 FROM ui_events
 		 WHERE conversation_id = ?
-		 ORDER BY seq ASC`,
+		 ORDER BY timeline_seq ASC, seq ASC`,
 		string(convID),
 	)
 	if err != nil {
@@ -82,10 +89,10 @@ func (s *sqliteUIEventStore) GetByConversation(ctx context.Context, convID model
 
 func (s *sqliteUIEventStore) GetByMessage(ctx context.Context, msgID models.MessageID) ([]*models.UIEvent, error) {
 	rows, err := s.readDB.QueryContext(ctx,
-		`SELECT id, conversation_id, message_id, seq, kind, text, metadata_json, created_at
+		`SELECT id, conversation_id, message_id, seq, timeline_seq, kind, text, metadata_json, created_at
 		 FROM ui_events
 		 WHERE message_id = ?
-		 ORDER BY seq ASC`,
+		 ORDER BY timeline_seq ASC, seq ASC`,
 		string(msgID),
 	)
 	if err != nil {
@@ -104,7 +111,7 @@ func scanUIEvents(rows *sql.Rows) ([]*models.UIEvent, error) {
 		var metaJSON string
 		if err := rows.Scan(
 			&evt.ID, &evt.ConversationID, &evt.MessageID,
-			&evt.Seq, &evt.Kind, &evt.Text,
+			&evt.Seq, &evt.TimelineSeq, &evt.Kind, &evt.Text,
 			&metaJSON, &evt.CreatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan ui_event: %w", err)

@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { memo, useEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { PatchViewer } from '../PatchViewer';
@@ -37,11 +38,35 @@ export interface ActivityItemProps extends ToolReplyActions {
   onCopyToolCommand: (command: string, id: string) => void;
 }
 
+interface ActivityFrameProps {
+  children: ReactNode;
+  className?: string;
+  left?: ReactNode;
+  right?: ReactNode;
+  contentClassName?: string;
+}
+
+function ActivityFrame({
+  children,
+  className = '',
+  left = null,
+  right = null,
+  contentClassName = '',
+}: ActivityFrameProps) {
+  return (
+    <article className={className}>
+      <div className="grid grid-cols-[48px_minmax(0,1fr)_48px] items-start gap-0">
+        <div className="flex min-h-0 items-start justify-end pr-3">{left}</div>
+        <div className={contentClassName}>{children}</div>
+        <div className="flex min-h-0 items-start justify-start pl-2">{right}</div>
+      </div>
+    </article>
+  );
+}
+
 export const ActivityItem = memo(function ActivityItem({
   event,
   visibleChars,
-  isCopied,
-  onCopyToolCommand,
   canCompose,
   isSending,
   onUseToolReply,
@@ -62,12 +87,16 @@ export const ActivityItem = memo(function ActivityItem({
 
   if (event.kind === 'status') {
     return (
-      <div className="flex items-center border-l-2 border-transparent px-6 py-1 text-[11px] font-normal text-neutral-500 opacity-75 transition-colors">
-        <div className="flex min-w-0 flex-1 items-center gap-2">
+      <ActivityFrame
+        className="px-2 py-0.5 text-[11px] font-normal text-neutral-500 opacity-75"
+        left={<span className="mt-1 h-1.5 w-1.5 rounded-full bg-neutral-600" />}
+        contentClassName="min-w-0"
+      >
+        <div className="flex min-w-0 items-center gap-2">
           <span className="truncate">{event.title}</span>
           {event.body ? <span className="truncate text-neutral-600">{event.body}</span> : null}
         </div>
-      </div>
+      </ActivityFrame>
     );
   }
 
@@ -79,7 +108,6 @@ export const ActivityItem = memo(function ActivityItem({
   const isSystemEvent = !isUser && !isAsst;
   const bodyText = textTargetForEvent(event);
   const renderedText = bodyText.slice(0, visibleChars ?? bodyText.length);
-  const copyCommand = toolCommandForCopy(event);
   const requestInputPayload = parseRequestUserInputPayload(event);
   const updatePlanPayload = parseUpdatePlanPayload(event);
   const parallelToolPayload = parseParallelToolPayload(event);
@@ -87,24 +115,36 @@ export const ActivityItem = memo(function ActivityItem({
   const fileToolPayload = parseFileToolPayload(event);
   const isPatchToolEvent =
     event.tool?.name === 'apply_patch' || event.tool?.name?.endsWith(':apply_patch');
+  const systemErrorDetails = parseSystemErrorDetails(event);
+  const leftGutterIcon =
+    event.kind === 'tool' || event.kind === 'thought'
+      ? null
+      : <div className={visual.icon}>{icon}</div>;
 
   if (event.kind === 'thought') {
     return (
-      <ThoughtMessage renderedText={renderedText} isStreaming={!!event.streaming} />
+      <ActivityFrame
+        className={`group px-2 py-1.5 ${visual.row}`}
+        left={leftGutterIcon}
+        contentClassName="min-w-0"
+      >
+        <ThoughtMessage renderedText={renderedText} isStreaming={!!event.streaming} />
+      </ActivityFrame>
     );
   }
 
   if (parallelToolPayload) {
     return (
-      <article className="py-2">
+      <ActivityFrame
+        className={`group px-2 py-1.5 ${visual.row}`}
+        left={leftGutterIcon}
+        contentClassName="min-w-0"
+      >
         <div className="flex min-w-0 flex-1 flex-col">
-          <div className="px-6 mb-2 flex items-center gap-2">
-            <Workflow size={14} className="text-neutral-500" />
-            <div className="text-[12px] font-semibold tracking-wider text-neutral-500">
-              Executing {parallelToolPayload.results.length} tool{parallelToolPayload.results.length === 1 ? '' : 's'}
-            </div>
+          <div className="mb-2 text-[12px] font-medium text-neutral-500">
+            Executing {parallelToolPayload.results.length} tool{parallelToolPayload.results.length === 1 ? '' : 's'}
           </div>
-          <div className="flex flex-col relative before:absolute before:inset-y-0 before:left-8 before:w-[2px] before:bg-neutral-800/50">
+          <div className="relative flex flex-col gap-1.5 before:absolute before:inset-y-2 before:left-2 before:w-px before:bg-neutral-800/80">
             {parallelToolPayload.results.map((result, idx) => {
               const nestedEvent = buildParallelNestedEvent(event, idx, result);
               const nestedRequestInputPayload = parseRequestUserInputPayload(nestedEvent);
@@ -116,14 +156,13 @@ export const ActivityItem = memo(function ActivityItem({
               const nestedFallbackText = textTargetForEvent(nestedEvent);
 
               return (
-                <div key={nestedEvent.id} className="ml-6 py-2 pl-5">
-                  <div className="mb-1 flex items-center gap-2 text-[11px] uppercase tracking-wider text-neutral-500">
-                    <Cog size={12} className="text-neutral-500" />
+                <div key={nestedEvent.id} className="py-1 pl-6">
+                  <div className="mb-1 flex items-center gap-2 text-[11px] text-neutral-500">
                     <span>{nestedEvent.tool?.name || 'tool'}</span>
                     <span
-                      className={`rounded px-1.5 py-0.5 text-[9px] font-bold ${nestedEvent.tool?.success === false
-                          ? 'bg-red-500/10 text-red-500'
-                          : 'bg-blue-500/10 text-blue-500'
+                      className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${nestedEvent.tool?.success === false
+                        ? 'bg-red-500/10 text-red-300'
+                        : 'bg-blue-500/10 text-blue-300'
                         }`}
                     >
                       {nestedEvent.tool?.success === false ? 'failed' : 'completed'}
@@ -149,10 +188,10 @@ export const ActivityItem = memo(function ActivityItem({
                       {nestedEvent.body &&
                         (nestedEvent.tool?.phase === 'result' || nestedEvent.tool?.error) &&
                         nestedEvent.body !== nestedEvent.tool?.command ? (
-                        <pre className="max-h-96 overflow-y-auto whitespace-pre-wrap rounded-md bg-neutral-900/35 px-3 py-2 text-xs leading-relaxed text-neutral-300 scrollbar-thin">
-                          {nestedEvent.body}
-                        </pre>
-                      ) : null}
+                          <pre className="max-h-96 overflow-y-auto whitespace-pre-wrap rounded-md bg-neutral-900/35 px-3 py-2 text-xs leading-relaxed text-neutral-300 scrollbar-thin">
+                            {nestedEvent.body}
+                          </pre>
+                        ) : null}
                       <PatchViewer patchText={nestedEvent.tool?.command || nestedEvent.body || ''} />
                     </div>
                   ) : nestedFallbackText ? (
@@ -165,60 +204,29 @@ export const ActivityItem = memo(function ActivityItem({
             })}
           </div>
         </div>
-      </article>
-    );
-  }
-
-  if (commandToolPayload) {
-    return (
-      <article className="py-2">
-        <div className="flex min-w-0 flex-1 flex-col">
-          <CommandToolCard payload={commandToolPayload} />
-        </div>
-      </article>
-    );
-  }
-
-  if (fileToolPayload) {
-    return (
-      <article className="py-2">
-        <div className="flex min-w-0 flex-1 flex-col">
-          <FileToolCard payload={fileToolPayload} />
-        </div>
-      </article>
-    );
-  }
-
-  if (isPatchToolEvent && (event.tool?.command || event.body)) {
-    return (
-      <article className="py-2">
-        <div className="flex min-w-0 flex-1 flex-col">
-          {event.body && (event.tool?.phase === 'result' || event.tool?.error) && event.body !== event.tool?.command ? (
-            <pre className="mb-2 max-h-96 overflow-y-auto whitespace-pre-wrap rounded-md bg-neutral-900/35 px-3 py-2 text-xs leading-relaxed text-neutral-300 scrollbar-thin">
-              {event.body}
-            </pre>
-          ) : null}
-          <PatchViewer patchText={event.tool?.command || event.body || ''} />
-        </div>
-      </article>
+      </ActivityFrame>
     );
   }
 
   return (
     <>
     {isUser ? (
-      <article className="flex justify-end px-6 py-4">
-        <div className="flex flex-col max-w-[85%] bg-neutral-800/80 rounded-2xl rounded-tr-sm px-5 py-3 border border-neutral-700/50 shadow-sm">
+      <ActivityFrame
+        className="px-2 py-3"
+        right={null}
+        contentClassName="min-w-0"
+      >
+        <div className="ml-auto flex max-w-[85%] flex-col rounded-2xl rounded-tr-sm border border-neutral-700/50 bg-neutral-800/80 px-5 py-3 shadow-sm">
           {event.images && event.images.length > 0 ? (
-            <div className="flex flex-wrap gap-2 mb-2">
+            <div className="mb-2 flex flex-wrap gap-2">
               {event.images.map((img, idx) => (
                 <button
                   key={idx}
                   type="button"
-                  className="rounded-md border border-neutral-700 overflow-hidden w-16 h-16 bg-neutral-900 cursor-pointer hover:opacity-80 transition-opacity"
+                  className="h-16 w-16 cursor-pointer overflow-hidden rounded-md border border-neutral-700 bg-neutral-900 transition-opacity hover:opacity-80"
                   onClick={() => setSelectedImage(img.dataUrl)}
                 >
-                  <img src={img.dataUrl} alt="attached" className="w-full h-full object-cover" />
+                  <img src={img.dataUrl} alt="attached" className="h-full w-full object-cover" />
                 </button>
               ))}
             </div>
@@ -226,35 +234,31 @@ export const ActivityItem = memo(function ActivityItem({
           <div className="text-[14px] leading-relaxed text-neutral-200">
             <MarkdownBlock text={renderedText} />
           </div>
-          <div className="flex justify-end mt-1">
-            <time className="text-[10px] text-neutral-500 font-medium">
+          <div className="mt-1 flex justify-end">
+            <time className="text-[10px] font-medium text-neutral-500">
               {new Date(event.timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
             </time>
           </div>
         </div>
-      </article>
+      </ActivityFrame>
     ) : (
-      <article
-        className={`group flex gap-4 transition-colors ${visual.row}`}
+      <ActivityFrame
+        className={`group px-2 py-2 ${visual.row}`}
+        left={leftGutterIcon}
+        right={null}
+        contentClassName="min-w-0"
       >
-        <div className={`${visual.icon}`}>
-          {icon}
-        </div>
-
-        <div className="flex min-w-0 flex-col gap-1 w-full">
-          <div className="flex flex-wrap items-baseline gap-2 mb-1">
-            <span className="font-semibold text-neutral-200">
-              {isAsst ? 'Gemini' : 'System'}
-            </span>
-            <time className="text-[11px] font-medium text-neutral-500">
-              {new Date(event.timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
-            </time>
-
-            {isSystemEvent ? (
-              <div className="ml-2 flex items-center gap-2">
-                <span className="text-[10px] font-semibold uppercase tracking-wider text-neutral-500">
-                  {labelFor(event.kind)}
-                </span>
+        <div className="flex min-w-0 w-full flex-col gap-0.5">
+          {isSystemEvent ? (
+            <div className="mb-0.5 flex items-baseline justify-between gap-3">
+              <p className={`m-0 min-w-0 text-[15px] leading-relaxed ${visual.copy}`}>
+                {renderedText}
+              </p>
+              <div className="flex shrink-0 items-center gap-2 text-[11px] text-neutral-500">
+                <time className="font-medium text-neutral-500">
+                  {new Date(event.timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+                </time>
+                <span>{labelFor(event.kind)}</span>
                 {event.tool?.callId ? (
                   <span className="font-mono text-[10px] text-neutral-500">
                     {shortID(event.tool.callId)}
@@ -262,26 +266,26 @@ export const ActivityItem = memo(function ActivityItem({
                 ) : null}
                 {event.tool ? (
                   <span
-                    className={`rounded px-1.5 py-0.5 text-[9px] font-bold uppercase ${event.tool.success === false
-                        ? 'bg-red-500/10 text-red-500'
-                        : 'bg-blue-500/10 text-blue-500'
+                    className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${event.tool.success === false
+                        ? 'bg-red-500/10 text-red-300'
+                        : 'bg-blue-500/10 text-blue-300'
                       }`}
                   >
                     {toolPhase}
                   </span>
                 ) : null}
-                {copyCommand ? (
-                  <button
-                    type="button"
-                    className="rounded border border-neutral-700 px-1.5 py-0.5 text-[10px] text-neutral-400 hover:border-neutral-500 hover:text-neutral-200"
-                    onClick={() => onCopyToolCommand(copyCommand, event.id)}
-                  >
-                    {isCopied ? 'Copied' : 'Copy cmd'}
-                  </button>
-                ) : null}
               </div>
-            ) : null}
-          </div>
+            </div>
+          ) : (
+            <div className="mb-0.5 flex flex-wrap items-baseline gap-2">
+              <span className="font-semibold text-neutral-200">
+                Gemini
+              </span>
+              <time className="text-[11px] font-medium text-neutral-500">
+                {new Date(event.timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+              </time>
+            </div>
+          )}
 
           <div className={`text-[15px] leading-relaxed ${visual.copy}`}>
             {event.images && event.images.length > 0 ? (
@@ -299,7 +303,7 @@ export const ActivityItem = memo(function ActivityItem({
               </div>
             ) : null}
 
-            <MarkdownBlock text={renderedText} />
+            {!isSystemEvent ? <MarkdownBlock text={renderedText} /> : null}
 
             {requestInputPayload ? (
               <RequestUserInputCard
@@ -315,15 +319,51 @@ export const ActivityItem = memo(function ActivityItem({
               <UpdatePlanCard payload={updatePlanPayload} />
             ) : fileToolPayload ? (
               <FileToolCard payload={fileToolPayload} />
+            ) : isPatchToolEvent && (event.tool?.command || event.body) ? (
+              <div className="space-y-2">
+                {event.body && (event.tool?.phase === 'result' || event.tool?.error) && event.body !== event.tool?.command ? (
+                  <pre className="max-h-96 overflow-y-auto whitespace-pre-wrap rounded-lg border border-neutral-800/90 bg-neutral-900/35 px-3 py-2 text-xs leading-relaxed text-neutral-300 scrollbar-thin">
+                    {event.body}
+                  </pre>
+                ) : null}
+                <PatchViewer patchText={event.tool?.command || event.body || ''} />
+              </div>
+            ) : systemErrorDetails ? (
+              systemErrorDetails.mode === 'card' ? (
+                <div className="mt-2 rounded-lg border border-neutral-800/90 bg-neutral-900/60 px-3.5 py-3">
+                  <p className="m-0 text-[13px] leading-relaxed text-neutral-200">
+                    {systemErrorDetails.summary}
+                  </p>
+                  {systemErrorDetails.rows.length > 0 ? (
+                    <div className="mt-3 overflow-hidden rounded-md border border-neutral-800/80 bg-neutral-900/50">
+                      <dl className="grid text-[11px]">
+                        {systemErrorDetails.rows.map((row) => (
+                          <div
+                            key={`${row.label}:${row.value}`}
+                            className="flex items-baseline justify-between gap-3 border-t border-neutral-800/90 px-3 py-2 first:border-t-0"
+                          >
+                            <dt className="text-neutral-500">{row.label}</dt>
+                            <dd className="font-medium text-neutral-300">{row.value}</dd>
+                          </div>
+                        ))}
+                      </dl>
+                    </div>
+                  ) : null}
+                </div>
+              ) : (
+                <p className="mt-2 whitespace-pre-wrap text-[13px] leading-relaxed text-neutral-300">
+                  {systemErrorDetails.text}
+                </p>
+              )
             ) : isSystemEvent && event.body ? (
-              <pre className={`mt-2 max-h-96 overflow-y-auto whitespace-pre-wrap rounded-md px-3 py-2 text-xs leading-relaxed scrollbar-thin ${visual.detail}`}>
+              <pre className={`mt-2 max-h-96 overflow-y-auto whitespace-pre-wrap rounded-lg border border-neutral-800/90 px-3 py-2 text-xs leading-relaxed scrollbar-thin ${visual.detail}`}>
                 {event.body}
               </pre>
             ) : null}
             {event.streaming ? <span className="animate-pulse text-neutral-500">▍</span> : null}
           </div>
         </div>
-      </article>
+      </ActivityFrame>
     )}
 
     {selectedImage && (
@@ -406,46 +446,32 @@ const ThoughtMessage = memo(function ThoughtMessage({
   }, [isStreaming]);
 
   return (
-    <article className="py-2">
-      <div className="px-6">
-        <div className="max-w-[620px] text-neutral-400">
-          <motion.div
-            initial={false}
-            animate={{ height: isExpanded ? 'auto' : (isOverflowing ? 64 : 'auto') }}
-            transition={{ duration: 0.3, ease: 'easeInOut' }}
-            className="relative overflow-hidden"
-          >
-            <div ref={contentRef}>
-              <MarkdownBlock text={renderedText} compact />
-              {isStreaming ? <span className="animate-pulse text-neutral-500">▍</span> : null}
-            </div>
-            {!isExpanded && isOverflowing && (
-              <div className="absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-neutral-900 to-transparent pointer-events-none" />
-            )}
-          </motion.div>
-          {isOverflowing && (
-            <button
-              onClick={() => setIsExpanded(!isExpanded)}
-              className="mt-1 text-[11px] font-medium text-neutral-500 hover:text-neutral-300 transition-colors"
-            >
-              {isExpanded ? 'Show less' : 'Show more'}
-            </button>
-          )}
+    <div className="max-w-[620px] text-neutral-400">
+      <motion.div
+        initial={false}
+        animate={{ height: isExpanded ? 'auto' : (isOverflowing ? 64 : 'auto') }}
+        transition={{ duration: 0.3, ease: 'easeInOut' }}
+        className="relative overflow-hidden"
+      >
+        <div ref={contentRef}>
+          <MarkdownBlock text={renderedText} compact />
+          {isStreaming ? <span className="animate-pulse text-neutral-500">▍</span> : null}
         </div>
-      </div>
-    </article>
+        {!isExpanded && isOverflowing && (
+          <div className="absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-neutral-900 to-transparent pointer-events-none" />
+        )}
+      </motion.div>
+      {isOverflowing && (
+        <button
+          onClick={() => setIsExpanded(!isExpanded)}
+          className="mt-1 text-[11px] font-medium text-neutral-500 transition-colors hover:text-neutral-300"
+        >
+          {isExpanded ? 'Show less' : 'Show more'}
+        </button>
+      )}
+    </div>
   );
 });
-
-function toolCommandForCopy(event: ActivityEvent): string {
-  if (event.kind !== 'tool' || !event.tool?.command) {
-    return '';
-  }
-  if (event.tool.name !== 'shell' && event.tool.name !== 'exec_command') {
-    return '';
-  }
-  return event.tool.command;
-}
 
 function toolPhaseLabel(event: ActivityEvent): string {
   if (!event.tool) {
@@ -466,17 +492,17 @@ function toolPhaseLabel(event: ActivityEvent): string {
 function visualStyleFor(event: ActivityEvent): { row: string; icon: string; copy: string; detail: string } {
   if (event.kind === 'error' || event.tool?.success === false) {
     return {
-      row: 'border-l-2 border-l-red-500/70 px-6 py-3 hover:bg-red-950/10',
-      icon: 'mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-red-900/25 text-red-300',
-      copy: 'text-red-100',
-      detail: 'bg-red-950/20 text-red-100',
+      row: '',
+      icon: 'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-neutral-800/90 text-red-300',
+      copy: 'text-neutral-100',
+      detail: 'bg-neutral-900/65 text-neutral-200',
     };
   }
 
   if (event.kind === 'tool') {
     return {
-      row: 'border-l-2 border-l-blue-500/50 px-6 py-3 hover:bg-blue-950/10',
-      icon: 'mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-blue-900/25 text-blue-200',
+      row: '',
+      icon: 'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-900/25 text-blue-200',
       copy: 'text-neutral-200',
       detail: 'bg-neutral-900/40 text-blue-100',
     };
@@ -484,8 +510,8 @@ function visualStyleFor(event: ActivityEvent): { row: string; icon: string; copy
 
   if (event.kind === 'thought') {
     return {
-      row: 'border-l-2 border-l-neutral-500/80 px-6 py-3 hover:bg-neutral-800/35',
-      icon: 'mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-neutral-700/70 text-neutral-200',
+      row: '',
+      icon: 'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-neutral-700/70 text-neutral-200',
       copy: 'text-neutral-200',
       detail: 'bg-neutral-900/50 text-neutral-300',
     };
@@ -493,19 +519,134 @@ function visualStyleFor(event: ActivityEvent): { row: string; icon: string; copy
 
   if (event.kind === 'assistant') {
     return {
-      row: 'px-6 py-5 hover:bg-neutral-800/20',
-      icon: 'mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center',
+      row: '',
+      icon: 'flex h-8 w-8 shrink-0 items-center justify-center',
       copy: 'text-neutral-200',
       detail: 'bg-neutral-900/50 text-neutral-300',
     };
   }
 
   return {
-    row: 'border-l-2 border-l-neutral-700/80 px-6 py-3 hover:bg-neutral-800/35',
-    icon: 'mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-neutral-800/80 text-neutral-400',
+    row: '',
+    icon: 'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-neutral-800/80 text-neutral-400',
     copy: 'text-neutral-300',
     detail: 'bg-neutral-900/50 text-neutral-400',
   };
+}
+
+interface SystemErrorDetailRow {
+  label: string;
+  value: string;
+}
+
+type SystemErrorDetails =
+  | {
+      mode: 'text';
+      text: string;
+    }
+  | {
+      mode: 'card';
+      summary: string;
+      rows: SystemErrorDetailRow[];
+    };
+
+function parseSystemErrorDetails(event: ActivityEvent): SystemErrorDetails | null {
+  const isErrorLike =
+    event.kind === 'error' || event.tool?.success === false || /error|failed/i.test(event.title);
+  const body = event.body?.trim();
+  if (!isErrorLike || !body) {
+    return null;
+  }
+
+  const normalized = body.replace(/\r\n/g, '\n');
+  const rows: SystemErrorDetailRow[] = [];
+  const seenRows = new Set<string>();
+  const pushRow = (label: string, value: string): void => {
+    const cleaned = value.trim();
+    if (!cleaned) {
+      return;
+    }
+    const key = `${label}:${cleaned.toLowerCase()}`;
+    if (seenRows.has(key)) {
+      return;
+    }
+    seenRows.add(key);
+    rows.push({ label, value: cleaned });
+  };
+
+  const codeMatch = normalized.match(/\bError\s+(\d{3})\b/i);
+  if (codeMatch) {
+    pushRow('Code', codeMatch[1]);
+  }
+
+  const statusMatch = normalized.match(/\bStatus:\s*([A-Z_]+)/i);
+  if (statusMatch) {
+    pushRow('Status', humanizeStatus(statusMatch[1]));
+  }
+
+  const phaseMatch = normalized.match(/\bPhase:\s*([A-Za-z0-9_-]+)/i);
+  if (phaseMatch) {
+    pushRow('Phase', phaseMatch[1]);
+  }
+
+  const detailMatch = normalized.match(/\bDetails:\s*([^\n]+)/i);
+  if (detailMatch && detailMatch[1].trim() !== '[]') {
+    pushRow('Details', detailMatch[1]);
+  }
+
+  for (const metricMatch of normalized.matchAll(/\b(TTFT|Stream|Total)\s+(\d+)ms\b/gi)) {
+    const rawLabel = metricMatch[1];
+    const label =
+      rawLabel.toUpperCase() === 'TTFT'
+        ? 'First token'
+        : `${rawLabel.charAt(0).toUpperCase()}${rawLabel.slice(1).toLowerCase()}`;
+    pushRow(label, `${metricMatch[2]}ms`);
+  }
+
+  const lines = normalized.split('\n').map((line) => line.trim()).filter(Boolean);
+  const messageMatch = normalized.match(/\bMessage:\s*(.+?)(?=,\s*(Status:|Details:|$)|$)/i);
+  const fallbackLine = lines.find(
+    (line) =>
+      !/^(TTFT|Stream|Total)\s+\d+ms/i.test(line) &&
+      !/^[A-Za-z ]+:\s*/.test(line) &&
+      !/^Error\s+\d{3}\b/i.test(line),
+  );
+  const rawSummary = messageMatch?.[1] || fallbackLine || lines[0] || '';
+  const summary = cleanErrorSummary(rawSummary);
+  if (!summary) {
+    return null;
+  }
+
+  if (rows.length === 0) {
+    return { mode: 'text', text: summary };
+  }
+
+  return {
+    mode: 'card',
+    summary,
+    rows,
+  };
+}
+
+function cleanErrorSummary(rawSummary: string): string {
+  return rawSummary
+    .replace(/^rpc error:\s*code\s*=\s*[a-z_]+\s*desc\s*=\s*/i, '')
+    .replace(/^Error\s+\d+\s*,?\s*Message:\s*/i, '')
+    .replace(/^Message:\s*/i, '')
+    .replace(/,\s*Status:\s*[A-Z_]+.*$/i, '')
+    .replace(/,\s*Details:\s*\[[^\]]*\].*$/i, '')
+    .replace(/\s+/g, ' ')
+    .replace(/\.,/g, '.')
+    .replace(/,\s*$/, '')
+    .trim();
+}
+
+function humanizeStatus(value: string): string {
+  return value
+    .toLowerCase()
+    .split('_')
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join(' ');
 }
 
 const MarkdownBlock = memo(function MarkdownBlock({ text, compact = false }: { text: string; compact?: boolean }) {
@@ -541,7 +682,7 @@ const MarkdownBlock = memo(function MarkdownBlock({ text, compact = false }: { t
             <h3 className="mb-2 mt-4 text-lg font-semibold text-neutral-100">{children}</h3>
           ),
           h4: ({ children }) => (
-            <h4 className="mb-2 mt-3 text-base font-semibold uppercase tracking-wide text-neutral-200">{children}</h4>
+            <h4 className="mb-2 mt-3 text-base font-semibold text-neutral-200">{children}</h4>
           ),
           p: ({ children }) => <p className={paragraphClass}>{children}</p>,
           ul: ({ children }) => <ul className={listClass}>{children}</ul>,
@@ -604,21 +745,21 @@ const MarkdownBlock = memo(function MarkdownBlock({ text, compact = false }: { t
 function labelFor(kind: ActivityKind): string {
   switch (kind) {
     case 'user':
-      return 'USER';
+      return 'User';
     case 'assistant':
-      return 'ASSISTANT';
+      return 'Assistant';
     case 'thought':
-      return 'THOUGHT';
+      return 'Thought';
     case 'status':
-      return 'STATUS';
+      return 'Status';
     case 'tool':
-      return 'TOOL';
+      return 'Tool';
     case 'thread':
-      return 'THREAD';
+      return 'Thread';
     case 'error':
-      return 'ERROR';
+      return 'Error';
     default:
-      return 'LIFECYCLE';
+      return 'Lifecycle';
   }
 }
 

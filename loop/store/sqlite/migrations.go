@@ -14,15 +14,23 @@ func migrate(db *sql.DB) error {
 		migrationConversations,
 		migrationMessages,
 		migrationUIEvents,
+		migrationTimelineCursors,
 	}
 	for i, m := range migrations {
 		if _, err := db.Exec(m); err != nil {
 			return fmt.Errorf("migration %d: %w", i, err)
 		}
 	}
+
 	// Thread-fields migration runs each ALTER TABLE separately so it is
 	// compatible with SQLite < 3.35 (which lacks ADD COLUMN IF NOT EXISTS).
-	return migrateThreadFields(db)
+	if err := migrateThreadFields(db); err != nil {
+		return err
+	}
+
+	// Timeline ordering migration adds shared ordering fields and backfills
+	// deterministic values for existing rows.
+	return migrateTimelineOrdering(db)
 }
 
 const migrationWorkspaces = `
@@ -79,6 +87,7 @@ CREATE TABLE IF NOT EXISTS messages (
     id                  TEXT PRIMARY KEY,
     conversation_id     TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
     seq                 INTEGER NOT NULL,
+    timeline_seq        INTEGER NOT NULL DEFAULT 0,
     reply_to_message_id TEXT NOT NULL DEFAULT '',
     state               TEXT NOT NULL DEFAULT 'pending',
     sent_by             TEXT NOT NULL,
@@ -93,6 +102,36 @@ CREATE TABLE IF NOT EXISTS messages (
 -- Primary range query index: conversation + seq range.
 CREATE INDEX IF NOT EXISTS idx_messages_conversation_seq
     ON messages(conversation_id, seq);
+`
+
+const migrationUIEvents = `
+CREATE TABLE IF NOT EXISTS ui_events (
+    id              TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    message_id      TEXT NOT NULL DEFAULT '',
+    seq             INTEGER NOT NULL,
+    timeline_seq    INTEGER NOT NULL DEFAULT 0,
+    kind            TEXT NOT NULL,
+    text            TEXT NOT NULL DEFAULT '',
+    metadata_json   TEXT NOT NULL DEFAULT '{}',
+    created_at      DATETIME NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(conversation_id, seq)
+);
+
+-- Primary lookup index: all events for a conversation in order.
+CREATE INDEX IF NOT EXISTS idx_ui_events_conversation_seq
+    ON ui_events(conversation_id, seq);
+
+-- Secondary index: all events for a specific agent message.
+CREATE INDEX IF NOT EXISTS idx_ui_events_message
+    ON ui_events(message_id);
+`
+
+const migrationTimelineCursors = `
+CREATE TABLE IF NOT EXISTS conversation_timeline_cursors (
+    conversation_id   TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+    next_timeline_seq INTEGER NOT NULL
+);
 `
 
 // migrateThreadFields adds sub-agent lifecycle columns to the conversations table.
@@ -116,27 +155,132 @@ func migrateThreadFields(db *sql.DB) error {
 	return nil
 }
 
-const migrationUIEvents = `
-CREATE TABLE IF NOT EXISTS ui_events (
-    id              TEXT PRIMARY KEY,
-    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-    message_id      TEXT NOT NULL DEFAULT '',
-    seq             INTEGER NOT NULL,
-    kind            TEXT NOT NULL,
-    text            TEXT NOT NULL DEFAULT '',
-    metadata_json   TEXT NOT NULL DEFAULT '{}',
-    created_at      DATETIME NOT NULL DEFAULT (datetime('now')),
-    UNIQUE(conversation_id, seq)
-);
+func migrateTimelineOrdering(db *sql.DB) error {
+	alters := []string{
+		`ALTER TABLE messages ADD COLUMN timeline_seq INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE ui_events ADD COLUMN timeline_seq INTEGER NOT NULL DEFAULT 0`,
+	}
+	for _, stmt := range alters {
+		if _, err := db.Exec(stmt); err != nil && !isDuplicateColumn(err) {
+			return fmt.Errorf("timeline fields migration: %w", err)
+		}
+	}
 
--- Primary lookup index: all events for a conversation in order.
-CREATE INDEX IF NOT EXISTS idx_ui_events_conversation_seq
-    ON ui_events(conversation_id, seq);
+	indexes := []string{
+		`CREATE INDEX IF NOT EXISTS idx_messages_conversation_timeline_seq
+		 ON messages(conversation_id, timeline_seq)`,
+		`CREATE INDEX IF NOT EXISTS idx_ui_events_conversation_timeline_seq
+		 ON ui_events(conversation_id, timeline_seq)`,
+	}
+	for _, stmt := range indexes {
+		if _, err := db.Exec(stmt); err != nil {
+			return fmt.Errorf("timeline index migration: %w", err)
+		}
+	}
 
--- Secondary index: all events for a specific agent message.
-CREATE INDEX IF NOT EXISTS idx_ui_events_message
-    ON ui_events(message_id);
-`
+	convRows, err := db.Query(`
+		SELECT conversation_id FROM messages
+		UNION
+		SELECT conversation_id FROM ui_events
+	`)
+	if err != nil {
+		return fmt.Errorf("timeline backfill list conversations: %w", err)
+	}
+	defer convRows.Close()
+
+	var conversationIDs []string
+	for convRows.Next() {
+		var convID string
+		if err := convRows.Scan(&convID); err != nil {
+			return fmt.Errorf("timeline backfill scan conversation: %w", err)
+		}
+		conversationIDs = append(conversationIDs, convID)
+	}
+	if err := convRows.Err(); err != nil {
+		return fmt.Errorf("timeline backfill iterate conversations: %w", err)
+	}
+
+	for _, convID := range conversationIDs {
+		if err := backfillTimelineSeqForConversation(db, convID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type timelineRowRef struct {
+	RowType  string
+	ID       string
+	LocalSeq int64
+}
+
+func backfillTimelineSeqForConversation(db *sql.DB, convID string) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("timeline backfill begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	rows, err := tx.Query(`
+		SELECT row_type, row_id, local_seq
+		FROM (
+			SELECT 'message' AS row_type, id AS row_id, created_at, seq AS local_seq
+			FROM messages
+			WHERE conversation_id = ?
+			UNION ALL
+			SELECT 'ui_event' AS row_type, id AS row_id, created_at, seq AS local_seq
+			FROM ui_events
+			WHERE conversation_id = ?
+		)
+		ORDER BY created_at ASC,
+		         CASE row_type WHEN 'message' THEN 0 ELSE 1 END ASC,
+		         local_seq ASC,
+		         row_id ASC
+	`, convID, convID)
+	if err != nil {
+		return fmt.Errorf("timeline backfill query rows for %s: %w", convID, err)
+	}
+	defer rows.Close()
+
+	refs := make([]timelineRowRef, 0)
+	for rows.Next() {
+		var ref timelineRowRef
+		if err := rows.Scan(&ref.RowType, &ref.ID, &ref.LocalSeq); err != nil {
+			return fmt.Errorf("timeline backfill scan rows for %s: %w", convID, err)
+		}
+		refs = append(refs, ref)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("timeline backfill iterate rows for %s: %w", convID, err)
+	}
+
+	var seq int64 = 1
+	for _, ref := range refs {
+		var stmt string
+		switch ref.RowType {
+		case "message":
+			stmt = `UPDATE messages SET timeline_seq = ? WHERE conversation_id = ? AND id = ?`
+		case "ui_event":
+			stmt = `UPDATE ui_events SET timeline_seq = ? WHERE conversation_id = ? AND id = ?`
+		default:
+			continue
+		}
+		if _, err := tx.Exec(stmt, seq, convID, ref.ID); err != nil {
+			return fmt.Errorf("timeline backfill update %s %s in %s: %w", ref.RowType, ref.ID, convID, err)
+		}
+		seq++
+	}
+
+	if _, err := tx.Exec(`
+		INSERT INTO conversation_timeline_cursors(conversation_id, next_timeline_seq)
+		VALUES (?, ?)
+		ON CONFLICT(conversation_id) DO UPDATE SET next_timeline_seq = excluded.next_timeline_seq
+	`, convID, seq); err != nil {
+		return fmt.Errorf("timeline backfill cursor for %s: %w", convID, err)
+	}
+
+	return tx.Commit()
+}
 
 // isDuplicateColumn returns true when SQLite reports a duplicate column name error.
 func isDuplicateColumn(err error) bool {

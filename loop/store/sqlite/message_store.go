@@ -37,6 +37,12 @@ func (s *sqliteMessageStore) Append(ctx context.Context, msg *models.Message) er
 	}
 	msg.Seq = nextSeq
 
+	timelineSeq, err := nextTimelineSeqTx(ctx, tx, string(msg.ConversationID))
+	if err != nil {
+		return fmt.Errorf("next timeline seq: %w", err)
+	}
+	msg.TimelineSeq = timelineSeq
+
 	partsJSON, err := marshalJSON(msg.Parts)
 	if err != nil {
 		return fmt.Errorf("marshal parts: %w", err)
@@ -54,12 +60,13 @@ func (s *sqliteMessageStore) Append(ctx context.Context, msg *models.Message) er
 
 	_, err = tx.ExecContext(ctx,
 		`INSERT INTO messages
-		 (id, conversation_id, seq, reply_to_message_id, state, sent_by,
+		 (id, conversation_id, seq, timeline_seq, reply_to_message_id, state, sent_by,
 		  parts_json, metadata_json, attachments_json, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		string(msg.ID),
 		string(msg.ConversationID),
 		msg.Seq,
+		msg.TimelineSeq,
 		string(msg.ReplyToMessageID),
 		string(msg.State),
 		string(msg.SentBy),
@@ -98,7 +105,7 @@ func (s *sqliteMessageStore) Append(ctx context.Context, msg *models.Message) er
 
 func (s *sqliteMessageStore) Get(ctx context.Context, id models.MessageID) (*models.Message, error) {
 	row := s.readDB.QueryRowContext(ctx,
-		`SELECT id, conversation_id, seq, reply_to_message_id, state, sent_by,
+		`SELECT id, conversation_id, seq, timeline_seq, reply_to_message_id, state, sent_by,
 		        parts_json, metadata_json, attachments_json, created_at, updated_at
 		 FROM messages WHERE id = ?`, string(id))
 	return scanMessage(row)
@@ -106,7 +113,7 @@ func (s *sqliteMessageStore) Get(ctx context.Context, id models.MessageID) (*mod
 
 func (s *sqliteMessageStore) GetRange(ctx context.Context, convID models.ConversationID, fromSeq, toSeq int64) ([]*models.Message, error) {
 	rows, err := s.readDB.QueryContext(ctx,
-		`SELECT id, conversation_id, seq, reply_to_message_id, state, sent_by,
+		`SELECT id, conversation_id, seq, timeline_seq, reply_to_message_id, state, sent_by,
 		        parts_json, metadata_json, attachments_json, created_at, updated_at
 		 FROM messages
 		 WHERE conversation_id = ? AND seq BETWEEN ? AND ?
@@ -246,7 +253,7 @@ func scanMessage(row *sql.Row) (*models.Message, error) {
 	msg := &models.Message{}
 	var partsJSON, metaJSON, attachJSON string
 	err := row.Scan(
-		&msg.ID, &msg.ConversationID, &msg.Seq, &msg.ReplyToMessageID,
+		&msg.ID, &msg.ConversationID, &msg.Seq, &msg.TimelineSeq, &msg.ReplyToMessageID,
 		&msg.State, &msg.SentBy,
 		&partsJSON, &metaJSON, &attachJSON,
 		&msg.CreatedAt, &msg.UpdatedAt,
@@ -276,7 +283,7 @@ func scanMessages(rows *sql.Rows) ([]*models.Message, error) {
 		msg := &models.Message{}
 		var partsJSON, metaJSON, attachJSON string
 		if err := rows.Scan(
-			&msg.ID, &msg.ConversationID, &msg.Seq, &msg.ReplyToMessageID,
+			&msg.ID, &msg.ConversationID, &msg.Seq, &msg.TimelineSeq, &msg.ReplyToMessageID,
 			&msg.State, &msg.SentBy,
 			&partsJSON, &metaJSON, &attachJSON,
 			&msg.CreatedAt, &msg.UpdatedAt,

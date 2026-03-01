@@ -1417,3 +1417,81 @@ func TestSessionHistoryGrowsEachIteration(t *testing.T) {
 		t.Errorf("history should grow: iter1=%d, iter2=%d", historyLengths[0], historyLengths[1])
 	}
 }
+
+func TestSessionEmitsModelWaitEventsPerAttempt(t *testing.T) {
+	s := newTestStore(t)
+	ws, conv := seedConversation(t, s)
+	ctx := context.Background()
+
+	mock := &mockModelClient{
+		responses: [][]agent.TurnEvent{
+			{
+				{
+					Kind:      agent.EventError,
+					Error:     fmt.Errorf("503 Service Unavailable"),
+					ErrorText: "503 Service Unavailable",
+				},
+			},
+			makeTextResponse("Recovered after retry."),
+		},
+	}
+
+	session := agent.NewSession(s, mock, ws, conv, nil, 0)
+	session.MaxModelRetries = 1
+	session.RetryDelay = 20 * time.Millisecond
+	session.RetryTick = 10 * time.Millisecond
+
+	events, cancel, err := session.HandleUserMessage(ctx, textParts("retry please"))
+	if err != nil {
+		t.Fatalf("HandleUserMessage: %v", err)
+	}
+	defer cancel()
+
+	allEvents := collectEvents(events)
+	var started, finished int
+	var outcomes []string
+	for _, e := range allEvents {
+		if e.Kind == agent.EventModelWaitStarted {
+			started++
+		}
+		if e.Kind == agent.EventModelWaitFinished && e.ModelWaitFinished != nil {
+			finished++
+			outcomes = append(outcomes, e.ModelWaitFinished.Outcome)
+		}
+	}
+	if started != 2 || finished != 2 {
+		t.Fatalf("model wait events mismatch started=%d finished=%d", started, finished)
+	}
+	if len(outcomes) != 2 || outcomes[0] != "retry" || outcomes[1] != "success" {
+		t.Fatalf("unexpected model wait outcomes: %v", outcomes)
+	}
+}
+
+func TestSessionEmitsStateTransitions(t *testing.T) {
+	s := newTestStore(t)
+	ws, conv := seedConversation(t, s)
+	ctx := context.Background()
+
+	mock := &mockModelClient{responses: [][]agent.TurnEvent{makeTextResponse("ok")}}
+	session := agent.NewSession(s, mock, ws, conv, nil, 0)
+
+	events, cancel, err := session.HandleUserMessage(ctx, textParts("hi"))
+	if err != nil {
+		t.Fatalf("HandleUserMessage: %v", err)
+	}
+	defer cancel()
+
+	allEvents := collectEvents(events)
+	var transitions []string
+	for _, e := range allEvents {
+		if e.Kind == agent.EventStateTransition && e.StateTransition != nil {
+			transitions = append(transitions, e.StateTransition.To)
+		}
+	}
+	if len(transitions) == 0 {
+		t.Fatal("expected state transition events")
+	}
+	if transitions[len(transitions)-1] != string(agent.StateTurnCompleted) {
+		t.Fatalf("last state transition=%q want=%q", transitions[len(transitions)-1], agent.StateTurnCompleted)
+	}
+}
