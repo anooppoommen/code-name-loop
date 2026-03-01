@@ -85,6 +85,8 @@ export interface LoopDesktopController {
   isResolvingCommandApproval: boolean;
   hideLifecycle: boolean;
   setHideLifecycle: (value: boolean) => void;
+  showMascot: boolean;
+  setShowMascot: (value: boolean) => void;
   thinkingLevel: ThinkingLevel;
   setThinkingLevel: (value: ThinkingLevel) => void;
   currentStatus: string;

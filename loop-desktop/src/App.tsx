@@ -9,6 +9,7 @@ import { useLoopDesktop, type CommandApprovalDecision, type PendingCommandApprov
 import { KeyboardShortcut } from './components/KeyboardShortcut';
 import { QueuedMessages } from './components/QueuedMessages';
 import { Powerline } from './components/Powerline';
+import { WorkingRobotFlare } from './components/activity-feed/WorkingRobotFlare';
 
 const MOBILE_SIDEBAR_BREAKPOINT_PX = 920;
 const COMMAND_APPROVAL_OPTIONS: Array<{ decision: CommandApprovalDecision; label: string; keyHint: string }> = [
@@ -128,6 +129,8 @@ export default function App() {
                 }}
                 hideLifecycle={app.hideLifecycle}
                 onHideLifecycleChange={app.setHideLifecycle}
+                showMascot={app.showMascot}
+                onShowMascotChange={app.setShowMascot}
                 workspaces={app.workspaces}
                 selectedWorkspaceId={app.selectedWorkspaceId}
                 onSelectWorkspace={app.selectWorkspace}
@@ -147,13 +150,30 @@ export default function App() {
           )}
         </AnimatePresence>
 
-        <main className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden max-[920px]:h-auto max-[920px]:overflow-visible">
+        <main className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden max-[920px]:h-auto max-[920px]:overflow-visible">
           <AppHeader
             workspaceName={app.selectedWorkspace?.name ?? 'No workspace selected'}
             conversationTitle={app.selectedConversation?.title ?? ''}
             isSidebarOpen={isSidebarOpen}
             onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
           />
+          <AnimatePresence initial={false}>
+            {app.isSending && app.showMascot ? (
+              <motion.div
+                key="working-robot-flare"
+                initial={{ opacity: 0, y: 10, scale: 0.88 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 10, scale: 0.9 }}
+                transition={{
+                  duration: 0.34,
+                  ease: [0.645, 0.045, 0.355, 1],
+                }}
+                className="pointer-events-none absolute right-4 top-12 z-30"
+              >
+                <WorkingRobotFlare />
+              </motion.div>
+            ) : null}
+          </AnimatePresence>
 
           <div className="min-h-0 flex-1 overflow-hidden">
             <div className="flex h-full w-full min-h-0 flex-col">

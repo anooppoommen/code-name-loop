@@ -53,6 +53,7 @@ export function useLoopDesktop(): LoopDesktopController {
   const [workspaceName, setWorkspaceName] = useState('');
 
   const [hideLifecycle, setHideLifecycle] = useState(true);
+  const [showMascot, setShowMascot] = useState(false);
   const [draftThinkingLevel, setDraftThinkingLevel] = useState<ThinkingLevel>(DEFAULT_THINKING_LEVEL);
   const [thinkingLevelsByConversation, setThinkingLevelsByConversation] = useState<Record<string, ThinkingLevel>>({});
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
@@ -455,6 +456,7 @@ export function useLoopDesktop(): LoopDesktopController {
         selectedConversationId?: string;
         workspacePath?: string;
         hideLifecycle?: boolean;
+        showMascot?: boolean;
         draftThinkingLevel?: ThinkingLevel;
         thinkingLevelsByConversation?: Record<string, unknown>;
       };
@@ -473,6 +475,9 @@ export function useLoopDesktop(): LoopDesktopController {
       }
       if (typeof parsed.hideLifecycle === 'boolean') {
         setHideLifecycle(parsed.hideLifecycle);
+      }
+      if (typeof parsed.showMascot === 'boolean') {
+        setShowMascot(parsed.showMascot);
       }
       if (parsed.draftThinkingLevel) {
         setDraftThinkingLevel(normalizeThinkingLevel(parsed.draftThinkingLevel));
@@ -501,6 +506,7 @@ export function useLoopDesktop(): LoopDesktopController {
         selectedConversationId,
         workspacePath,
         hideLifecycle,
+        showMascot,
         draftThinkingLevel,
         thinkingLevelsByConversation,
       }),
@@ -511,6 +517,7 @@ export function useLoopDesktop(): LoopDesktopController {
     selectedConversationId,
     workspacePath,
     hideLifecycle,
+    showMascot,
     draftThinkingLevel,
     thinkingLevelsByConversation,
   ]);
@@ -1264,6 +1271,8 @@ export function useLoopDesktop(): LoopDesktopController {
     resolveCommandApproval,
     hideLifecycle,
     setHideLifecycle,
+    showMascot,
+    setShowMascot,
     thinkingLevel,
     setThinkingLevel,
     currentStatus,
