@@ -118,7 +118,7 @@ export default function App() {
               animate={{ width: 260, opacity: 1 }}
               exit={{ width: 0, opacity: 0 }}
               transition={{ duration: 0.2, ease: 'easeInOut' }}
-              className="h-full shrink-0 overflow-hidden border-r border-loop-700 bg-loop-800 max-[920px]:w-full max-[920px]:h-auto pt-10"
+              className="h-full shrink-0 overflow-hidden border-r border-loop-700 bg-loop-800 max-[920px]:w-full max-[920px]:h-auto pt-7"
             >
               <Sidebar
                 backendUrl={app.backendUrl}
@@ -134,7 +134,7 @@ export default function App() {
                 workspaces={app.workspaces}
                 selectedWorkspaceId={app.selectedWorkspaceId}
                 onSelectWorkspace={app.selectWorkspace}
-                conversations={app.conversations}
+                conversationsByWorkspace={app.conversationsByWorkspace}
                 selectedConversationId={app.selectedConversationId}
                 sendingConversations={app.sendingConversations}
                 onSelectConversation={app.selectConversation}

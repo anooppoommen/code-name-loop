@@ -56,7 +56,7 @@ export function useLoopDesktop(): LoopDesktopController {
   const [showMascot, setShowMascot] = useState(false);
   const [draftThinkingLevel, setDraftThinkingLevel] = useState<ThinkingLevel>(DEFAULT_THINKING_LEVEL);
   const [thinkingLevelsByConversation, setThinkingLevelsByConversation] = useState<Record<string, ThinkingLevel>>({});
-  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [conversationsByWorkspace, setConversationsByWorkspace] = useState<Record<string, ConversationSummary[]>>({});
   const [selectedConversationId, setSelectedConversationId] = useState('');
 
   const [activities, setActivities] = useState<ActivityEvent[]>([]);
@@ -196,6 +196,11 @@ export function useLoopDesktop(): LoopDesktopController {
   const selectedWorkspace = useMemo(
     () => workspaces.find((workspace) => workspace.id === selectedWorkspaceId) ?? null,
     [selectedWorkspaceId, workspaces],
+  );
+
+  const conversations = useMemo(
+    () => conversationsByWorkspace[selectedWorkspaceId] ?? [],
+    [conversationsByWorkspace, selectedWorkspaceId],
   );
 
   const selectedConversation = useMemo(
@@ -545,11 +550,21 @@ export function useLoopDesktop(): LoopDesktopController {
 
     if (parsed.length === 0) {
       setSelectedWorkspaceId('');
-      setConversations([]);
+      setConversationsByWorkspace({});
       setSelectedConversationId('');
       setThinkingLevelsByConversation({});
       return;
     }
+
+    setConversationsByWorkspace((prev) => {
+      const next: Record<string, ConversationSummary[]> = {};
+      for (const workspace of parsed) {
+        if (prev[workspace.id]) {
+          next[workspace.id] = prev[workspace.id];
+        }
+      }
+      return next;
+    });
 
     if (!parsed.some((workspace) => workspace.id === selectedWorkspaceId)) {
       setSelectedWorkspaceId(parsed[0].id);
@@ -585,7 +600,7 @@ export function useLoopDesktop(): LoopDesktopController {
         return timeB - timeA;
       });
 
-      setConversations(rootsOnly);
+      setConversationsByWorkspace((prev) => ({ ...prev, [workspaceId]: rootsOnly }));
 
       // Restore active streams for any root conversation that is currently running
       for (const conv of rootsOnly) {
@@ -666,11 +681,10 @@ export function useLoopDesktop(): LoopDesktopController {
 
   useEffect(() => {
     if (!selectedWorkspaceId) {
-      setConversations([]);
       setSelectedConversationId('');
       return;
     }
-    void refreshConversationsByWorkspace(selectedWorkspaceId);
+    void refreshConversationsByWorkspace(selectedWorkspaceId, true);
   }, [refreshConversationsByWorkspace, selectedWorkspaceId]);
 
   useEffect(() => {
@@ -863,7 +877,10 @@ export function useLoopDesktop(): LoopDesktopController {
         clearConversationView();
       }
 
-      setConversations((prev) => prev.filter((conversation) => conversation.id !== conversationId));
+      setConversationsByWorkspace((prev) => ({
+        ...prev,
+        [selectedWorkspaceId]: (prev[selectedWorkspaceId] ?? []).filter((conversation) => conversation.id !== conversationId),
+      }));
       setThinkingLevelsByConversation((prev) => {
         if (!(conversationId in prev)) {
           return prev;
@@ -906,11 +923,12 @@ export function useLoopDesktop(): LoopDesktopController {
       }
 
       // Optimistic update
-      setConversations((prev) =>
-        prev.map((conversation) =>
+      setConversationsByWorkspace((prev) => ({
+        ...prev,
+        [selectedWorkspaceId]: (prev[selectedWorkspaceId] ?? []).map((conversation) =>
           conversation.id === conversationId ? { ...conversation, title: trimmedTitle } : conversation
-        )
-      );
+        ),
+      }));
 
       await refreshConversationsByWorkspace(selectedWorkspaceId, true);
     },
@@ -1245,6 +1263,7 @@ export function useLoopDesktop(): LoopDesktopController {
     isLoadingWorkspaces,
 
     conversations,
+    conversationsByWorkspace,
     selectedConversationId,
     selectedConversation,
 

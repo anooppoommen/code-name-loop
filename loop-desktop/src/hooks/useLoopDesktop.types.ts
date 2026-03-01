@@ -61,6 +61,7 @@ export interface LoopDesktopController {
   isLoadingWorkspaces: boolean;
 
   conversations: ConversationSummary[];
+  conversationsByWorkspace: Record<string, ConversationSummary[]>;
   selectedConversationId: string;
   selectedConversation: ConversationSummary | null;
 
