@@ -88,13 +88,13 @@ export const ActivityItem = memo(function ActivityItem({
   if (event.kind === 'status') {
     return (
       <ActivityFrame
-        className="px-2 py-0.5 text-[11px] font-normal text-neutral-500 opacity-75"
-        left={<span className="mt-1 h-1.5 w-1.5 rounded-full bg-neutral-600" />}
+        className="px-2 py-0.5 text-[11px] font-normal text-loop-500 opacity-75"
+        left={<span className="mt-1 h-1.5 w-1.5 rounded-full bg-loop-600" />}
         contentClassName="min-w-0"
       >
         <div className="flex min-w-0 items-center gap-2">
           <span className="truncate">{event.title}</span>
-          {event.body ? <span className="truncate text-neutral-600">{event.body}</span> : null}
+          {event.body ? <span className="truncate text-loop-600">{event.body}</span> : null}
         </div>
       </ActivityFrame>
     );
@@ -141,10 +141,10 @@ export const ActivityItem = memo(function ActivityItem({
         contentClassName="min-w-0"
       >
         <div className="flex min-w-0 flex-1 flex-col">
-          <div className="mb-2 text-[12px] font-medium text-neutral-500">
+          <div className="mb-2 text-[12px] font-medium text-loop-500">
             Executing {parallelToolPayload.results.length} tool{parallelToolPayload.results.length === 1 ? '' : 's'}
           </div>
-          <div className="relative flex flex-col gap-1.5 before:absolute before:inset-y-2 before:left-2 before:w-px before:bg-neutral-800/80">
+          <div className="relative flex flex-col gap-1.5 before:absolute before:inset-y-2 before:left-2 before:w-px before:bg-loop-800/80">
             {parallelToolPayload.results.map((result, idx) => {
               const nestedEvent = buildParallelNestedEvent(event, idx, result);
               const nestedRequestInputPayload = parseRequestUserInputPayload(nestedEvent);
@@ -157,7 +157,7 @@ export const ActivityItem = memo(function ActivityItem({
 
               return (
                 <div key={nestedEvent.id} className="py-1 pl-6">
-                  <div className="mb-1 flex items-center gap-2 text-[11px] text-neutral-500">
+                  <div className="mb-1 flex items-center gap-2 text-[11px] text-loop-500">
                     <span>{nestedEvent.tool?.name || 'tool'}</span>
                     <span
                       className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${nestedEvent.tool?.success === false
@@ -188,14 +188,14 @@ export const ActivityItem = memo(function ActivityItem({
                       {nestedEvent.body &&
                         (nestedEvent.tool?.phase === 'result' || nestedEvent.tool?.error) &&
                         nestedEvent.body !== nestedEvent.tool?.command ? (
-                          <pre className="max-h-96 overflow-y-auto whitespace-pre-wrap rounded-md bg-neutral-900/35 px-3 py-2 text-xs leading-relaxed text-neutral-300 scrollbar-thin">
+                          <pre className="max-h-96 overflow-y-auto whitespace-pre-wrap rounded-md bg-loop-900/35 px-3 py-2 text-xs leading-relaxed text-loop-300 scrollbar-thin">
                             {nestedEvent.body}
                           </pre>
                         ) : null}
                       <PatchViewer patchText={nestedEvent.tool?.command || nestedEvent.body || ''} />
                     </div>
                   ) : nestedFallbackText ? (
-                    <pre className="max-h-96 overflow-y-auto whitespace-pre-wrap rounded-md bg-neutral-900/35 px-3 py-2 text-xs leading-relaxed text-neutral-300 scrollbar-thin">
+                    <pre className="max-h-96 overflow-y-auto whitespace-pre-wrap rounded-md bg-loop-900/35 px-3 py-2 text-xs leading-relaxed text-loop-300 scrollbar-thin">
                       {nestedFallbackText}
                     </pre>
                   ) : null}
@@ -216,14 +216,14 @@ export const ActivityItem = memo(function ActivityItem({
         right={null}
         contentClassName="min-w-0"
       >
-        <div className="ml-auto flex max-w-[85%] flex-col rounded-2xl rounded-tr-sm border border-neutral-700/50 bg-neutral-800/80 px-5 py-3 shadow-sm">
+        <div className="ml-auto flex max-w-[85%] flex-col rounded-2xl rounded-tr-sm border border-loop-700/50 bg-loop-800/80 px-5 py-3 shadow-sm">
           {event.images && event.images.length > 0 ? (
             <div className="mb-2 flex flex-wrap gap-2">
               {event.images.map((img, idx) => (
                 <button
                   key={idx}
                   type="button"
-                  className="h-16 w-16 cursor-pointer overflow-hidden rounded-md border border-neutral-700 bg-neutral-900 transition-opacity hover:opacity-80"
+                  className="h-16 w-16 cursor-pointer overflow-hidden rounded-md border border-loop-700 bg-loop-900 transition-opacity hover:opacity-80"
                   onClick={() => setSelectedImage(img.dataUrl)}
                 >
                   <img src={img.dataUrl} alt="attached" className="h-full w-full object-cover" />
@@ -231,11 +231,11 @@ export const ActivityItem = memo(function ActivityItem({
               ))}
             </div>
           ) : null}
-          <div className="text-[14px] leading-relaxed text-neutral-200">
+          <div className="text-[14px] leading-relaxed text-loop-200">
             <MarkdownBlock text={renderedText} />
           </div>
           <div className="mt-1 flex justify-end">
-            <time className="text-[10px] font-medium text-neutral-500">
+            <time className="text-[10px] font-medium text-loop-500">
               {new Date(event.timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
             </time>
           </div>
@@ -254,13 +254,13 @@ export const ActivityItem = memo(function ActivityItem({
               <p className={`m-0 min-w-0 text-[15px] leading-relaxed ${visual.copy}`}>
                 {renderedText}
               </p>
-              <div className="flex shrink-0 items-center gap-2 text-[11px] text-neutral-500">
-                <time className="font-medium text-neutral-500">
+              <div className="flex shrink-0 items-center gap-2 text-[11px] text-loop-500">
+                <time className="font-medium text-loop-500">
                   {new Date(event.timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
                 </time>
                 <span>{labelFor(event.kind)}</span>
                 {event.tool?.callId ? (
-                  <span className="font-mono text-[10px] text-neutral-500">
+                  <span className="font-mono text-[10px] text-loop-500">
                     {shortID(event.tool.callId)}
                   </span>
                 ) : null}
@@ -278,10 +278,10 @@ export const ActivityItem = memo(function ActivityItem({
             </div>
           ) : (
             <div className="mb-0.5 flex flex-wrap items-baseline gap-2">
-              <span className="font-semibold text-neutral-200">
+              <span className="font-semibold text-loop-200">
                 Gemini
               </span>
-              <time className="text-[11px] font-medium text-neutral-500">
+              <time className="text-[11px] font-medium text-loop-500">
                 {new Date(event.timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
               </time>
             </div>
@@ -294,7 +294,7 @@ export const ActivityItem = memo(function ActivityItem({
                   <button
                     key={idx}
                     type="button"
-                    className="rounded-md border border-neutral-700 overflow-hidden w-16 h-16 bg-neutral-900 cursor-pointer hover:opacity-80 transition-opacity"
+                    className="rounded-md border border-loop-700 overflow-hidden w-16 h-16 bg-loop-900 cursor-pointer hover:opacity-80 transition-opacity"
                     onClick={() => setSelectedImage(img.dataUrl)}
                   >
                     <img src={img.dataUrl} alt="attached" className="w-full h-full object-cover" />
@@ -322,7 +322,7 @@ export const ActivityItem = memo(function ActivityItem({
             ) : isPatchToolEvent && (event.tool?.command || event.body) ? (
               <div className="space-y-2">
                 {event.body && (event.tool?.phase === 'result' || event.tool?.error) && event.body !== event.tool?.command ? (
-                  <pre className="max-h-96 overflow-y-auto whitespace-pre-wrap rounded-lg border border-neutral-800/90 bg-neutral-900/35 px-3 py-2 text-xs leading-relaxed text-neutral-300 scrollbar-thin">
+                  <pre className="max-h-96 overflow-y-auto whitespace-pre-wrap rounded-lg border border-loop-800/90 bg-loop-900/35 px-3 py-2 text-xs leading-relaxed text-loop-300 scrollbar-thin">
                     {event.body}
                   </pre>
                 ) : null}
@@ -330,20 +330,20 @@ export const ActivityItem = memo(function ActivityItem({
               </div>
             ) : systemErrorDetails ? (
               systemErrorDetails.mode === 'card' ? (
-                <div className="mt-2 rounded-lg border border-neutral-800/90 bg-neutral-900/60 px-3.5 py-3">
-                  <p className="m-0 text-[13px] leading-relaxed text-neutral-200">
+                <div className="mt-2 rounded-lg border border-loop-700/90 bg-loop-800/70 px-3.5 py-3">
+                  <p className="m-0 text-[13px] leading-relaxed text-loop-200">
                     {systemErrorDetails.summary}
                   </p>
                   {systemErrorDetails.rows.length > 0 ? (
-                    <div className="mt-3 overflow-hidden rounded-md border border-neutral-800/80 bg-neutral-900/50">
+                    <div className="mt-3 overflow-hidden rounded-md border border-loop-700/80 bg-loop-800/60">
                       <dl className="grid text-[11px]">
                         {systemErrorDetails.rows.map((row) => (
                           <div
                             key={`${row.label}:${row.value}`}
-                            className="flex items-baseline justify-between gap-3 border-t border-neutral-800/90 px-3 py-2 first:border-t-0"
+                            className="flex items-baseline justify-between gap-3 border-t border-loop-700/80 px-3 py-2 first:border-t-0"
                           >
-                            <dt className="text-neutral-500">{row.label}</dt>
-                            <dd className="font-medium text-neutral-300">{row.value}</dd>
+                            <dt className="text-loop-400">{row.label}</dt>
+                            <dd className="font-medium text-loop-200">{row.value}</dd>
                           </div>
                         ))}
                       </dl>
@@ -351,16 +351,16 @@ export const ActivityItem = memo(function ActivityItem({
                   ) : null}
                 </div>
               ) : (
-                <p className="mt-2 whitespace-pre-wrap text-[13px] leading-relaxed text-neutral-300">
+                <p className="mt-2 whitespace-pre-wrap text-[13px] leading-relaxed text-loop-300">
                   {systemErrorDetails.text}
                 </p>
               )
             ) : isSystemEvent && event.body ? (
-              <pre className={`mt-2 max-h-96 overflow-y-auto whitespace-pre-wrap rounded-lg border border-neutral-800/90 px-3 py-2 text-xs leading-relaxed scrollbar-thin ${visual.detail}`}>
+              <pre className={`mt-2 max-h-96 overflow-y-auto whitespace-pre-wrap rounded-lg border border-loop-800/90 px-3 py-2 text-xs leading-relaxed scrollbar-thin ${visual.detail}`}>
                 {event.body}
               </pre>
             ) : null}
-            {event.streaming ? <span className="animate-pulse text-neutral-500">▍</span> : null}
+            {event.streaming ? <span className="animate-pulse text-loop-500">▍</span> : null}
           </div>
         </div>
       </ActivityFrame>
@@ -368,11 +368,11 @@ export const ActivityItem = memo(function ActivityItem({
 
     {selectedImage && (
       <div 
-        className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+        className="fixed inset-0 z-50 flex items-center justify-center bg-loop-950/80 p-4 backdrop-blur-sm"
         onClick={() => setSelectedImage(null)}
       >
         <button 
-          className="absolute top-6 right-6 text-white bg-neutral-800 rounded-full p-2 hover:bg-neutral-700 border border-neutral-600 shadow-lg z-50 transition-colors"
+          className="absolute top-6 right-6 text-white bg-loop-800 rounded-full p-2 hover:bg-loop-700 border border-loop-600 shadow-lg z-50 transition-colors"
           onClick={(e) => {
             e.stopPropagation();
             setSelectedImage(null);
@@ -446,7 +446,7 @@ const ThoughtMessage = memo(function ThoughtMessage({
   }, [isStreaming]);
 
   return (
-    <div className="max-w-[620px] text-neutral-400">
+    <div className="max-w-[620px] text-loop-300">
       <motion.div
         initial={false}
         animate={{ height: isExpanded ? 'auto' : (isOverflowing ? 64 : 'auto') }}
@@ -455,16 +455,16 @@ const ThoughtMessage = memo(function ThoughtMessage({
       >
         <div ref={contentRef}>
           <MarkdownBlock text={renderedText} compact />
-          {isStreaming ? <span className="animate-pulse text-neutral-500">▍</span> : null}
+          {isStreaming ? <span className="animate-pulse text-loop-500">▍</span> : null}
         </div>
         {!isExpanded && isOverflowing && (
-          <div className="absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-neutral-900 to-transparent pointer-events-none" />
+          <div className="absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-loop-900 to-transparent pointer-events-none" />
         )}
       </motion.div>
       {isOverflowing && (
         <button
           onClick={() => setIsExpanded(!isExpanded)}
-          className="mt-1 text-[11px] font-medium text-neutral-500 transition-colors hover:text-neutral-300"
+          className="mt-1 text-[11px] font-medium text-loop-500 transition-colors hover:text-loop-300"
         >
           {isExpanded ? 'Show less' : 'Show more'}
         </button>
@@ -493,9 +493,9 @@ function visualStyleFor(event: ActivityEvent): { row: string; icon: string; copy
   if (event.kind === 'error' || event.tool?.success === false) {
     return {
       row: '',
-      icon: 'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-neutral-800/90 text-red-300',
-      copy: 'text-neutral-100',
-      detail: 'bg-neutral-900/65 text-neutral-200',
+      icon: 'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-loop-800/90 text-red-300',
+      copy: 'text-loop-100',
+      detail: 'bg-loop-900/65 text-loop-200',
     };
   }
 
@@ -503,17 +503,17 @@ function visualStyleFor(event: ActivityEvent): { row: string; icon: string; copy
     return {
       row: '',
       icon: 'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-900/25 text-blue-200',
-      copy: 'text-neutral-200',
-      detail: 'bg-neutral-900/40 text-blue-100',
+      copy: 'text-loop-200',
+      detail: 'bg-loop-900/40 text-blue-100',
     };
   }
 
   if (event.kind === 'thought') {
     return {
       row: '',
-      icon: 'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-neutral-700/70 text-neutral-200',
-      copy: 'text-neutral-200',
-      detail: 'bg-neutral-900/50 text-neutral-300',
+      icon: 'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-loop-700/70 text-loop-200',
+      copy: 'text-loop-200',
+      detail: 'bg-loop-900/50 text-loop-300',
     };
   }
 
@@ -521,16 +521,16 @@ function visualStyleFor(event: ActivityEvent): { row: string; icon: string; copy
     return {
       row: '',
       icon: 'flex h-8 w-8 shrink-0 items-center justify-center',
-      copy: 'text-neutral-200',
-      detail: 'bg-neutral-900/50 text-neutral-300',
+      copy: 'text-loop-200',
+      detail: 'bg-loop-900/50 text-loop-300',
     };
   }
 
   return {
     row: '',
-    icon: 'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-neutral-800/80 text-neutral-400',
-    copy: 'text-neutral-300',
-    detail: 'bg-neutral-900/50 text-neutral-400',
+    icon: 'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-loop-800/80 text-loop-400',
+    copy: 'text-loop-300',
+    detail: 'bg-loop-900/50 text-loop-400',
   };
 }
 
@@ -651,21 +651,21 @@ function humanizeStatus(value: string): string {
 
 const MarkdownBlock = memo(function MarkdownBlock({ text, compact = false }: { text: string; compact?: boolean }) {
   const rootTextClass = compact
-    ? 'm-0 break-words text-[13px] font-normal leading-relaxed text-neutral-400'
+    ? 'm-0 break-words text-[13px] font-normal leading-relaxed text-loop-300'
     : 'm-0 break-words text-[15px] leading-relaxed';
   const paragraphClass = compact ? 'm-0 mb-2 leading-6 last:mb-0' : 'm-0 mb-3 leading-7 last:mb-0';
   const listClass = compact
-    ? 'm-0 mb-2 list-disc space-y-1 pl-6 marker:text-neutral-500'
-    : 'm-0 mb-3 list-disc space-y-1 pl-6 marker:text-neutral-500';
+    ? 'm-0 mb-2 list-disc space-y-1 pl-6 marker:text-loop-500'
+    : 'm-0 mb-3 list-disc space-y-1 pl-6 marker:text-loop-500';
   const orderedListClass = compact
-    ? 'm-0 mb-2 list-decimal space-y-1 pl-6 marker:text-neutral-500'
-    : 'm-0 mb-3 list-decimal space-y-1 pl-6 marker:text-neutral-500';
+    ? 'm-0 mb-2 list-decimal space-y-1 pl-6 marker:text-loop-500'
+    : 'm-0 mb-3 list-decimal space-y-1 pl-6 marker:text-loop-500';
   const inlineCodeClass = compact
-    ? 'rounded bg-neutral-800/95 px-1.5 py-0.5 font-mono text-[11px] text-neutral-200'
-    : 'rounded bg-neutral-800/95 px-1.5 py-0.5 font-mono text-[12px] text-neutral-100';
+    ? 'rounded bg-loop-800/95 px-1.5 py-0.5 font-mono text-[11px] text-loop-200'
+    : 'rounded bg-loop-800/95 px-1.5 py-0.5 font-mono text-[12px] text-loop-100';
   const preClass = compact
-    ? 'mb-2 mt-2 overflow-x-auto rounded-lg border border-neutral-800 bg-neutral-950/85 p-3 text-[11px] leading-relaxed text-neutral-300'
-    : 'mb-3 mt-2 overflow-x-auto rounded-lg border border-neutral-800 bg-neutral-950/85 p-3 text-[12px] leading-relaxed text-neutral-200';
+    ? 'mb-2 mt-2 overflow-x-auto rounded-lg border border-loop-800 bg-loop-950/85 p-3 text-[11px] leading-relaxed text-loop-300'
+    : 'mb-3 mt-2 overflow-x-auto rounded-lg border border-loop-800 bg-loop-950/85 p-3 text-[12px] leading-relaxed text-loop-200';
 
   return (
     <div className={rootTextClass}>
@@ -673,16 +673,16 @@ const MarkdownBlock = memo(function MarkdownBlock({ text, compact = false }: { t
         remarkPlugins={[remarkGfm]}
         components={{
           h1: ({ children }) => (
-            <h1 className="mb-3 mt-0 text-2xl font-bold tracking-tight text-neutral-100">{children}</h1>
+            <h1 className="mb-3 mt-0 text-2xl font-bold tracking-tight text-loop-100">{children}</h1>
           ),
           h2: ({ children }) => (
-            <h2 className="mb-3 mt-4 text-xl font-semibold tracking-tight text-neutral-100">{children}</h2>
+            <h2 className="mb-3 mt-4 text-xl font-semibold tracking-tight text-loop-100">{children}</h2>
           ),
           h3: ({ children }) => (
-            <h3 className="mb-2 mt-4 text-lg font-semibold text-neutral-100">{children}</h3>
+            <h3 className="mb-2 mt-4 text-lg font-semibold text-loop-100">{children}</h3>
           ),
           h4: ({ children }) => (
-            <h4 className="mb-2 mt-3 text-base font-semibold text-neutral-200">{children}</h4>
+            <h4 className="mb-2 mt-3 text-base font-semibold text-loop-200">{children}</h4>
           ),
           p: ({ children }) => <p className={paragraphClass}>{children}</p>,
           ul: ({ children }) => <ul className={listClass}>{children}</ul>,
@@ -690,7 +690,7 @@ const MarkdownBlock = memo(function MarkdownBlock({ text, compact = false }: { t
           li: ({ children }) => <li className="[&>p]:mb-0">{children}</li>,
           a: ({ children, href }) => (
             <a
-              className="font-medium text-sky-300 underline decoration-sky-400/60 underline-offset-2 transition-colors hover:text-sky-200"
+              className="font-medium text-loop-200 underline decoration-loop-400/60 underline-offset-2 transition-colors hover:text-loop-100"
               href={href}
               target="_blank"
               rel="noreferrer"
@@ -699,26 +699,26 @@ const MarkdownBlock = memo(function MarkdownBlock({ text, compact = false }: { t
             </a>
           ),
           blockquote: ({ children }) => (
-            <blockquote className="mb-3 border-l-2 border-neutral-600/80 pl-4 italic text-neutral-300">
+            <blockquote className="mb-3 border-l-2 border-loop-600/80 pl-4 italic text-loop-300">
               {children}
             </blockquote>
           ),
-          hr: () => <hr className="my-4 border-0 border-t border-neutral-700/80" />,
+          hr: () => <hr className="my-4 border-0 border-t border-loop-700/80" />,
           table: ({ children }) => (
-            <div className="mb-3 overflow-x-auto rounded-lg border border-neutral-800">
+            <div className="mb-3 overflow-x-auto rounded-lg border border-loop-800">
               <table className="w-full border-collapse text-sm">{children}</table>
             </div>
           ),
-          thead: ({ children }) => <thead className="bg-neutral-800/70 text-neutral-200">{children}</thead>,
-          tbody: ({ children }) => <tbody className="bg-neutral-900/35">{children}</tbody>,
-          tr: ({ children }) => <tr className="border-t border-neutral-800 first:border-t-0">{children}</tr>,
+          thead: ({ children }) => <thead className="bg-loop-800/70 text-loop-200">{children}</thead>,
+          tbody: ({ children }) => <tbody className="bg-loop-900/35">{children}</tbody>,
+          tr: ({ children }) => <tr className="border-t border-loop-800 first:border-t-0">{children}</tr>,
           th: ({ children }) => <th className="px-3 py-2 text-left font-semibold">{children}</th>,
-          td: ({ children }) => <td className="px-3 py-2 align-top text-neutral-300">{children}</td>,
+          td: ({ children }) => <td className="px-3 py-2 align-top text-loop-300">{children}</td>,
           code: ({ children, className }) => {
             const isCodeBlock = Boolean(className && className.startsWith('language-'));
             if (isCodeBlock) {
               return (
-                <code className={compact ? 'font-mono text-[11px] text-neutral-200' : 'font-mono text-[12px] text-neutral-100'}>
+                <code className={compact ? 'font-mono text-[11px] text-loop-200' : 'font-mono text-[12px] text-loop-100'}>
                   {children}
                 </code>
               );

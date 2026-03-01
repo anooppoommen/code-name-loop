@@ -24,10 +24,10 @@ export function QueuedMessages({ messages, onReorder, onRemove, onSteer }: Queue
       {messages.map((msg, index) => (
         <div
           key={msg.id}
-          className="flex flex-col gap-2 rounded-xl border border-neutral-700/50 bg-neutral-800 p-2 shadow-sm relative group"
+          className="flex flex-col gap-2 rounded-xl border border-loop-700/50 bg-loop-800 p-2 shadow-sm relative group"
         >
           <div className="flex items-start justify-between gap-2">
-            <div className="text-[13px] leading-relaxed text-neutral-200 whitespace-pre-wrap break-words min-w-0 flex-1">
+            <div className="text-[13px] leading-relaxed text-loop-200 whitespace-pre-wrap break-words min-w-0 flex-1">
               {msg.text || '(Images attached)'}
             </div>
             <div className="flex items-center gap-1 opacity-100 group-hover:opacity-100 transition-opacity shrink-0">
@@ -35,7 +35,7 @@ export function QueuedMessages({ messages, onReorder, onRemove, onSteer }: Queue
                 type="button"
                 onClick={() => onReorder(msg.id, 'up')}
                 disabled={index === 0}
-                className="p-1 rounded text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700 disabled:opacity-30 disabled:hover:bg-transparent"
+                className="p-1 rounded text-loop-400 hover:text-loop-200 hover:bg-loop-700 disabled:opacity-30 disabled:hover:bg-transparent"
                 title="Move Up"
               >
                 <ArrowUp size={14} />
@@ -44,7 +44,7 @@ export function QueuedMessages({ messages, onReorder, onRemove, onSteer }: Queue
                 type="button"
                 onClick={() => onReorder(msg.id, 'down')}
                 disabled={index === messages.length - 1}
-                className="p-1 rounded text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700 disabled:opacity-30 disabled:hover:bg-transparent"
+                className="p-1 rounded text-loop-400 hover:text-loop-200 hover:bg-loop-700 disabled:opacity-30 disabled:hover:bg-transparent"
                 title="Move Down"
               >
                 <ArrowDown size={14} />
@@ -72,7 +72,7 @@ export function QueuedMessages({ messages, onReorder, onRemove, onSteer }: Queue
           {msg.images && msg.images.length > 0 && (
             <div className="flex flex-wrap gap-2 px-1">
               {msg.images.map((img: ComposerImage) => (
-                <div key={img.id} className="rounded-md border border-neutral-700 overflow-hidden w-12 h-12 bg-neutral-900">
+                <div key={img.id} className="rounded-md border border-loop-700 overflow-hidden w-12 h-12 bg-loop-900">
                   <img src={img.dataUrl} alt="attachment" className="w-full h-full object-cover" />
                 </div>
               ))}

@@ -108,7 +108,7 @@ export default function App() {
 
   return (
     <KeyboardShortcut priority={0} enabled onKeyDown={appShortcutHandler}>
-      <div className="flex h-full w-full overflow-hidden bg-neutral-900 text-neutral-200 selection:bg-blue-500/30">
+      <div className="flex h-full w-full overflow-hidden bg-loop-900 text-loop-200 selection:bg-blue-500/30">
         <ToastStack toasts={app.notices} onDismiss={app.dismissNotice} />
 
         <AnimatePresence initial={false}>
@@ -118,7 +118,7 @@ export default function App() {
               animate={{ width: 260, opacity: 1 }}
               exit={{ width: 0, opacity: 0 }}
               transition={{ duration: 0.2, ease: 'easeInOut' }}
-              className="h-full shrink-0 overflow-hidden border-r border-neutral-700 bg-neutral-800 max-[920px]:w-full max-[920px]:h-auto pt-10"
+              className="h-full shrink-0 overflow-hidden border-r border-loop-700 bg-loop-800 max-[920px]:w-full max-[920px]:h-auto pt-10"
             >
               <Sidebar
                 backendUrl={app.backendUrl}
@@ -346,28 +346,28 @@ function CommandApprovalSheet({
         className="pointer-events-none absolute inset-x-0 bottom-[calc(100%-24px)] z-10"
       >
         <div className="pointer-events-auto px-4">
-          <div className="rounded-xl border border-neutral-800/50 bg-neutral-800 p-2 shadow-lg shadow-black/55">
+          <div className="rounded-xl border border-loop-800/50 bg-loop-800 p-2 shadow-lg shadow-black/55">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0 flex-1">
-                <div className="mb-1 text-[12px] text-neutral-300">
-                  <span className="font-mono text-neutral-200">{approval.toolName}</span> wants to run:
+                <div className="mb-1 text-[12px] text-loop-300">
+                  <span className="font-mono text-loop-200">{approval.toolName}</span> wants to run:
                 </div>
                 <div className="group relative min-w-0">
-                  <pre className="m-0 overflow-x-hidden text-ellipsis whitespace-nowrap pb-0.5 font-mono text-[13px] leading-relaxed text-neutral-100 scrollbar-hidden group-hover:overflow-x-auto group-hover:text-clip">
+                  <pre className="m-0 overflow-x-hidden text-ellipsis whitespace-nowrap pb-0.5 font-mono text-[13px] leading-relaxed text-loop-100 scrollbar-hidden group-hover:overflow-x-auto group-hover:text-clip">
                     <span className="pr-6">{approval.command}</span>
                   </pre>
-                  <div className="pointer-events-none absolute bottom-0 right-0 top-0 w-8 bg-gradient-to-l from-neutral-900 to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
+                  <div className="pointer-events-none absolute bottom-0 right-0 top-0 w-8 bg-gradient-to-l from-loop-900 to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
                 </div>
               </div>
               {pendingCount > 1 ? (
-                <span className="shrink-0 rounded border border-neutral-700 bg-neutral-950 px-1.5 py-0.5 text-[10px] text-neutral-300">
+                <span className="shrink-0 rounded border border-loop-700 bg-loop-950 px-1.5 py-0.5 text-[10px] text-loop-300">
                   {pendingCount} pending
                 </span>
               ) : null}
             </div>
             {approval.workdir ? (
-              <p className="mt-1 text-[10px] text-neutral-500">
-                in <span className="font-mono text-neutral-400">{approval.workdir}</span>
+              <p className="mt-1 text-[10px] text-loop-500">
+                in <span className="font-mono text-loop-400">{approval.workdir}</span>
               </p>
             ) : null}
             <div className="mt-2 flex flex-col gap-1 pb-6" role="radiogroup" aria-label="Command approval options">
@@ -384,15 +384,15 @@ function CommandApprovalSheet({
                       aria-checked={isActive}
                       tabIndex={isActive ? 0 : -1}
                       disabled={isResolving}
-                      className={`flex min-w-0 flex-1 items-center justify-between rounded-md px-2 py-1.5 text-left text-[11px] transition focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-neutral-800 disabled:cursor-not-allowed disabled:opacity-60 ${isActive
-                        ? 'text-neutral-100 bg-neutral-700'
+                      className={`flex min-w-0 flex-1 items-center justify-between rounded-md px-2 py-1.5 text-left text-[11px] transition focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-loop-800 disabled:cursor-not-allowed disabled:opacity-60 ${isActive
+                        ? 'text-loop-100 bg-loop-700'
                         : ''
                         }`}
                       onFocus={() => setActiveOptionIndex(index)}
                       onClick={() => resolveDecision(option.decision)}
                     >
                       <span>{option.label}</span>
-                      <span className="rounded bg-neutral-600 px-1 py-0.5 text-[10px] text-neutral-200">
+                      <span className="rounded bg-loop-600 px-1 py-0.5 text-[10px] text-loop-200">
                         {option.keyHint}
                       </span>
                     </button>

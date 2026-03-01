@@ -67,17 +67,17 @@ export function Powerline({ backendUrl, workspaceId, conversationId }: { backend
   const contextLimitLabel = displayStats.context_limit > 0 ? displayStats.context_limit.toLocaleString() : 'unknown';
 
   return (
-    <div className="flex h-6 w-full items-center justify-between border-t border-neutral-700 bg-[#1e1e1e] px-3 text-[11px] text-neutral-400 font-mono shrink-0">
+    <div className="flex h-6 w-full items-center justify-between border-t border-loop-700 bg-loop-800 px-3 text-[11px] text-loop-400 font-mono shrink-0">
       <div className="flex items-center gap-4">
         <div className="flex items-center gap-2" title="Git changes by conversation">
           <span className="text-green-500">+{displayStats.lines_added}</span>
           <span className="text-red-500">-{displayStats.lines_deleted}</span>
         </div>
-        <div className="text-neutral-500">|</div>
+        <div className="text-loop-500">|</div>
         <div className="flex items-center gap-2" title="Total Tokens in Conversation">
           <span>∑ {displayStats.tokens_total.toLocaleString()}</span>
         </div>
-        <div className="text-neutral-500">|</div>
+        <div className="text-loop-500">|</div>
         <div className="flex items-center gap-2" title={`Context Window Usage (${contextPercent}%)`}>
           <span className="opacity-80">CTX:</span> <span>{displayStats.latest_prompt_tokens.toLocaleString()} / {contextLimitLabel}</span>
         </div>
@@ -91,7 +91,7 @@ export function Powerline({ backendUrl, workspaceId, conversationId }: { backend
           )}
           <span className="opacity-80 ml-2">OUT:</span> <span>{displayStats.tokens_output.toLocaleString()}</span>
         </div>
-        <div className="text-neutral-500">|</div>
+        <div className="text-loop-500">|</div>
         <div className="flex items-center gap-1 text-yellow-500/80" title="Estimated Cost (Gemini 1.5 Pro)">
           <span>{costStr}</span>
         </div>

@@ -131,7 +131,7 @@ function ThreadItem({
       tabIndex={0}
       className={`group relative flex w-full cursor-pointer items-center justify-between rounded-lg px-2 py-1.5 text-[13px] transition-all ${isActive
         ? 'bg-blue-500/10 text-blue-400 font-medium'
-        : 'text-neutral-400 hover:bg-neutral-700 hover:text-neutral-200'
+        : 'text-loop-400 hover:bg-loop-700 hover:text-loop-200'
         }`}
       onClick={() => {
         if (!isEditing && !isMenuOpen) {
@@ -153,7 +153,7 @@ function ThreadItem({
           {isEditing ? (
             <input
               ref={inputRef}
-              className="w-full bg-neutral-900 border border-blue-500/50 rounded px-1.5 py-0.5 text-neutral-200 outline-none"
+              className="w-full bg-loop-900 border border-blue-500/50 rounded px-1.5 py-0.5 text-loop-200 outline-none"
               value={editValue}
               onChange={(e) => setEditValue(e.target.value)}
               onClick={(e) => e.stopPropagation()}
@@ -171,7 +171,7 @@ function ThreadItem({
             <>
               <span className="truncate leading-tight">{conversation.title}</span>
               {conversation.updatedAt && (
-                <span className="shrink-0 text-[10px] text-neutral-500 whitespace-nowrap opacity-60 transition-opacity group-hover:opacity-0">
+                <span className="shrink-0 text-[10px] text-loop-500 whitespace-nowrap opacity-60 transition-opacity group-hover:opacity-0">
                   {formatRelativeTime(conversation.updatedAt)}
                 </span>
               )}
@@ -185,7 +185,7 @@ function ThreadItem({
           <button
             ref={buttonRef}
             type="button"
-            className={`text-neutral-500 hover:text-neutral-200 transition-colors ${isActive || isMenuOpen ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} p-0.5`}
+            className={`text-loop-500 hover:text-loop-200 transition-colors ${isActive || isMenuOpen ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} p-0.5`}
             onClick={(event) => {
               event.stopPropagation();
               setIsMenuOpen(!isMenuOpen);
@@ -209,12 +209,12 @@ function ThreadItem({
                   left: menuCoords.x,
                   transform: 'translateX(-100%)', // Shift left by its own width since x is the right edge
                 }}
-                className="w-32 rounded-lg bg-neutral-800 border border-neutral-700/50 shadow-2xl shadow-black/50 z-[9999] overflow-hidden py-1"
+                className="w-32 rounded-lg bg-loop-800 border border-loop-700/50 shadow-2xl shadow-black/50 z-[9999] overflow-hidden py-1"
                 onClick={(e) => e.stopPropagation()}
                 onMouseDown={(e) => e.stopPropagation()}
               >
                 <button
-                  className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs text-neutral-300 hover:bg-neutral-700 hover:text-neutral-200 transition-colors"
+                  className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs text-loop-300 hover:bg-loop-700 hover:text-loop-200 transition-colors"
                   onClick={(e) => {
                     e.stopPropagation();
                     setIsMenuOpen(false);
@@ -225,7 +225,7 @@ function ThreadItem({
                   Rename
                 </button>
                 <button
-                  className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs text-red-400 hover:bg-neutral-700/50 hover:text-red-300 transition-colors"
+                  className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs text-red-400 hover:bg-loop-700/50 hover:text-red-300 transition-colors"
                   onClick={(e) => {
                     e.stopPropagation();
                     setIsMenuOpen(false);
@@ -268,27 +268,27 @@ export function Sidebar({
   const [showSettings, setShowSettings] = useState(false);
 
   return (
-    <aside className="no-drag flex h-full min-h-0 w-[260px] flex-col gap-3 border-r border-neutral-700 bg-neutral-800 p-3 text-sm text-neutral-300 pt-10">
+    <aside className="no-drag flex h-full min-h-0 w-[260px] flex-col gap-3 border-r border-loop-700 bg-loop-800 p-3 text-sm text-loop-300 pt-10">
       <nav className="flex flex-col gap-1">
         <button
-          className="group flex w-full items-center gap-3 rounded-lg px-2 py-1.5 text-left text-[13px] font-medium text-neutral-200 transition-colors hover:bg-neutral-700 disabled:cursor-not-allowed disabled:opacity-50"
+          className="group flex w-full items-center gap-3 rounded-lg px-2 py-1.5 text-left text-[13px] font-medium text-loop-200 transition-colors hover:bg-loop-700 disabled:cursor-not-allowed disabled:opacity-50"
           type="button"
           onClick={onNewConversation}
           disabled={!selectedWorkspaceId}
         >
-          <Edit3 size={15} className="text-neutral-400 group-hover:text-neutral-200" />
+          <Edit3 size={15} className="text-loop-400 group-hover:text-loop-200" />
           <span>New thread</span>
         </button>
       </nav>
 
       <section className="flex min-h-0 flex-col gap-2 mt-2">
-        <header className="flex items-center justify-between px-2 text-xs font-medium text-neutral-400">
+        <header className="flex items-center justify-between px-2 text-xs font-medium text-loop-400">
           <div className="flex items-center gap-2">
             <span>Workspace</span>
           </div>
           <div className="flex gap-3">
             <button
-              className="hover:text-neutral-200 transition-colors"
+              className="hover:text-loop-200 transition-colors"
               onClick={onPickFolder}
               title="Pick Folder to Create Workspace from"
             >
@@ -305,26 +305,26 @@ export function Sidebar({
                 <div className="group/ws relative flex w-full flex-col">
                   {/* Workspace Folder Header */}
                   <button
-                    className="flex w-full items-center justify-between rounded-lg px-2 py-1 text-left text-[13px] text-neutral-300 transition-colors hover:bg-neutral-700"
+                    className="flex w-full items-center justify-between rounded-lg px-2 py-1 text-left text-[13px] text-loop-300 transition-colors hover:bg-loop-700"
                     onClick={() => onSelectWorkspace(ws.id)}
                   >
                     <div className="flex min-w-0 flex-1 items-center gap-2">
                       <div className="flex w-[15px] shrink-0 items-center justify-center">
                         {isSelected ? (
-                          <FolderOpen size={15} className="text-neutral-400" />
+                          <FolderOpen size={15} className="text-loop-400" />
                         ) : (
-                          <Folder size={15} className="text-neutral-400" />
+                          <Folder size={15} className="text-loop-400" />
                         )}
                       </div>
                       <div className="flex min-w-0 flex-1 items-center justify-between gap-2 pr-1">
-                        <span className="truncate leading-tight font-medium text-neutral-200">{ws.name}</span>
-                        <span className="shrink-0 text-[10px] text-neutral-500 font-mono opacity-60" title={ws.rootPath}>{shortID(ws.id)}</span>
+                        <span className="truncate leading-tight font-medium text-loop-200">{ws.name}</span>
+                        <span className="shrink-0 text-[10px] text-loop-500 font-mono opacity-60" title={ws.rootPath}>{shortID(ws.id)}</span>
                       </div>
                     </div>
                   </button>
                   <button
                     type="button"
-                    className="absolute right-0 top-[50%] -translate-y-[50%] text-neutral-500 hover:text-red-400 opacity-0 group-hover/ws:opacity-100 p-2 transition-all"
+                    className="absolute right-0 top-[50%] -translate-y-[50%] text-loop-500 hover:text-red-400 opacity-0 group-hover/ws:opacity-100 p-2 transition-all"
                     onClick={() => onDeleteWorkspace(ws.id)}
                     title="Delete Workspace"
                     aria-label="Delete workspace"
@@ -337,7 +337,7 @@ export function Sidebar({
                 {isSelected && (
                   <div className="flex flex-col gap-0.5">
                     {conversations.length === 0 ? (
-                      <p className="pl-8 text-[12px] text-neutral-500 py-1">No threads</p>
+                      <p className="pl-8 text-[12px] text-loop-500 py-1">No threads</p>
                     ) : (
                       conversations.map((conversation) => {
                         const isActive = conversation.id === selectedConversationId;
@@ -366,41 +366,41 @@ export function Sidebar({
       <section className="mt-auto flex flex-col pt-4">
         <button
           type="button"
-          className="group flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-left text-[13px] font-medium text-neutral-300 transition-colors hover:bg-neutral-700 hover:text-neutral-200"
+          className="group flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-left text-[13px] font-medium text-loop-300 transition-colors hover:bg-loop-700 hover:text-loop-200"
           onClick={() => setShowSettings((prev) => !prev)}
         >
           <span className="inline-flex items-center gap-3">
-            <Settings2 size={15} className="text-neutral-400 group-hover:text-neutral-200" />
+            <Settings2 size={15} className="text-loop-400 group-hover:text-loop-200" />
             Settings
           </span>
           {showSettings ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
         </button>
 
         {showSettings && (
-          <div className="mt-3 flex flex-col gap-2 rounded-xl bg-neutral-900 border border-neutral-800/50 p-3 text-[12px] shadow-sm">
+          <div className="mt-3 flex flex-col gap-2 rounded-xl bg-loop-900 border border-loop-800/50 p-3 text-[12px] shadow-sm">
             <div>
-              <label className="mb-1 block text-[10px] uppercase tracking-wider text-neutral-500">API</label>
+              <label className="mb-1 block text-[10px] uppercase tracking-wider text-loop-500">API</label>
               <input
-                className="w-full rounded-md border border-neutral-700/50 bg-neutral-900 px-2 py-1.5 text-neutral-300 outline-none transition-colors focus:border-blue-500/50 focus:bg-neutral-800 focus:ring-1 focus:ring-blue-500/50"
+                className="w-full rounded-md border border-loop-700/50 bg-loop-900 px-2 py-1.5 text-loop-300 outline-none transition-colors focus:border-blue-500/50 focus:bg-loop-800 focus:ring-1 focus:ring-blue-500/50"
                 value={backendUrl}
                 onChange={(event) => onBackendUrlChange(event.target.value)}
               />
             </div>
-            <label className="flex items-center gap-2 cursor-pointer pt-1 text-neutral-400 hover:text-neutral-300 transition-colors">
+            <label className="flex items-center gap-2 cursor-pointer pt-1 text-loop-400 hover:text-loop-300 transition-colors">
               <input
                 type="checkbox"
                 checked={hideLifecycle}
                 onChange={(e) => onHideLifecycleChange(e.target.checked)}
-                className="rounded border-neutral-700 bg-neutral-900 text-blue-500 focus:ring-blue-500/50 focus:ring-offset-neutral-900 cursor-pointer"
+                className="rounded border-loop-700 bg-loop-900 text-blue-500 focus:ring-blue-500/50 focus:ring-offset-loop-900 cursor-pointer"
               />
               <span className="text-[11px] font-medium uppercase tracking-wider">Hide Lifecycle</span>
             </label>
-            <label className="flex items-center gap-2 cursor-pointer pt-1 text-neutral-400 hover:text-neutral-300 transition-colors">
+            <label className="flex items-center gap-2 cursor-pointer pt-1 text-loop-400 hover:text-loop-300 transition-colors">
               <input
                 type="checkbox"
                 checked={showMascot}
                 onChange={(e) => onShowMascotChange(e.target.checked)}
-                className="rounded border-neutral-700 bg-neutral-900 text-blue-500 focus:ring-blue-500/50 focus:ring-offset-neutral-900 cursor-pointer"
+                className="rounded border-loop-700 bg-loop-900 text-blue-500 focus:ring-blue-500/50 focus:ring-offset-loop-900 cursor-pointer"
               />
               <span className="text-[11px] font-medium uppercase tracking-wider">Show Mascot</span>
             </label>

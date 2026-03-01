@@ -46,12 +46,12 @@ export const RequestUserInputCard = memo(function RequestUserInputCard({
 
       <div className="mt-3 space-y-3">
         {payload.questions.map((question) => (
-          <div key={question.id} className="rounded-md border border-neutral-700/80 bg-neutral-950/40 p-2.5">
+          <div key={question.id} className="rounded-md border border-loop-700/80 bg-loop-950/40 p-2.5">
             <div className="mb-1 flex items-center gap-2">
-              <span className="rounded bg-neutral-800 px-1.5 py-0.5 font-mono text-[10px] text-neutral-300">{question.header}</span>
-              <span className="font-mono text-[10px] text-neutral-500">{question.id}</span>
+              <span className="rounded bg-loop-800 px-1.5 py-0.5 font-mono text-[10px] text-loop-300">{question.header}</span>
+              <span className="font-mono text-[10px] text-loop-500">{question.id}</span>
             </div>
-            <p className="mb-2 text-xs text-neutral-100">{question.question}</p>
+            <p className="mb-2 text-xs text-loop-100">{question.question}</p>
             <div className="space-y-1.5">
               {question.options.map((option, index) => {
                 const selected = selectedByQuestion[question.id] === index;
@@ -62,12 +62,12 @@ export const RequestUserInputCard = memo(function RequestUserInputCard({
                     className={`w-full rounded-md border px-2 py-1.5 text-left text-xs transition-colors ${
                       selected
                         ? 'border-blue-500/80 bg-blue-500/15 text-blue-100'
-                        : 'border-neutral-700 bg-neutral-900/60 text-neutral-200 hover:border-neutral-500'
+                        : 'border-loop-700 bg-loop-900/60 text-loop-200 hover:border-loop-500'
                     }`}
                     onClick={() => setSelectedByQuestion((prev) => ({ ...prev, [question.id]: index }))}
                   >
                     <div className="font-semibold">{option.label}</div>
-                    <div className="mt-0.5 text-[11px] text-neutral-400">{option.description}</div>
+                    <div className="mt-0.5 text-[11px] text-loop-400">{option.description}</div>
                   </button>
                 );
               })}
@@ -79,7 +79,7 @@ export const RequestUserInputCard = memo(function RequestUserInputCard({
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <button
           type="button"
-          className="rounded-md border border-neutral-600 px-2.5 py-1.5 text-xs font-medium text-neutral-200 transition-colors hover:border-neutral-400 disabled:cursor-not-allowed disabled:opacity-45"
+          className="rounded-md border border-loop-600 px-2.5 py-1.5 text-xs font-medium text-loop-200 transition-colors hover:border-loop-400 disabled:cursor-not-allowed disabled:opacity-45"
           disabled={!canCompose || !hasSelection}
           onClick={() => {
             if (!replyText) {
@@ -92,7 +92,7 @@ export const RequestUserInputCard = memo(function RequestUserInputCard({
         </button>
         <button
           type="button"
-          className="rounded-md bg-blue-600 px-2.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-neutral-700 disabled:text-neutral-400"
+          className="rounded-md bg-blue-600 px-2.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-loop-700 disabled:text-loop-400"
           disabled={sendDisabled}
           onClick={handleSend}
         >
@@ -100,7 +100,7 @@ export const RequestUserInputCard = memo(function RequestUserInputCard({
         </button>
       </div>
       {payload.nextStep ? (
-        <p className="mt-2 text-[11px] text-neutral-400">{payload.nextStep}</p>
+        <p className="mt-2 text-[11px] text-loop-400">{payload.nextStep}</p>
       ) : null}
     </div>
   );

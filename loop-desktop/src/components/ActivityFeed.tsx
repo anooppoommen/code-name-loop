@@ -189,7 +189,7 @@ export const ActivityFeed = memo(function ActivityFeed({
       >
         <div className="mx-auto w-full max-w-[720px]">
           {events.length === 0 ? (
-            <p className="m-0 px-4 py-3 text-sm text-neutral-500">No run activity yet. Send a task to start streaming events.</p>
+            <p className="m-0 px-4 py-3 text-sm text-loop-500">No run activity yet. Send a task to start streaming events.</p>
           ) : (
             events.map((event) => (
               <ActivityItem
@@ -217,7 +217,7 @@ export const ActivityFeed = memo(function ActivityFeed({
       {!isAtBottom && events.length > 0 ? (
         <button
           type="button"
-          className={`absolute left-1/2 z-10 -translate-x-1/2 inline-flex items-center gap-1.5 rounded-full border border-neutral-700 bg-neutral-900/95 px-3 py-1.5 text-xs font-medium text-neutral-200 shadow-lg shadow-black/30 backdrop-blur transition-colors hover:border-neutral-500 hover:bg-neutral-800 ${isSending ? 'bottom-8' : 'bottom-4'
+          className={`absolute left-1/2 z-10 -translate-x-1/2 inline-flex items-center gap-1.5 rounded-full border border-loop-700 bg-loop-900/95 px-3 py-1.5 text-xs font-medium text-loop-200 shadow-lg shadow-black/30 backdrop-blur transition-colors hover:border-loop-500 hover:bg-loop-800 ${isSending ? 'bottom-8' : 'bottom-4'
             }`}
           onClick={() => scrollToBottom('smooth')}
           aria-label="Scroll to bottom"

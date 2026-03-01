@@ -13,15 +13,15 @@ export function AppHeader({ workspaceName, conversationTitle, isSidebarOpen, onT
       <div className="flex items-center gap-2 pointer-events-auto">
         <button
           onClick={onToggleSidebar}
-          className="no-drag flex items-center justify-center rounded-md p-1.5 text-neutral-400 transition-colors hover:bg-neutral-700/50 hover:text-neutral-200"
+          className="no-drag flex items-center justify-center rounded-md p-1.5 text-loop-400 transition-colors hover:bg-loop-700/50 hover:text-loop-200"
           title={isSidebarOpen ? "Collapse Sidebar" : "Open Sidebar"}
         >
           {isSidebarOpen ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />}
         </button>
-        <div className="flex items-center gap-1.5 overflow-hidden text-[12px] text-neutral-400 font-medium ml-1">
+        <div className="flex items-center gap-1.5 overflow-hidden text-[12px] text-loop-400 font-medium ml-1">
           <span className="max-w-[140px] truncate">{workspaceName}</span>
           <span className="opacity-50">/</span>
-          <span className="max-w-[200px] truncate text-neutral-300">
+          <span className="max-w-[200px] truncate text-loop-300">
             {conversationTitle || 'New thread'}
           </span>
         </div>

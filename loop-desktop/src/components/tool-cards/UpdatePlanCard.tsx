@@ -16,7 +16,7 @@ export const UpdatePlanCard = memo(function UpdatePlanCard({ payload }: { payloa
             <span className={`mt-0.5 font-mono text-[10px] ${statusTone(item.status)}`}>
               {statusGlyph(item.status)}
             </span>
-            <span className="text-neutral-200">{item.step}</span>
+            <span className="text-loop-200">{item.step}</span>
           </div>
         ))}
       </div>

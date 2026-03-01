@@ -207,7 +207,7 @@ export function statusTone(status: string): string {
   if (normalized === 'in_progress') {
     return 'text-amber-300';
   }
-  return 'text-neutral-400';
+  return 'text-loop-400';
 }
 
 function readQuestions(value: unknown): RequestUserInputQuestion[] {

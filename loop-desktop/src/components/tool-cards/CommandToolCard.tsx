@@ -49,34 +49,34 @@ export const CommandToolCard = memo(function CommandToolCard({ payload }: { payl
   }, [payload.executedAt]);
 
   return (
-    <div className="mt-2 overflow-hidden rounded-xl bg-neutral-800/90">
-      <div className="flex items-center justify-between gap-3 px-4 py-3">
-        <div className="group relative flex min-w-0 flex-1 items-center gap-2">
+    <div className="mt-2 overflow-hidden rounded-xl bg-loop-700">
+      <div className="border-b border-loop-600/50 flex items-center justify-between gap-3 px-4 py-3">
+        <div className=" group relative flex min-w-0 flex-1 items-center gap-2">
           <div className="flex shrink-0 items-center gap-2">
             <span
-              className="text-[11px] font-semibold tracking-wide text-neutral-300"
+              className="text-[11px] font-semibold tracking-wide text-loop-200"
               style={{ fontFamily: GEIST_MONO_STACK }}
             >
               {payload.shellLabel || 'bash'}
             </span>
-            <span className="text-[13px] text-neutral-400" style={{ fontFamily: GEIST_MONO_STACK }}>
+            <span className="text-[13px] text-loop-300" style={{ fontFamily: GEIST_MONO_STACK }}>
               $
             </span>
           </div>
           <div className="relative min-w-0 flex-1">
             <pre
-              className="m-0 overflow-x-hidden text-ellipsis whitespace-nowrap pb-0.5 text-[13px] leading-relaxed text-neutral-100 scrollbar-hidden group-hover:overflow-x-auto group-hover:text-clip"
+              className="m-0 overflow-x-hidden text-ellipsis whitespace-nowrap pb-0.5 text-[13px] leading-relaxed text-loop-100 scrollbar-hidden group-hover:overflow-x-auto group-hover:text-clip"
               style={{ fontFamily: GEIST_MONO_STACK }}
             >
               <span className="pr-6">{payload.command || '(no command)'}</span>
             </pre>
-            <div className="pointer-events-none absolute bottom-0 right-0 top-0 w-8 bg-gradient-to-l from-neutral-800/90 to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
+            <div className="pointer-events-none absolute bottom-0 right-0 top-0 w-8 bg-gradient-to-l from-loop-700/85 to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1">
           <button
             type="button"
-            className="inline-flex shrink-0 items-center justify-center rounded-md p-1.5 text-neutral-400 transition-colors hover:bg-neutral-700/50 hover:text-neutral-100"
+            className="inline-flex shrink-0 items-center justify-center rounded-md p-1.5 text-loop-300 transition-colors hover:bg-loop-600/50 hover:text-loop-100"
             title="Copy command"
             onClick={handleCopyCommand}
           >
@@ -85,7 +85,7 @@ export const CommandToolCard = memo(function CommandToolCard({ payload }: { payl
           {hasDetails ? (
             <button
               type="button"
-              className="inline-flex shrink-0 items-center justify-center rounded-md p-1.5 text-neutral-400 transition-colors hover:bg-neutral-700/50 hover:text-neutral-100"
+              className="inline-flex shrink-0 items-center justify-center rounded-md p-1.5 text-loop-300 transition-colors hover:bg-loop-600/50 hover:text-loop-100"
               onClick={() => setExpanded((prev) => !prev)}
             >
               <ChevronDown size={14} className={`transition-transform ${expanded ? 'rotate-180' : ''}`} />
@@ -106,7 +106,7 @@ export const CommandToolCard = memo(function CommandToolCard({ payload }: { payl
           >
             <button
               type="button"
-              className="absolute right-2 top-2 z-10 inline-flex items-center justify-center rounded-md bg-neutral-800/80 p-1.5 text-neutral-400 opacity-0 backdrop-blur transition-all hover:bg-neutral-700 hover:text-neutral-100 group-hover/output:opacity-100"
+              className="absolute right-2 top-2 z-10 inline-flex items-center justify-center rounded-md bg-loop-700/80 p-1.5 text-loop-300 opacity-0 backdrop-blur transition-all hover:bg-loop-600 hover:text-loop-100 group-hover/output:opacity-100"
               title="Copy output"
               onClick={handleCopyOutput}
             >
@@ -115,7 +115,7 @@ export const CommandToolCard = memo(function CommandToolCard({ payload }: { payl
 
             {hasOutput ? (
               <pre
-                className="max-h-80 overflow-auto whitespace-pre-wrap px-4 pb-2 text-[11px] leading-relaxed text-neutral-300 scrollbar-thin"
+                className="max-h-80 overflow-auto whitespace-pre-wrap px-4 pb-2 text-[11px] leading-relaxed text-loop-200 scrollbar-thin"
                 style={{ fontFamily: GEIST_MONO_STACK }}
               >
                 {payload.output}
@@ -131,30 +131,30 @@ export const CommandToolCard = memo(function CommandToolCard({ payload }: { payl
         ) : null}
       </AnimatePresence>
 
-      <div className="flex items-center justify-between gap-2 border-t border-neutral-500/40 px-4 pb-3 pt-2 text-xs">
-        <span className="text-[11px] text-neutral-400">
+      <div className="flex items-center justify-between gap-2 bg-loop-700 px-4 pb-3 pt-2 text-xs">
+        <span className="text-[11px] text-loop-300">
           {executedAtLabel ? `Executed ${executedAtLabel}` : ''}
         </span>
         {payload.status === 'success' ? (
-          <div className="inline-flex items-center gap-1.5 text-[13px] text-neutral-300">
+          <div className="inline-flex items-center gap-1.5 text-[13px] text-loop-200">
             <Check size={13} className="text-emerald-300" />
             <span>{statusLabel}</span>
           </div>
         ) : null}
         {payload.status === 'error' ? (
-          <div className="inline-flex items-center gap-1.5 text-[13px] text-neutral-300">
+          <div className="inline-flex items-center gap-1.5 text-[13px] text-loop-200">
             <AlertTriangle size={13} className="text-red-300" />
             <span>{statusLabel}</span>
           </div>
         ) : null}
         {payload.status === 'running' ? (
-          <div className="inline-flex items-center gap-1.5 text-[13px] text-neutral-300">
+          <div className="inline-flex items-center gap-1.5 text-[13px] text-loop-200">
             <Loader2 size={13} className="animate-spin text-blue-300" />
             <span>{statusLabel}</span>
           </div>
         ) : null}
         {payload.status === 'waiting' ? (
-          <div className="inline-flex items-center gap-1.5 text-[13px] text-neutral-300">
+          <div className="inline-flex items-center gap-1.5 text-[13px] text-loop-200">
             <Loader2 size={13} className="text-amber-300" />
             <span>{statusLabel}</span>
           </div>
