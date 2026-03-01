@@ -1,6 +1,6 @@
-import type { ActivityEvent, ThinkingLevel } from '../types/ui';
+import type { ActivityEvent, ComposerModel, ThinkingLevel } from '../types/ui';
 import { asRecord, getField, getString } from '../utils/parsers';
-import { DEFAULT_THINKING_LEVEL, THINKING_LEVELS } from './useLoopDesktop.constants';
+import { COMPOSER_MODELS, DEFAULT_COMPOSER_MODEL, DEFAULT_THINKING_LEVEL, THINKING_LEVELS } from './useLoopDesktop.constants';
 import type { PendingCommandApproval } from './useLoopDesktop.types';
 
 export function normalizeThinkingLevel(value: unknown): ThinkingLevel {
@@ -12,6 +12,23 @@ export function normalizeThinkingLevel(value: unknown): ThinkingLevel {
     return normalized as ThinkingLevel;
   }
   return DEFAULT_THINKING_LEVEL;
+}
+
+export function normalizeComposerModel(value: unknown): ComposerModel {
+  if (typeof value !== 'string') {
+    return DEFAULT_COMPOSER_MODEL;
+  }
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'gemini-3-flash') {
+    return 'gemini-3-flash-preview';
+  }
+  if (normalized === 'gemini-3-pro') {
+    return 'gemini-3-pro-preview';
+  }
+  if (COMPOSER_MODELS.includes(normalized as ComposerModel)) {
+    return normalized as ComposerModel;
+  }
+  return DEFAULT_COMPOSER_MODEL;
 }
 
 export function rowsFromUnknown(payload: unknown): unknown[] {

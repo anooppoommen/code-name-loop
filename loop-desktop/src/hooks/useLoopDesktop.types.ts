@@ -1,5 +1,5 @@
 import type { Dispatch, RefObject, SetStateAction } from 'react';
-import type { ActivityEvent, ConversationSummary, ThinkingLevel, WorkspaceSummary } from '../types/ui';
+import type { ActivityEvent, ComposerModel, ConversationSummary, ThinkingLevel, WorkspaceSummary } from '../types/ui';
 
 export interface StreamHandle {
   streamId: string;
@@ -90,6 +90,8 @@ export interface LoopDesktopController {
   setShowMascot: (value: boolean) => void;
   thinkingLevel: ThinkingLevel;
   setThinkingLevel: (value: ThinkingLevel) => void;
+  composerModel: ComposerModel;
+  setComposerModel: (value: ComposerModel) => void;
   currentStatus: string;
   setCurrentStatus: (value: string) => void;
 

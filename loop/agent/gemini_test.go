@@ -85,3 +85,38 @@ func TestParseThinkingLevel(t *testing.T) {
 		}
 	}
 }
+
+func TestParseModel(t *testing.T) {
+	tests := []struct {
+		input   string
+		want    string
+		wantErr bool
+	}{
+		{input: "", want: DefaultModel},
+		{input: "gemini-3.1-pro-preview", want: ModelGemini31ProPreview},
+		{input: "Gemini 3.1 Pro Preview", want: ModelGemini31ProPreview},
+		{input: "gemini-3-flash-preview", want: ModelGemini3FlashPreview},
+		{input: "gemini-3-flash", want: ModelGemini3FlashPreview},
+		{input: "gemini 3 flash", want: ModelGemini3FlashPreview},
+		{input: "gemini-3-pro-preview", want: ModelGemini3ProPreview},
+		{input: "gemini-3-pro", want: ModelGemini3ProPreview},
+		{input: "gemini 3 pro", want: ModelGemini3ProPreview},
+		{input: "unknown-model", wantErr: true},
+	}
+
+	for _, tc := range tests {
+		got, err := ParseModel(tc.input)
+		if tc.wantErr {
+			if err == nil {
+				t.Fatalf("expected error for input %q", tc.input)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatalf("unexpected error for input %q: %v", tc.input, err)
+		}
+		if got != tc.want {
+			t.Fatalf("ParseModel(%q)=%q, want %q", tc.input, got, tc.want)
+		}
+	}
+}

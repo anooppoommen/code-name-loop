@@ -159,6 +159,7 @@ export async function openReplyStream(
         },
         body: JSON.stringify({
           message: payload.message,
+          model: payload.model,
           thinking_level: payload.thinkingLevel ?? 'medium',
           images: payload.images,
         }),

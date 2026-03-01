@@ -1,5 +1,6 @@
 export type ActivityKind = 'user' | 'assistant' | 'thought' | 'status' | 'tool' | 'error' | 'lifecycle' | 'thread';
 export type ThinkingLevel = 'minimal' | 'low' | 'medium' | 'high';
+export type ComposerModel = 'gemini-3.1-pro-preview' | 'gemini-3-flash-preview' | 'gemini-3-pro-preview';
 
 export type ToolPhase = 'start' | 'result';
 

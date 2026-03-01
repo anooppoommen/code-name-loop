@@ -1,6 +1,6 @@
 import { ArrowUp, Brain, Check, ChevronDown, Plus, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ThinkingLevel } from '../types/ui';
+import type { ComposerModel, ThinkingLevel } from '../types/ui';
 import type { ComposerImage } from '../hooks/useLoopDesktop';
 import { KeyboardShortcut } from './KeyboardShortcut';
 
@@ -11,6 +11,8 @@ interface ComposerProps {
   canCompose: boolean;
   thinkingLevel: ThinkingLevel;
   onThinkingLevelChange: (value: ThinkingLevel) => void;
+  composerModel: ComposerModel;
+  onComposerModelChange: (value: ComposerModel) => void;
   onSubmit: () => Promise<void>;
   onStop: () => Promise<void>;
   onQueue?: () => void;
@@ -30,6 +32,12 @@ const THINKING_OPTIONS: Array<{
   { value: 'high', label: 'High', toneClass: 'text-violet-300' },
 ];
 
+const MODEL_OPTIONS: Array<{ value: ComposerModel; label: string }> = [
+  { value: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro Preview' },
+  { value: 'gemini-3-flash-preview', label: 'Gemini 3 Flash' },
+  { value: 'gemini-3-pro-preview', label: 'Gemini 3 Pro' },
+];
+
 export function Composer({
   messageInput,
   onMessageInputChange,
@@ -37,6 +45,8 @@ export function Composer({
   canCompose,
   thinkingLevel,
   onThinkingLevelChange,
+  composerModel,
+  onComposerModelChange,
   onSubmit,
   onStop,
   onQueue,
@@ -46,14 +56,20 @@ export function Composer({
 }: ComposerProps) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const dropdownRef = useRef<HTMLDivElement | null>(null);
+  const modelDropdownRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [isThinkingMenuOpen, setIsThinkingMenuOpen] = useState(false);
+  const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
   const hasContent = messageInput.trim().length > 0 || composerImages.length > 0;
   // If isSending is true, we can still Queue, so only disable if we can't compose at all
   const actionDisabled = !canCompose || !hasContent;
   const activeThinking = useMemo(
     () => THINKING_OPTIONS.find((option) => option.value === thinkingLevel) ?? THINKING_OPTIONS[2],
     [thinkingLevel],
+  );
+  const activeModel = useMemo(
+    () => MODEL_OPTIONS.find((option) => option.value === composerModel) ?? MODEL_OPTIONS[0],
+    [composerModel],
   );
 
   // Auto-focus when conversation/thread changes
@@ -74,18 +90,23 @@ export function Composer({
   }, [messageInput]);
 
   useEffect(() => {
-    if (!isThinkingMenuOpen) {
+    if (!isThinkingMenuOpen && !isModelMenuOpen) {
       return;
     }
 
     const handleOutsideClick = (event: MouseEvent) => {
-      if (!dropdownRef.current?.contains(event.target as Node)) {
+      const target = event.target as Node;
+      const outsideThinking = !dropdownRef.current?.contains(target);
+      const outsideModel = !modelDropdownRef.current?.contains(target);
+      if (outsideThinking && outsideModel) {
         setIsThinkingMenuOpen(false);
+        setIsModelMenuOpen(false);
       }
     };
     const handleEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         setIsThinkingMenuOpen(false);
+        setIsModelMenuOpen(false);
       }
     };
 
@@ -95,7 +116,7 @@ export function Composer({
       document.removeEventListener('mousedown', handleOutsideClick);
       document.removeEventListener('keydown', handleEscape);
     };
-  }, [isThinkingMenuOpen]);
+  }, [isModelMenuOpen, isThinkingMenuOpen]);
 
   const handleFile = (file: File) => {
     if (!file.type.startsWith('image/')) return;
@@ -212,13 +233,66 @@ export function Composer({
                 <Plus size={14} />
               </button>
 
+              <div ref={modelDropdownRef} className="relative">
+                <button
+                  type="button"
+                  className="inline-flex h-6 items-center gap-1.5 rounded-full border border-loop-700/80 bg-loop-900 px-2 text-[11px] font-medium text-loop-200 transition hover:border-blue-500/60 hover:bg-loop-800"
+                  aria-haspopup="menu"
+                  aria-expanded={isModelMenuOpen}
+                  onClick={() => {
+                    setIsModelMenuOpen((prev) => !prev);
+                    setIsThinkingMenuOpen(false);
+                  }}
+                >
+                  <span>{activeModel.label}</span>
+                  <ChevronDown
+                    size={12}
+                    className={`text-loop-400 transition-transform ${isModelMenuOpen ? 'rotate-180' : ''}`}
+                  />
+                </button>
+
+                {isModelMenuOpen ? (
+                  <div
+                    className="absolute bottom-full left-0 z-20 mb-2 w-48 rounded-xl border border-loop-700/80 bg-loop-900 p-1 shadow-2xl shadow-black/40"
+                    role="menu"
+                  >
+                    {MODEL_OPTIONS.map((option) => {
+                      const isActive = option.value === composerModel;
+                      return (
+                        <button
+                          key={option.value}
+                          type="button"
+                          role="menuitemradio"
+                          aria-checked={isActive}
+                          className={`flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-left text-[11px] transition ${
+                            isActive
+                              ? 'bg-blue-500/15 text-blue-100'
+                              : 'text-loop-300 hover:bg-loop-800 hover:text-loop-100'
+                          }`}
+                          onClick={() => {
+                            onComposerModelChange(option.value);
+                            setIsModelMenuOpen(false);
+                          }}
+                        >
+                          <span>{option.label}</span>
+                          {isActive ? <Check size={12} className="text-blue-300" /> : null}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </div>
+
               <div ref={dropdownRef} className="relative">
                 <button
                   type="button"
                   className="inline-flex h-6 items-center gap-1.5 rounded-full border border-loop-700/80 bg-loop-900 px-2 text-[11px] font-medium text-loop-200 transition hover:border-blue-500/60 hover:bg-loop-800"
                   aria-haspopup="menu"
                   aria-expanded={isThinkingMenuOpen}
-                  onClick={() => setIsThinkingMenuOpen((prev) => !prev)}
+                  onClick={() => {
+                    setIsThinkingMenuOpen((prev) => !prev);
+                    setIsModelMenuOpen(false);
+                  }}
                 >
                   <Brain size={12} className={activeThinking.toneClass} />
                   <span>{activeThinking.label}</span>

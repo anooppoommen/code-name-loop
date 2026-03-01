@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { LoopStreamPacket } from '../electron';
 import { attachReplyStream, chooseFolder, getActiveReplyStream, openReplyStream, requestJson } from '../lib/loopClient';
-import type { ActivityEvent, ConversationSummary, ThinkingLevel, WorkspaceSummary } from '../types/ui';
+import type { ActivityEvent, ComposerModel, ConversationSummary, ThinkingLevel, WorkspaceSummary } from '../types/ui';
 import {
   type ActivityInput,
   historyRowsToActivities,
@@ -16,9 +16,10 @@ import {
   shortID,
   stringifyResponseError,
 } from '../utils/parsers';
-import { DEFAULT_THINKING_LEVEL, STORAGE_KEY } from './useLoopDesktop.constants';
+import { DEFAULT_COMPOSER_MODEL, DEFAULT_THINKING_LEVEL, STORAGE_KEY } from './useLoopDesktop.constants';
 import {
   annotateActivitiesWithPendingApprovals,
+  normalizeComposerModel,
   normalizeThinkingLevel,
   parsePendingCommandApprovalRecord,
   rowsFromUnknown,
@@ -56,6 +57,8 @@ export function useLoopDesktop(): LoopDesktopController {
   const [showMascot, setShowMascot] = useState(false);
   const [draftThinkingLevel, setDraftThinkingLevel] = useState<ThinkingLevel>(DEFAULT_THINKING_LEVEL);
   const [thinkingLevelsByConversation, setThinkingLevelsByConversation] = useState<Record<string, ThinkingLevel>>({});
+  const [draftComposerModel, setDraftComposerModel] = useState<ComposerModel>(DEFAULT_COMPOSER_MODEL);
+  const [composerModelsByConversation, setComposerModelsByConversation] = useState<Record<string, ComposerModel>>({});
   const [conversationsByWorkspace, setConversationsByWorkspace] = useState<Record<string, ConversationSummary[]>>({});
   const [selectedConversationId, setSelectedConversationId] = useState('');
 
@@ -223,6 +226,28 @@ export function useLoopDesktop(): LoopDesktopController {
         return;
       }
       setThinkingLevelsByConversation((prev) => ({
+        ...prev,
+        [selectedConversationId]: normalized,
+      }));
+    },
+    [selectedConversationId],
+  );
+
+  const composerModel = useMemo<ComposerModel>(() => {
+    if (!selectedConversationId) {
+      return draftComposerModel;
+    }
+    return composerModelsByConversation[selectedConversationId] ?? DEFAULT_COMPOSER_MODEL;
+  }, [composerModelsByConversation, draftComposerModel, selectedConversationId]);
+
+  const setComposerModel = useCallback(
+    (value: ComposerModel): void => {
+      const normalized = normalizeComposerModel(value);
+      if (!selectedConversationId) {
+        setDraftComposerModel(normalized);
+        return;
+      }
+      setComposerModelsByConversation((prev) => ({
         ...prev,
         [selectedConversationId]: normalized,
       }));
@@ -464,6 +489,8 @@ export function useLoopDesktop(): LoopDesktopController {
         showMascot?: boolean;
         draftThinkingLevel?: ThinkingLevel;
         thinkingLevelsByConversation?: Record<string, unknown>;
+        draftComposerModel?: ComposerModel;
+        composerModelsByConversation?: Record<string, unknown>;
       };
 
       if (parsed.backendUrl) {
@@ -497,6 +524,19 @@ export function useLoopDesktop(): LoopDesktopController {
         }
         setThinkingLevelsByConversation(normalized);
       }
+      if (parsed.draftComposerModel) {
+        setDraftComposerModel(normalizeComposerModel(parsed.draftComposerModel));
+      }
+      if (parsed.composerModelsByConversation && typeof parsed.composerModelsByConversation === 'object') {
+        const normalized: Record<string, ComposerModel> = {};
+        for (const [conversationID, model] of Object.entries(parsed.composerModelsByConversation)) {
+          if (!conversationID) {
+            continue;
+          }
+          normalized[conversationID] = normalizeComposerModel(model);
+        }
+        setComposerModelsByConversation(normalized);
+      }
     } catch {
       // Ignore invalid local storage state.
     }
@@ -514,6 +554,8 @@ export function useLoopDesktop(): LoopDesktopController {
         showMascot,
         draftThinkingLevel,
         thinkingLevelsByConversation,
+        draftComposerModel,
+        composerModelsByConversation,
       }),
     );
   }, [
@@ -525,6 +567,8 @@ export function useLoopDesktop(): LoopDesktopController {
     showMascot,
     draftThinkingLevel,
     thinkingLevelsByConversation,
+    draftComposerModel,
+    composerModelsByConversation,
   ]);
 
   const refreshWorkspaces = useCallback(async (): Promise<void> => {
@@ -553,6 +597,7 @@ export function useLoopDesktop(): LoopDesktopController {
       setConversationsByWorkspace({});
       setSelectedConversationId('');
       setThinkingLevelsByConversation({});
+      setComposerModelsByConversation({});
       return;
     }
 
@@ -999,6 +1044,7 @@ export function useLoopDesktop(): LoopDesktopController {
         return;
       }
       const selectedThinkingLevel = normalizeThinkingLevel(thinkingLevel);
+      const selectedComposerModel = normalizeComposerModel(composerModel);
 
       const conversationId = await ensureConversationId(text);
       if (!conversationId) {
@@ -1007,6 +1053,10 @@ export function useLoopDesktop(): LoopDesktopController {
       setThinkingLevelsByConversation((prev) => ({
         ...prev,
         [conversationId]: selectedThinkingLevel,
+      }));
+      setComposerModelsByConversation((prev) => ({
+        ...prev,
+        [conversationId]: selectedComposerModel,
       }));
 
       clearNotices();
@@ -1038,6 +1088,7 @@ export function useLoopDesktop(): LoopDesktopController {
           baseUrl: backendUrl,
           conversationId,
           message: text,
+          model: selectedComposerModel,
           thinkingLevel: selectedThinkingLevel,
           images: messageImages.length > 0 ? messageImages.map(img => ({
             mime_type: img.mimeType,
@@ -1076,6 +1127,7 @@ export function useLoopDesktop(): LoopDesktopController {
       resetConversationLiveState,
       selectedConversationId,
       sendingConversations,
+      composerModel,
       thinkingLevel,
       setComposerImages,
       setMessageInput,
@@ -1294,6 +1346,8 @@ export function useLoopDesktop(): LoopDesktopController {
     setShowMascot,
     thinkingLevel,
     setThinkingLevel,
+    composerModel,
+    setComposerModel,
     currentStatus,
     setCurrentStatus,
 

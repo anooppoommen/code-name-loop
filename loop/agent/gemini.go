@@ -16,9 +16,12 @@ import (
 
 const (
 	// DefaultModel is the Gemini model used when none is specified.
-	DefaultModel           = "gemini-3.1-pro-preview"
-	defaultIncludeThoughts = true
-	DefaultThinkingLevel   = genai.ThinkingLevelMedium
+	ModelGemini31ProPreview  = "gemini-3.1-pro-preview"
+	ModelGemini3FlashPreview = "gemini-3-flash-preview"
+	ModelGemini3ProPreview   = "gemini-3-pro-preview"
+	DefaultModel             = ModelGemini31ProPreview
+	defaultIncludeThoughts   = true
+	DefaultThinkingLevel     = genai.ThinkingLevelMedium
 )
 
 // Client wraps the Gemini GenAI client.
@@ -66,6 +69,8 @@ func (c *Client) Model() string { return c.model }
 
 // GenerateContentConfig holds configuration for a model call.
 type GenerateContentConfig struct {
+	// Model optionally overrides the client's default model for this request.
+	Model string
 	// SystemInstruction is the system prompt for the model.
 	SystemInstruction string
 	// Temperature controls randomness (0.0 = deterministic, 2.0 = very random).
@@ -142,6 +147,38 @@ func ParseThinkingLevel(raw string) (genai.ThinkingLevel, error) {
 	}
 }
 
+// ParseModel normalizes user-facing model values.
+// Accepted canonical values:
+//   - gemini-3.1-pro-preview
+//   - gemini-3-flash-preview
+//   - gemini-3-pro-preview
+//
+// Empty defaults to DefaultModel.
+func ParseModel(raw string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(raw))
+	normalized = strings.ReplaceAll(normalized, "_", "-")
+	normalized = strings.Join(strings.Fields(normalized), "-")
+
+	switch normalized {
+	case "":
+		return DefaultModel, nil
+	case ModelGemini31ProPreview, "gemini-3.1-pro", "gemini-3.1-propreview", "gemini-3-1-pro-preview", "3.1-pro-preview":
+		return ModelGemini31ProPreview, nil
+	case ModelGemini3FlashPreview, "gemini-3-flash", "gemini-3-flashpreview", "3-flash", "3-flash-preview":
+		return ModelGemini3FlashPreview, nil
+	case ModelGemini3ProPreview, "gemini-3-pro", "gemini-3-propreview", "3-pro", "3-pro-preview":
+		return ModelGemini3ProPreview, nil
+	default:
+		return "", fmt.Errorf(
+			"invalid model %q (allowed: %s, %s, %s)",
+			raw,
+			ModelGemini31ProPreview,
+			ModelGemini3FlashPreview,
+			ModelGemini3ProPreview,
+		)
+	}
+}
+
 // StreamMessage sends the conversation history to Gemini using the streaming
 // API and returns a channel of TurnEvents. The channel emits EventDelta for
 // each chunk, EventMessageDone with the fully assembled message when the
@@ -157,12 +194,16 @@ func (c *Client) StreamMessage(ctx context.Context, history []*models.Message, c
 
 		contents := MessagesToModelContents(history)
 		genaiConfig := c.buildGenaiConfig(config)
+		modelName := c.model
+		if config != nil && strings.TrimSpace(config.Model) != "" {
+			modelName = strings.TrimSpace(config.Model)
+		}
 
 		// Use the streaming API: returns iter.Seq2[*GenerateContentResponse, error].
 		var accumulatedParts []*genai.Part
 		var usage *genai.GenerateContentResponseUsageMetadata
 
-		for resp, err := range c.genai.Models.GenerateContentStream(ctx, c.model, contents, genaiConfig) {
+		for resp, err := range c.genai.Models.GenerateContentStream(ctx, modelName, contents, genaiConfig) {
 			// Check context cancellation first.
 			if ctx.Err() != nil {
 				ch <- TurnEvent{Kind: EventError, Error: ctx.Err(), ErrorText: ctx.Err().Error()}
@@ -225,6 +266,7 @@ func (c *Client) StreamMessage(ctx context.Context, history []*models.Message, c
 				"tokens_input":  usage.PromptTokenCount,
 				"tokens_output": usage.CandidatesTokenCount,
 				"tokens_cached": usage.CachedContentTokenCount,
+				"model":         modelName,
 			}
 		}
 

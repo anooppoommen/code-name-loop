@@ -296,6 +296,8 @@ export default function App() {
                       canCompose={app.canCompose}
                       thinkingLevel={app.thinkingLevel}
                       onThinkingLevelChange={app.setThinkingLevel}
+                      composerModel={app.composerModel}
+                      onComposerModelChange={app.setComposerModel}
                       onSubmit={app.sendMessage}
                       onStop={app.cancelStream}
                       onQueue={app.queueMessage}

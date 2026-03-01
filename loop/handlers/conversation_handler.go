@@ -333,6 +333,7 @@ func (h *ConversationHandler) Timeline(w http.ResponseWriter, r *http.Request) {
 // replyRequest is the JSON body for the Reply endpoint.
 type replyRequest struct {
 	Message       string       `json:"message"`
+	Model         string       `json:"model,omitempty"`
 	ThinkingLevel string       `json:"thinking_level,omitempty"`
 	Images        []replyImage `json:"images,omitempty"`
 }
@@ -342,11 +343,67 @@ type replyImage struct {
 	Data     string `json:"data"` // base64 encoded
 }
 
+type modelOverrideClient struct {
+	base  agent.ModelClient
+	model string
+}
+
+func (c *modelOverrideClient) StreamMessage(
+	ctx context.Context,
+	history []*models.Message,
+	config *agent.GenerateContentConfig,
+) <-chan agent.TurnEvent {
+	if c == nil || c.base == nil {
+		ch := make(chan agent.TurnEvent)
+		close(ch)
+		return ch
+	}
+	if strings.TrimSpace(c.model) == "" {
+		return c.base.StreamMessage(ctx, history, config)
+	}
+
+	var cfg agent.GenerateContentConfig
+	if config != nil {
+		cfg = *config
+	}
+	cfg.Model = c.model
+	return c.base.StreamMessage(ctx, history, &cfg)
+}
+
+func (c *modelOverrideClient) Model() string {
+	if c == nil {
+		return ""
+	}
+	if strings.TrimSpace(c.model) != "" {
+		return c.model
+	}
+	type modelNamer interface {
+		Model() string
+	}
+	if namer, ok := c.base.(modelNamer); ok {
+		return namer.Model()
+	}
+	return ""
+}
+
+func resolveModelName(client agent.ModelClient) string {
+	if client == nil {
+		return ""
+	}
+	type modelNamer interface {
+		Model() string
+	}
+	if namer, ok := client.(modelNamer); ok {
+		return namer.Model()
+	}
+	return ""
+}
+
 // Reply handles user messages and streams the agent's response using SSE.
 // This is the primary user-facing endpoint for interacting with the agent.
 //
 // Request: POST /conversations/{id}/reply
-// Body:    {"message": "user text", "thinking_level": "optional minimal|low|medium|high"}
+// Body:    {"message": "user text", "model": "optional gemini model", "thinking_level": "optional minimal|low|medium|high"}
 // Response: text/event-stream (SSE)
 func (h *ConversationHandler) Reply(w http.ResponseWriter, r *http.Request) {
 	convID := models.ConversationID(r.PathValue("id"))
@@ -438,8 +495,25 @@ func (h *ConversationHandler) Reply(w http.ResponseWriter, r *http.Request) {
 		utils.WriteError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	log.Printf("[reply] start conv=%s thinking=%s message_chars=%d images=%d",
-		convID, strings.ToLower(string(thinkingLevel)), len(req.Message), len(req.Images))
+	selectedModel := strings.TrimSpace(req.Model)
+	replyClient := h.client
+	if selectedModel != "" {
+		selectedModel, err = agent.ParseModel(selectedModel)
+		if err != nil {
+			utils.WriteError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		replyClient = &modelOverrideClient{
+			base:  h.client,
+			model: selectedModel,
+		}
+	}
+	logModel := selectedModel
+	if logModel == "" {
+		logModel = resolveModelName(h.client)
+	}
+	log.Printf("[reply] start conv=%s model=%s thinking=%s message_chars=%d images=%d",
+		convID, logModel, strings.ToLower(string(thinkingLevel)), len(req.Message), len(req.Images))
 
 	// Load the conversation.
 	conv, err := h.store.Conversations().Get(r.Context(), convID)
@@ -476,14 +550,14 @@ func (h *ConversationHandler) Reply(w http.ResponseWriter, r *http.Request) {
 	// the same capabilities as the parent (including spawn_thread for nesting).
 	// We assemble the full list first, then construct spawn_thread with it.
 	agentTools := append(baseTools,
-		tools.NewSpawnThreadTool(h.store, h.client, ws, conv, baseTools, 0, emitThreadStatus),
+		tools.NewSpawnThreadTool(h.store, replyClient, ws, conv, baseTools, 0, emitThreadStatus),
 		tools.NewAwaitThreadTool(h.store, emitThreadStatus),
 	)
 
 	// Create agent session with all tools (depth=0 for root HTTP sessions).
 	session := agent.NewSession(
 		h.store,
-		h.client,
+		replyClient,
 		ws,
 		conv,
 		agentTools,

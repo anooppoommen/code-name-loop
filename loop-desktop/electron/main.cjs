@@ -109,7 +109,7 @@ function parseSseBlock(block) {
   return { eventName, data };
 }
 
-async function streamReplyToRenderer(streamId, baseUrl, conversationId, message, thinkingLevel, images) {
+async function streamReplyToRenderer(streamId, baseUrl, conversationId, message, model, thinkingLevel, images) {
   const endpoint = buildAbsoluteUrl(baseUrl, `/conversations/${conversationId}/reply`);
   const controller = new AbortController();
   const convKey = conversationKey(baseUrl, conversationId);
@@ -121,7 +121,7 @@ async function streamReplyToRenderer(streamId, baseUrl, conversationId, message,
   streamControllers.set(streamId, controller);
   streamMetaById.set(streamId, { baseUrl, conversationId, startedAt: Date.now() });
   streamIdByConversationKey.set(convKey, streamId);
-  streamLog(`start stream=${shortId(streamId)} conv=${shortId(conversationId)} thinking=${thinkingLevel || 'medium'} chars=${String(message || '').length} images=${Array.isArray(images) ? images.length : 0}`);
+  streamLog(`start stream=${shortId(streamId)} conv=${shortId(conversationId)} model=${model || 'gemini-3.1-pro-preview'} thinking=${thinkingLevel || 'medium'} chars=${String(message || '').length} images=${Array.isArray(images) ? images.length : 0}`);
 
   try {
     const response = await fetch(endpoint, {
@@ -131,6 +131,7 @@ async function streamReplyToRenderer(streamId, baseUrl, conversationId, message,
       },
       body: JSON.stringify({
         message,
+        model,
         thinking_level: thinkingLevel || 'medium',
         images,
       }),
@@ -293,6 +294,7 @@ ipcMain.handle('loop-api:start-stream', async (event, payload) => {
     baseUrl,
     conversationId,
     message,
+    model,
     images,
     streamId: clientStreamId,
     thinkingLevel,
@@ -320,7 +322,7 @@ ipcMain.handle('loop-api:start-stream', async (event, payload) => {
   }
 
   const streamId = clientStreamId || crypto.randomUUID();
-  void streamReplyToRenderer(streamId, baseUrl, conversationId, message || '', thinkingLevel, images);
+  void streamReplyToRenderer(streamId, baseUrl, conversationId, message || '', model, thinkingLevel, images);
 
   return {
     ok: true,
