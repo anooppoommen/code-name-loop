@@ -18,7 +18,7 @@ export const RequestUserInputCard = memo(function RequestUserInputCard({
 
   const hasSelection = Object.keys(selectedByQuestion).length > 0;
   const replyText = hasSelection ? buildRequestUserInputReply(payload.questions, selectedByQuestion) : '';
-  const sendDisabled = !canCompose || isSending || isSubmitting || !hasSelection;
+  const sendDisabled = !canCompose || isSubmitting || !hasSelection;
 
   const handleSend = useCallback(() => {
     if (sendDisabled || !replyText) {
@@ -96,7 +96,7 @@ export const RequestUserInputCard = memo(function RequestUserInputCard({
           disabled={sendDisabled}
           onClick={handleSend}
         >
-          {isSubmitting ? 'Sending...' : 'Send Selected Reply'}
+          {isSubmitting ? (isSending ? 'Queueing...' : 'Sending...') : (isSending ? 'Queue Selected Reply' : 'Send Selected Reply')}
         </button>
       </div>
       {payload.nextStep ? (

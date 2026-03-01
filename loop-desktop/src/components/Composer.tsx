@@ -1,7 +1,8 @@
 import { ArrowUp, Brain, Check, ChevronDown, Plus, X } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ThinkingLevel } from '../types/ui';
 import type { ComposerImage } from '../hooks/useLoopDesktop';
+import { KeyboardShortcut } from './KeyboardShortcut';
 
 interface ComposerProps {
   messageInput: string;
@@ -128,47 +129,29 @@ export function Composer({
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
+  const composerEnterHandler = useCallback((event: KeyboardEvent): boolean => {
+    if (event.key !== 'Enter' || event.shiftKey || event.isComposing) {
+      return false;
+    }
+    if (document.activeElement !== textareaRef.current) {
+      return false;
+    }
+    if (actionDisabled) {
+      return true;
+    }
+    if (isSending && onQueue) {
+      onQueue();
+    } else {
+      void onSubmit();
+    }
+    return true;
+  }, [actionDisabled, isSending, onQueue, onSubmit]);
+
   return (
-    <div className="w-full px-4 pb-3 pt-1">
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (actionDisabled) {
-            return;
-          }
-          if (isSending && onQueue) {
-            onQueue();
-          } else {
-            void onSubmit();
-          }
-        }}
-        className="no-drag relative flex shrink-0 flex-col rounded-xl border border-neutral-700/50 bg-neutral-800 p-2 shadow-sm transition-all focus-within:border-blue-500/50 focus-within:ring-1 focus-within:ring-blue-500/50"
-      >
-        {composerImages.length > 0 && (
-          <div className="flex flex-wrap gap-2 mb-2 px-1">
-            {composerImages.map((img) => (
-              <div key={img.id} className="relative group rounded-md border border-neutral-700 overflow-hidden w-16 h-16 bg-neutral-900">
-                <img src={img.dataUrl} alt="attachment" className="w-full h-full object-cover" />
-                <button
-                  type="button"
-                  onClick={() => setComposerImages((prev) => prev.filter((i) => i.id !== img.id))}
-                  className="absolute top-1 right-1 p-0.5 bg-black/50 hover:bg-black/80 rounded-full text-white opacity-0 group-hover:opacity-100 transition-opacity"
-                >
-                  <X size={12} />
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-        <textarea
-          ref={textareaRef}
-          value={messageInput}
-          onPaste={handlePaste}
-          onChange={(event) => onMessageInputChange(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key !== 'Enter' || event.shiftKey) {
-              return;
-            }
+    <KeyboardShortcut priority={20} enabled={canCompose} onEnter={composerEnterHandler}>
+      <div className="w-full px-4 pb-3 pt-1">
+        <form
+          onSubmit={(event) => {
             event.preventDefault();
             if (actionDisabled) {
               return;
@@ -179,109 +162,136 @@ export function Composer({
               void onSubmit();
             }
           }}
-          className="max-h-[132px] min-h-[36px] w-full resize-none bg-transparent px-1 py-0.5 text-[13px] leading-relaxed text-neutral-200 outline-none placeholder:text-neutral-500 disabled:cursor-not-allowed disabled:opacity-50"
-          placeholder={canCompose ? 'Ask for follow-up changes...' : 'Select a workspace to start chatting'}
-          disabled={!canCompose}
-        />
+          className="no-drag relative flex shrink-0 flex-col rounded-xl border border-neutral-700/50 bg-neutral-800 p-2 shadow-sm transition-all focus-within:border-blue-500/50 focus-within:ring-1 focus-within:ring-blue-500/50"
+        >
+          {composerImages.length > 0 && (
+            <div className="mb-2 flex flex-wrap gap-2 px-1">
+              {composerImages.map((img) => (
+                <div
+                  key={img.id}
+                  className="group relative h-16 w-16 overflow-hidden rounded-md border border-neutral-700 bg-neutral-900"
+                >
+                  <img src={img.dataUrl} alt="attachment" className="h-full w-full object-cover" />
+                  <button
+                    type="button"
+                    onClick={() => setComposerImages((prev) => prev.filter((i) => i.id !== img.id))}
+                    className="absolute right-1 top-1 rounded-full bg-black/50 p-0.5 text-white opacity-0 transition-opacity group-hover:opacity-100 hover:bg-black/80"
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          <textarea
+            ref={textareaRef}
+            value={messageInput}
+            onPaste={handlePaste}
+            onChange={(event) => onMessageInputChange(event.target.value)}
+            className="max-h-[132px] min-h-[36px] w-full resize-none bg-transparent px-1 py-0.5 text-[13px] leading-relaxed text-neutral-200 outline-none placeholder:text-neutral-500 disabled:cursor-not-allowed disabled:opacity-50"
+            placeholder={canCompose ? 'Ask for follow-up changes...' : 'Select a workspace to start chatting'}
+            disabled={!canCompose}
+          />
 
-        <div className="mt-1.5 flex items-center justify-between px-0.5">
-          <div className="flex items-center gap-1.5">
-            <input
-              type="file"
-              ref={fileInputRef}
-              className="hidden"
-              accept="image/*"
-              multiple
-              onChange={handleFileSelect}
-            />
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              className="inline-flex h-6 w-6 items-center justify-center rounded-full text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200 transition"
-              title="Attach image"
-            >
-              <Plus size={14} />
-            </button>
-
-            <div ref={dropdownRef} className="relative">
+          <div className="mt-1.5 flex items-center justify-between px-0.5">
+            <div className="flex items-center gap-1.5">
+              <input
+                type="file"
+                ref={fileInputRef}
+                className="hidden"
+                accept="image/*"
+                multiple
+                onChange={handleFileSelect}
+              />
               <button
                 type="button"
-                className="inline-flex h-6 items-center gap-1.5 rounded-full border border-neutral-700/80 bg-neutral-900 px-2 text-[11px] font-medium text-neutral-200 transition hover:border-blue-500/60 hover:bg-neutral-800"
-                aria-haspopup="menu"
-                aria-expanded={isThinkingMenuOpen}
-                onClick={() => setIsThinkingMenuOpen((prev) => !prev)}
+                onClick={() => fileInputRef.current?.click()}
+                className="inline-flex h-6 w-6 items-center justify-center rounded-full text-neutral-400 transition hover:bg-neutral-800 hover:text-neutral-200"
+                title="Attach image"
               >
-                <Brain size={12} className={activeThinking.toneClass} />
-                <span>{activeThinking.label}</span>
-                <ChevronDown
-                  size={12}
-                  className={`text-neutral-400 transition-transform ${isThinkingMenuOpen ? 'rotate-180' : ''}`}
-                />
+                <Plus size={14} />
               </button>
 
-              {isThinkingMenuOpen ? (
-                <div
-                  className="absolute bottom-full left-0 z-20 mb-2 w-32 rounded-xl border border-neutral-700/80 bg-neutral-900 p-1 shadow-2xl shadow-black/40"
-                  role="menu"
+              <div ref={dropdownRef} className="relative">
+                <button
+                  type="button"
+                  className="inline-flex h-6 items-center gap-1.5 rounded-full border border-neutral-700/80 bg-neutral-900 px-2 text-[11px] font-medium text-neutral-200 transition hover:border-blue-500/60 hover:bg-neutral-800"
+                  aria-haspopup="menu"
+                  aria-expanded={isThinkingMenuOpen}
+                  onClick={() => setIsThinkingMenuOpen((prev) => !prev)}
                 >
-                  {THINKING_OPTIONS.map((option) => {
-                    const isActive = option.value === thinkingLevel;
-                    return (
-                      <button
-                        key={option.value}
-                        type="button"
-                        role="menuitemradio"
-                        aria-checked={isActive}
-                        className={`flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-left text-[11px] transition ${
-                          isActive
-                            ? 'bg-blue-500/15 text-blue-100'
-                            : 'text-neutral-300 hover:bg-neutral-800 hover:text-neutral-100'
-                        }`}
-                        onClick={() => {
-                          onThinkingLevelChange(option.value);
-                          setIsThinkingMenuOpen(false);
-                        }}
-                      >
-                        <span className="inline-flex items-center gap-2">
-                          <Brain size={12} className={isActive ? 'text-blue-300' : option.toneClass} />
-                          {option.label}
-                        </span>
-                        {isActive ? <Check size={12} className="text-blue-300" /> : null}
-                      </button>
-                    );
-                  })}
-                </div>
-              ) : null}
+                  <Brain size={12} className={activeThinking.toneClass} />
+                  <span>{activeThinking.label}</span>
+                  <ChevronDown
+                    size={12}
+                    className={`text-neutral-400 transition-transform ${isThinkingMenuOpen ? 'rotate-180' : ''}`}
+                  />
+                </button>
+
+                {isThinkingMenuOpen ? (
+                  <div
+                    className="absolute bottom-full left-0 z-20 mb-2 w-32 rounded-xl border border-neutral-700/80 bg-neutral-900 p-1 shadow-2xl shadow-black/40"
+                    role="menu"
+                  >
+                    {THINKING_OPTIONS.map((option) => {
+                      const isActive = option.value === thinkingLevel;
+                      return (
+                        <button
+                          key={option.value}
+                          type="button"
+                          role="menuitemradio"
+                          aria-checked={isActive}
+                          className={`flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-left text-[11px] transition ${
+                            isActive
+                              ? 'bg-blue-500/15 text-blue-100'
+                              : 'text-neutral-300 hover:bg-neutral-800 hover:text-neutral-100'
+                          }`}
+                          onClick={() => {
+                            onThinkingLevelChange(option.value);
+                            setIsThinkingMenuOpen(false);
+                          }}
+                        >
+                          <span className="inline-flex items-center gap-2">
+                            <Brain size={12} className={isActive ? 'text-blue-300' : option.toneClass} />
+                            {option.label}
+                          </span>
+                          {isActive ? <Check size={12} className="text-blue-300" /> : null}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="flex items-center gap-1.5">
+              {isSending && (
+                <button
+                  className="inline-flex h-7 min-w-[32px] items-center justify-center gap-1.5 rounded-full bg-neutral-700 px-2.5 text-[11px] font-semibold text-neutral-300 shadow-sm transition hover:bg-neutral-600 hover:text-white"
+                  type="button"
+                  onClick={() => void onStop()}
+                >
+                  <div className="h-3 w-3 animate-spin rounded-full border-2 border-white/20 border-t-white" />
+                  <span>Stop</span>
+                </button>
+              )}
+              <button
+                className="inline-flex h-7 min-w-[32px] items-center justify-center gap-1.5 rounded-full bg-blue-600 px-2.5 text-[11px] font-semibold text-white shadow-sm transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-neutral-800 disabled:text-neutral-500"
+                type="submit"
+                disabled={actionDisabled}
+              >
+                {isSending ? (
+                  'Queue'
+                ) : hasContent ? (
+                  'Send'
+                ) : (
+                  <ArrowUp size={13} />
+                )}
+              </button>
             </div>
           </div>
-
-          <div className="flex items-center gap-1.5">
-          {isSending && (
-            <button
-              className="inline-flex h-7 min-w-[32px] items-center justify-center gap-1.5 rounded-full bg-neutral-700 px-2.5 text-[11px] font-semibold text-neutral-300 shadow-sm transition hover:bg-neutral-600 hover:text-white"
-              type="button"
-              onClick={() => void onStop()}
-            >
-              <div className="h-3 w-3 animate-spin rounded-full border-2 border-white/20 border-t-white" />
-              <span>Stop</span>
-            </button>
-          )}
-          <button
-            className="inline-flex h-7 min-w-[32px] items-center justify-center gap-1.5 rounded-full bg-blue-600 px-2.5 text-[11px] font-semibold text-white shadow-sm transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-neutral-800 disabled:text-neutral-500"
-            type="submit"
-            disabled={actionDisabled}
-          >
-            {isSending ? (
-              'Queue'
-            ) : hasContent ? (
-              'Send'
-            ) : (
-              <ArrowUp size={13} />
-            )}
-          </button>
-          </div>
-        </div>
-      </form>
-    </div>
+        </form>
+      </div>
+    </KeyboardShortcut>
   );
 }

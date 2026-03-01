@@ -18,6 +18,8 @@ const (
 	EventToolResult TurnEventKind = "tool_result"
 	// EventStatus is emitted for agent progress updates between deltas/tool events.
 	EventStatus TurnEventKind = "status"
+	// EventApprovalRequest is emitted when a command tool asks for user approval.
+	EventApprovalRequest TurnEventKind = "approval_request"
 	// EventTurnComplete is emitted when the entire turn is finished
 	// (no more tool calls, model has produced a final response).
 	EventTurnComplete TurnEventKind = "turn_complete"
@@ -45,6 +47,8 @@ type TurnEvent struct {
 	ToolResult *ToolResultEvent `json:"tool_result,omitempty"`
 	// Status is populated for EventStatus events.
 	Status *StatusEvent `json:"status,omitempty"`
+	// ApprovalRequest is populated for EventApprovalRequest events.
+	ApprovalRequest *ApprovalRequestEvent `json:"approval_request,omitempty"`
 	// Error is populated for EventError events.
 	Error error `json:"-"`
 	// ErrorText is the serializable error string for JSON transport.
@@ -80,4 +84,13 @@ type ToolResultEvent struct {
 type StatusEvent struct {
 	Text      string `json:"text"`
 	Iteration int    `json:"iteration,omitempty"`
+}
+
+// ApprovalRequestEvent represents a pending command approval request.
+type ApprovalRequestEvent struct {
+	ID             string `json:"id"`
+	ConversationID string `json:"conversation_id,omitempty"`
+	ToolName       string `json:"tool_name"`
+	Command        string `json:"command"`
+	Workdir        string `json:"workdir,omitempty"`
 }

@@ -1,15 +1,21 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { AppHeader } from './components/AppHeader';
 import { ActivityFeed } from './components/ActivityFeed';
 import { Composer } from './components/Composer';
 import { Sidebar } from './components/Sidebar';
 import { ToastStack } from './components/ToastStack';
-import { useLoopDesktop } from './hooks/useLoopDesktop';
+import { useLoopDesktop, type CommandApprovalDecision, type PendingCommandApproval } from './hooks/useLoopDesktop';
+import { KeyboardShortcut } from './components/KeyboardShortcut';
 import { QueuedMessages } from './components/QueuedMessages';
 import { Powerline } from './components/Powerline';
 
 const MOBILE_SIDEBAR_BREAKPOINT_PX = 920;
+const COMMAND_APPROVAL_OPTIONS: Array<{ decision: CommandApprovalDecision; label: string; keyHint: string }> = [
+  { decision: 'deny', label: 'Deny', keyHint: '1' },
+  { decision: 'allow_once', label: 'Allow once', keyHint: '2' },
+  { decision: 'allow_session', label: 'Allow in session', keyHint: '3' },
+];
 
 export default function App() {
   const app = useLoopDesktop();
@@ -42,46 +48,48 @@ export default function App() {
     });
   }, [app.selectedConversationId]);
 
-  // Global keybindings for navigation
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'n') {
-        e.preventDefault();
-        void app.newConversation();
-      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'b') {
-        e.preventDefault();
-        setIsSidebarOpen((prev) => !prev);
-      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'o') {
-        e.preventDefault();
-        setHistoryState((prev) => {
-          // If currently in an untracked state (e.g., new thread ''), return to the top of the history
-          if (!app.selectedConversationId && prev.list.length > 0 && prev.index >= 0) {
-            isNavigatingRef.current = true;
-            app.selectConversation(prev.list[prev.index]);
-            return prev;
-          }
-          if (prev.index > 0) {
-            isNavigatingRef.current = true;
-            app.selectConversation(prev.list[prev.index - 1]);
-            return { ...prev, index: prev.index - 1 };
-          }
+  const appShortcutHandler = useCallback((event: KeyboardEvent): boolean => {
+    if (!(event.ctrlKey || event.metaKey)) {
+      return false;
+    }
+    const key = event.key.toLowerCase();
+    if (key === 'n') {
+      void app.newConversation();
+      return true;
+    }
+    if (key === 'b') {
+      setIsSidebarOpen((prev) => !prev);
+      return true;
+    }
+    if (key === 'o') {
+      setHistoryState((prev) => {
+        // If currently in an untracked state (e.g., new thread ''), return to the top of the history
+        if (!app.selectedConversationId && prev.list.length > 0 && prev.index >= 0) {
+          isNavigatingRef.current = true;
+          app.selectConversation(prev.list[prev.index]);
           return prev;
-        });
-      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'i') {
-        e.preventDefault();
-        setHistoryState((prev) => {
-          if (prev.index < prev.list.length - 1) {
-            isNavigatingRef.current = true;
-            app.selectConversation(prev.list[prev.index + 1]);
-            return { ...prev, index: prev.index + 1 };
-          }
-          return prev;
-        });
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+        }
+        if (prev.index > 0) {
+          isNavigatingRef.current = true;
+          app.selectConversation(prev.list[prev.index - 1]);
+          return { ...prev, index: prev.index - 1 };
+        }
+        return prev;
+      });
+      return true;
+    }
+    if (key === 'i') {
+      setHistoryState((prev) => {
+        if (prev.index < prev.list.length - 1) {
+          isNavigatingRef.current = true;
+          app.selectConversation(prev.list[prev.index + 1]);
+          return { ...prev, index: prev.index + 1 };
+        }
+        return prev;
+      });
+      return true;
+    }
+    return false;
   }, [app]);
 
   useEffect(() => {
@@ -98,113 +106,283 @@ export default function App() {
   }, []);
 
   return (
-    <div className="flex h-full w-full overflow-hidden bg-neutral-900 text-neutral-200 selection:bg-blue-500/30">
-      <ToastStack toasts={app.notices} onDismiss={app.dismissNotice} />
+    <KeyboardShortcut priority={0} enabled onKeyDown={appShortcutHandler}>
+      <div className="flex h-full w-full overflow-hidden bg-neutral-900 text-neutral-200 selection:bg-blue-500/30">
+        <ToastStack toasts={app.notices} onDismiss={app.dismissNotice} />
 
-      <AnimatePresence initial={false}>
-        {isSidebarOpen && (
-          <motion.div
-            initial={{ width: 0, opacity: 0 }}
-            animate={{ width: 260, opacity: 1 }}
-            exit={{ width: 0, opacity: 0 }}
-            transition={{ duration: 0.2, ease: "easeInOut" }}
-            className="h-full shrink-0 overflow-hidden border-r border-neutral-700 bg-neutral-800 max-[920px]:w-full max-[920px]:h-auto pt-10"
-          >
-            <Sidebar
-              backendUrl={app.backendUrl}
-              onBackendUrlChange={app.setBackendUrl}
-              onPickFolder={() => void app.pickAndCreateWorkspace()}
-              onDeleteWorkspace={(workspaceId) => {
-                void app.deleteWorkspace(workspaceId);
-              }}
-              hideLifecycle={app.hideLifecycle}
-              onHideLifecycleChange={app.setHideLifecycle}
-              workspaces={app.workspaces}
-              selectedWorkspaceId={app.selectedWorkspaceId}
-              onSelectWorkspace={app.selectWorkspace}
-              conversations={app.conversations}
-              selectedConversationId={app.selectedConversationId}
-              sendingConversations={app.sendingConversations}
-              onSelectConversation={app.selectConversation}
-              onNewConversation={() => void app.newConversation()}
-              onDeleteConversation={(conversationId) => {
-                void app.deleteConversation(conversationId);
-              }}
-              onRenameConversation={(conversationId, title) => {
-                void app.renameConversation(conversationId, title);
-              }}
-            />
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      <main className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden max-[920px]:h-auto max-[920px]:overflow-visible">
-        <AppHeader
-          workspaceName={app.selectedWorkspace?.name ?? 'No workspace selected'}
-          conversationTitle={app.selectedConversation?.title ?? ''}
-          isSidebarOpen={isSidebarOpen}
-          onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
-        />
-
-        <div className="min-h-0 flex-1 overflow-hidden">
-          <div className="flex h-full w-full min-h-0 flex-col">
-            <div className="min-h-0 flex-1 overflow-hidden">
-              <ActivityFeed
-                events={app.activities}
-                conversationId={app.selectedConversationId}
-                containerRef={app.feedScrollRef}
-                canCompose={app.canCompose}
-                isSending={app.isSending}
-                onUseToolReply={app.applyToolResponseSuggestion}
-                onSendToolReply={app.sendToolResponseSuggestion}
+        <AnimatePresence initial={false}>
+          {isSidebarOpen && (
+            <motion.div
+              initial={{ width: 0, opacity: 0 }}
+              animate={{ width: 260, opacity: 1 }}
+              exit={{ width: 0, opacity: 0 }}
+              transition={{ duration: 0.2, ease: 'easeInOut' }}
+              className="h-full shrink-0 overflow-hidden border-r border-neutral-700 bg-neutral-800 max-[920px]:w-full max-[920px]:h-auto pt-10"
+            >
+              <Sidebar
+                backendUrl={app.backendUrl}
+                onBackendUrlChange={app.setBackendUrl}
+                onPickFolder={() => void app.pickAndCreateWorkspace()}
+                onDeleteWorkspace={(workspaceId) => {
+                  void app.deleteWorkspace(workspaceId);
+                }}
+                hideLifecycle={app.hideLifecycle}
+                onHideLifecycleChange={app.setHideLifecycle}
+                workspaces={app.workspaces}
+                selectedWorkspaceId={app.selectedWorkspaceId}
+                onSelectWorkspace={app.selectWorkspace}
+                conversations={app.conversations}
+                selectedConversationId={app.selectedConversationId}
+                sendingConversations={app.sendingConversations}
+                onSelectConversation={app.selectConversation}
+                onNewConversation={() => void app.newConversation()}
+                onDeleteConversation={(conversationId) => {
+                  void app.deleteConversation(conversationId);
+                }}
+                onRenameConversation={(conversationId, title) => {
+                  void app.renameConversation(conversationId, title);
+                }}
               />
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        <main className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden max-[920px]:h-auto max-[920px]:overflow-visible">
+          <AppHeader
+            workspaceName={app.selectedWorkspace?.name ?? 'No workspace selected'}
+            conversationTitle={app.selectedConversation?.title ?? ''}
+            isSidebarOpen={isSidebarOpen}
+            onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
+          />
+
+          <div className="min-h-0 flex-1 overflow-hidden">
+            <div className="flex h-full w-full min-h-0 flex-col">
+              <div className="min-h-0 flex-1 overflow-hidden">
+                <ActivityFeed
+                  events={app.activities}
+                  conversationId={app.selectedConversationId}
+                  containerRef={app.feedScrollRef}
+                  currentStatus={app.currentStatus}
+                  canCompose={app.canCompose}
+                  isSending={app.isSending}
+                  onUseToolReply={app.applyToolResponseSuggestion}
+                  onSendToolReply={app.sendToolResponseSuggestion}
+                />
+              </div>
+
+              <div className="relative mx-auto w-full max-w-[720px] shrink-0">
+                <QueuedMessages
+                  messages={app.queuedMessages}
+                  onReorder={app.reorderQueuedMessage}
+                  onRemove={app.removeQueuedMessage}
+                  onSteer={app.steerQueuedMessage}
+                />
+                <div className="relative z-10">
+                  <AnimatePresence initial={false} mode="wait">
+                    {app.pendingCommandApproval ? (
+                      <CommandApprovalSheet
+                        approval={app.pendingCommandApproval}
+                        pendingCount={app.pendingCommandApprovalCount}
+                        isResolving={app.isResolvingCommandApproval}
+                        onResolve={(decision, message) => void app.resolveCommandApproval(decision, message)}
+                      />
+                    ) : null}
+                  </AnimatePresence>
+                  <div className="relative z-20">
+                    <Composer
+                      messageInput={app.messageInput}
+                      onMessageInputChange={app.setMessageInput}
+                      isSending={app.isSending}
+                      canCompose={app.canCompose}
+                      thinkingLevel={app.thinkingLevel}
+                      onThinkingLevelChange={app.setThinkingLevel}
+                      onSubmit={app.sendMessage}
+                      onStop={app.cancelStream}
+                      onQueue={app.queueMessage}
+                      conversationId={app.selectedConversationId}
+                      composerImages={app.composerImages}
+                      setComposerImages={app.setComposerImages}
+                    />
+                  </div>
+                </div>
+              </div>
             </div>
+          </div>
 
-            <div className="mx-auto w-full max-w-[720px] shrink-0">
-              <AnimatePresence>
-                {app.isSending && (
-                  <motion.div
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: 10 }}
-                    className="px-5 pb-1 text-left text-[11px] font-medium"
-                  >
-                    <span className="animate-googleStatus bg-[linear-gradient(110deg,transparent_25%,rgba(255,255,255,0.7)_50%,transparent_75%)] bg-[length:200%_auto] bg-clip-text text-transparent drop-shadow-sm">
-                      {app.currentStatus || "Thinking..."}
-                    </span>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-              <QueuedMessages
-                messages={app.queuedMessages}
-                onReorder={app.reorderQueuedMessage}
-                onRemove={app.removeQueuedMessage}
-                onSteer={app.steerQueuedMessage}
-              />
-              <Composer
-                messageInput={app.messageInput}
-                onMessageInputChange={app.setMessageInput}
-                isSending={app.isSending}
-                canCompose={app.canCompose}
-                thinkingLevel={app.thinkingLevel}
-                onThinkingLevelChange={app.setThinkingLevel}
-                onSubmit={app.sendMessage}
-                onStop={app.cancelStream}
-                onQueue={app.queueMessage}
-                conversationId={app.selectedConversationId}
-                composerImages={app.composerImages}
-                setComposerImages={app.setComposerImages}
-              />
+          <Powerline
+            backendUrl={app.backendUrl}
+            workspaceId={app.selectedWorkspaceId}
+            conversationId={app.selectedConversationId}
+          />
+        </main>
+      </div>
+    </KeyboardShortcut>
+  );
+}
+
+function CommandApprovalSheet({
+  approval,
+  pendingCount,
+  isResolving,
+  onResolve,
+}: {
+  approval: PendingCommandApproval;
+  pendingCount: number;
+  isResolving: boolean;
+  onResolve: (decision: CommandApprovalDecision, message?: string) => void;
+}) {
+  const [activeOptionIndex, setActiveOptionIndex] = useState(1);
+  const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
+
+  useEffect(() => {
+    setActiveOptionIndex(1);
+  }, [approval.id]);
+
+  useEffect(() => {
+    const activeButton = optionRefs.current[activeOptionIndex];
+    if (activeButton) {
+      activeButton.focus({ preventScroll: true });
+    }
+  }, [activeOptionIndex, approval.id]);
+
+  const moveSelection = useCallback((direction: 1 | -1) => {
+    setActiveOptionIndex(
+      (current) => (current + direction + COMMAND_APPROVAL_OPTIONS.length) % COMMAND_APPROVAL_OPTIONS.length,
+    );
+  }, []);
+
+  const resolveDecision = useCallback((decision: CommandApprovalDecision) => {
+    onResolve(decision);
+  }, [onResolve]);
+
+  const onArrowDown = useCallback((): boolean => {
+    moveSelection(1);
+    return true;
+  }, [moveSelection]);
+
+  const onArrowUp = useCallback((): boolean => {
+    moveSelection(-1);
+    return true;
+  }, [moveSelection]);
+
+  const onArrowRight = useCallback((): boolean => {
+    moveSelection(1);
+    return true;
+  }, [moveSelection]);
+
+  const onArrowLeft = useCallback((): boolean => {
+    moveSelection(-1);
+    return true;
+  }, [moveSelection]);
+
+  const onDigit1 = useCallback((): boolean => {
+    setActiveOptionIndex(0);
+    return true;
+  }, []);
+
+  const onDigit2 = useCallback((): boolean => {
+    if (COMMAND_APPROVAL_OPTIONS.length < 2) {
+      return false;
+    }
+    setActiveOptionIndex(1);
+    return true;
+  }, []);
+
+  const onDigit3 = useCallback((): boolean => {
+    if (COMMAND_APPROVAL_OPTIONS.length < 3) {
+      return false;
+    }
+    setActiveOptionIndex(2);
+    return true;
+  }, []);
+
+  const onEnter = useCallback((): boolean => {
+    const selected = COMMAND_APPROVAL_OPTIONS[activeOptionIndex];
+    if (!selected) {
+      return false;
+    }
+    resolveDecision(selected.decision);
+    return true;
+  }, [activeOptionIndex, resolveDecision]);
+
+  return (
+    <KeyboardShortcut
+      priority={200}
+      enabled={!isResolving}
+      onArrowDown={onArrowDown}
+      onArrowRight={onArrowRight}
+      onArrowUp={onArrowUp}
+      onArrowLeft={onArrowLeft}
+      onDigit1={onDigit1}
+      onDigit2={onDigit2}
+      onDigit3={onDigit3}
+      onEnter={onEnter}
+    >
+      <motion.div
+        initial={{ opacity: 0, y: 26, scale: 0.985 }}
+        animate={{ opacity: 1, y: 0, scale: 1 }}
+        exit={{ opacity: 0, y: 16, scale: 0.985 }}
+        transition={{ duration: 0.22, ease: 'easeInOut' }}
+        className="pointer-events-none absolute inset-x-0 bottom-[calc(100%-24px)] z-10"
+      >
+        <div className="pointer-events-auto px-4">
+          <div className="rounded-xl border border-neutral-800/50 bg-neutral-800 p-2 shadow-lg shadow-black/55">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <div className="mb-1 text-[12px] text-neutral-300">
+                  <span className="font-mono text-neutral-200">{approval.toolName}</span> wants to run:
+                </div>
+                <div className="group relative min-w-0">
+                  <pre className="m-0 overflow-x-hidden text-ellipsis whitespace-nowrap pb-0.5 font-mono text-[13px] leading-relaxed text-neutral-100 scrollbar-hidden group-hover:overflow-x-auto group-hover:text-clip">
+                    <span className="pr-6">{approval.command}</span>
+                  </pre>
+                  <div className="pointer-events-none absolute bottom-0 right-0 top-0 w-8 bg-gradient-to-l from-neutral-900 to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
+                </div>
+              </div>
+              {pendingCount > 1 ? (
+                <span className="shrink-0 rounded border border-neutral-700 bg-neutral-950 px-1.5 py-0.5 text-[10px] text-neutral-300">
+                  {pendingCount} pending
+                </span>
+              ) : null}
+            </div>
+            {approval.workdir ? (
+              <p className="mt-1 text-[10px] text-neutral-500">
+                in <span className="font-mono text-neutral-400">{approval.workdir}</span>
+              </p>
+            ) : null}
+            <div className="mt-2 flex flex-col gap-1 pb-6" role="radiogroup" aria-label="Command approval options">
+              {COMMAND_APPROVAL_OPTIONS.map((option, index) => {
+                const isActive = index === activeOptionIndex;
+                return (
+                  <div key={option.decision} className="flex items-center gap-1">
+                    <button
+                      ref={(element) => {
+                        optionRefs.current[index] = element;
+                      }}
+                      type="button"
+                      role="radio"
+                      aria-checked={isActive}
+                      tabIndex={isActive ? 0 : -1}
+                      disabled={isResolving}
+                      className={`flex min-w-0 flex-1 items-center justify-between rounded-md px-2 py-1.5 text-left text-[11px] transition focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-neutral-800 disabled:cursor-not-allowed disabled:opacity-60 ${isActive
+                        ? 'text-neutral-100 bg-neutral-700'
+                        : ''
+                        }`}
+                      onFocus={() => setActiveOptionIndex(index)}
+                      onClick={() => resolveDecision(option.decision)}
+                    >
+                      <span>{option.label}</span>
+                      <span className="rounded bg-neutral-600 px-1 py-0.5 text-[10px] text-neutral-200">
+                        {option.keyHint}
+                      </span>
+                    </button>
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>
-
-        <Powerline
-          backendUrl={app.backendUrl}
-          workspaceId={app.selectedWorkspaceId}
-          conversationId={app.selectedConversationId}
-        />
-      </main>
-    </div>
+      </motion.div>
+    </KeyboardShortcut>
   );
 }

@@ -117,7 +117,12 @@ export function parseCommandToolPayload(event: ActivityEvent): CommandToolPayloa
   const parsedOutput = splitExecLikeOutput(payloadOutput || event.body || '');
 
   const command = (event.tool.command || '').trim() || inferCommandFromBody(event.body || '');
-  const status = resolveCommandStatus(event, payloadError, parsedOutput.runningSession);
+  const status = resolveCommandStatus(
+    event,
+    payloadError,
+    parsedOutput.runningSession,
+    Boolean(event.tool?.waitingApproval),
+  );
   const error = payloadError || event.tool.error || '';
 
   return {
@@ -152,7 +157,7 @@ export function parseFileToolPayload(event: ActivityEvent): FileToolPayload | nu
     toolName: event.tool.name,
     args: event.tool.args || {},
     output: payloadOutput.trimEnd(),
-    status: resolveCommandStatus(event, payloadError, false),
+    status: resolveCommandStatus(event, payloadError, false, false),
     error,
     executedAt: String(event.timestamp),
   };
@@ -296,7 +301,11 @@ function resolveCommandStatus(
   event: ActivityEvent,
   payloadError: string,
   runningSession: boolean,
+  waitingApproval: boolean,
 ): CommandToolStatus {
+  if (waitingApproval) {
+    return 'waiting';
+  }
   if (event.tool?.phase === 'start') {
     return 'running';
   }

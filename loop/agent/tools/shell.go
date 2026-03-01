@@ -25,8 +25,16 @@ type shellArgs struct {
 }
 
 // NewShellTool creates the shell_command tool.
-func NewShellTool(pm *ProcessManager, ws *models.Workspace) *agent.ToolDef {
+func NewShellTool(
+	pm *ProcessManager,
+	ws *models.Workspace,
+	approvalRequesters ...CommandApprovalRequester,
+) *agent.ToolDef {
 	guard := newPathGuard(ws)
+	var approvalRequester CommandApprovalRequester
+	if len(approvalRequesters) > 0 {
+		approvalRequester = approvalRequesters[0]
+	}
 	return &agent.ToolDef{
 		Declaration: &genai.FunctionDeclaration{
 			Name: "shell",
@@ -55,7 +63,7 @@ func NewShellTool(pm *ProcessManager, ws *models.Workspace) *agent.ToolDef {
 			},
 		},
 		Handler: func(ctx context.Context, args json.RawMessage) (json.RawMessage, error) {
-			return handleShell(ctx, args, pm, guard)
+			return handleShell(ctx, args, pm, guard, approvalRequester)
 		},
 		Intents: []string{
 			"Use for quick read-only diagnostics when exec_command is not required",
@@ -67,7 +75,13 @@ func NewShellTool(pm *ProcessManager, ws *models.Workspace) *agent.ToolDef {
 	}
 }
 
-func handleShell(ctx context.Context, args json.RawMessage, pm *ProcessManager, guard *pathGuard) (json.RawMessage, error) {
+func handleShell(
+	ctx context.Context,
+	args json.RawMessage,
+	pm *ProcessManager,
+	guard *pathGuard,
+	approvalRequesters ...CommandApprovalRequester,
+) (json.RawMessage, error) {
 	var a shellArgs
 	if err := json.Unmarshal(args, &a); err != nil {
 		return nil, fmt.Errorf("failed to parse arguments: %w", err)
@@ -85,6 +99,15 @@ func handleShell(ctx context.Context, args json.RawMessage, pm *ProcessManager, 
 	}
 	if err := validateGitIgnoreReadPolicy(ctx, a.Command, workdir, guard); err != nil {
 		return nil, err
+	}
+	if len(approvalRequesters) > 0 && approvalRequesters[0] != nil {
+		if err := maybeRequireCommandApproval(ctx, approvalRequesters[0], CommandApprovalRequest{
+			ToolName: "shell",
+			Command:  a.Command,
+			Workdir:  workdir,
+		}); err != nil {
+			return nil, err
+		}
 	}
 
 	timeoutMs := int64(shellDefaultTimeoutMs)

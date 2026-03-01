@@ -1,8 +1,10 @@
 package handlers
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -10,6 +12,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/google/uuid"
 
 	"loop/agent"
 	"loop/agent/tools"
@@ -22,13 +26,19 @@ import (
 // Only user-facing endpoints are exposed; internal operations
 // (like direct message CRUD) are handled by the agent loop.
 type ConversationHandler struct {
-	store  store.Store
-	client agent.ModelClient
-	pm     *tools.ProcessManager
+	store            store.Store
+	client           agent.ModelClient
+	pm               *tools.ProcessManager
+	commandApprovals *tools.CommandApprovalManager
 }
 
 func NewConversationHandler(s store.Store, client agent.ModelClient, pm *tools.ProcessManager) *ConversationHandler {
-	return &ConversationHandler{store: s, client: client, pm: pm}
+	return &ConversationHandler{
+		store:            s,
+		client:           client,
+		pm:               pm,
+		commandApprovals: tools.NewCommandApprovalManager(),
+	}
 }
 
 // RegisterRoutes registers conversation routes on the given mux.
@@ -42,6 +52,8 @@ func (h *ConversationHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /workspaces/{wsID}/conversations", h.ListByWorkspace)
 	mux.HandleFunc("GET /conversations/{id}/threads", h.ListThreads)
 	mux.HandleFunc("POST /conversations/{id}/reply", h.Reply)
+	mux.HandleFunc("GET /command-approvals", h.ListCommandApprovals)
+	mux.HandleFunc("POST /command-approvals/{id}/decision", h.ResolveCommandApproval)
 }
 
 func (h *ConversationHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -86,6 +98,11 @@ type updateConversationRequest struct {
 	Title string `json:"title"`
 }
 
+type resolveCommandApprovalRequest struct {
+	Decision string `json:"decision"`
+	Message  string `json:"message,omitempty"`
+}
+
 func (h *ConversationHandler) Update(w http.ResponseWriter, r *http.Request) {
 	id := models.ConversationID(r.PathValue("id"))
 
@@ -112,6 +129,47 @@ func (h *ConversationHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 
 	utils.WriteJSON(w, http.StatusOK, conv)
+}
+
+func (h *ConversationHandler) ResolveCommandApproval(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
+		utils.WriteError(w, http.StatusBadRequest, "approval id is required")
+		return
+	}
+
+	var req resolveCommandApprovalRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		utils.WriteError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	decision, err := tools.ParseCommandApprovalDecision(req.Decision)
+	if err != nil {
+		utils.WriteError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	if err := h.commandApprovals.Resolve(id, decision, req.Message); err != nil {
+		if errors.Is(err, tools.ErrCommandApprovalNotFound) {
+			utils.WriteError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		utils.WriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	utils.WriteJSON(w, http.StatusOK, map[string]any{
+		"id":       id,
+		"decision": decision,
+		"message":  strings.TrimSpace(req.Message),
+	})
+}
+
+func (h *ConversationHandler) ListCommandApprovals(w http.ResponseWriter, r *http.Request) {
+	conversationID := strings.TrimSpace(r.URL.Query().Get("conversation_id"))
+	pending := h.commandApprovals.ListPending(conversationID)
+	utils.WriteJSON(w, http.StatusOK, pending)
 }
 
 func (h *ConversationHandler) Delete(w http.ResponseWriter, r *http.Request) {
@@ -281,12 +339,16 @@ type replyImage struct {
 // Response: text/event-stream (SSE)
 func (h *ConversationHandler) Reply(w http.ResponseWriter, r *http.Request) {
 	convID := models.ConversationID(r.PathValue("id"))
+	approvalSessionID := uuid.New().String()
+	defer h.commandApprovals.ClearSession(approvalSessionID)
 	streamStartedAt := time.Now()
 	var threadStatusDelivered atomic.Int64
 	var threadStatusDropped atomic.Int64
 	var threadStatusForced atomic.Int64
+	var commandApprovalDropped atomic.Int64
 
 	threadStatusCh := make(chan string, 1024)
+	commandApprovalCh := make(chan tools.CommandApprovalRequest, 64)
 	emitThreadStatus := func(msg string) {
 		if strings.TrimSpace(msg) == "" {
 			return
@@ -317,6 +379,23 @@ func (h *ConversationHandler) Reply(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	emitCommandApprovalRequest := func(req tools.CommandApprovalRequest) {
+		select {
+		case commandApprovalCh <- req:
+		default:
+			dropped := commandApprovalDropped.Add(1)
+			if dropped == 1 || dropped%10 == 0 {
+				log.Printf("[reply] conv=%s dropped command approval requests=%d", convID, dropped)
+			}
+		}
+	}
+	commandApprovalRequester := tools.CommandApprovalRequesterFunc(
+		func(ctx context.Context, req tools.CommandApprovalRequest) (tools.CommandApprovalResolution, error) {
+			req.SessionID = approvalSessionID
+			req.ConversationID = string(convID)
+			return h.commandApprovals.AwaitDecision(ctx, req, emitCommandApprovalRequest)
+		},
+	)
 
 	var req replyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -369,7 +448,7 @@ func (h *ConversationHandler) Reply(w http.ResponseWriter, r *http.Request) {
 
 	// Build the base tool list (without spawn_thread/await_thread initially).
 	baseTools := []*agent.ToolDef{
-		tools.NewExecCommandTool(h.pm, ws),
+		tools.NewExecCommandTool(h.pm, ws, commandApprovalRequester),
 		tools.NewWriteStdinTool(h.pm),
 		tools.NewApplyPatchTool(ws),
 		tools.NewReadFileTool(ws),
@@ -515,6 +594,24 @@ func (h *ConversationHandler) Reply(w http.ResponseWriter, r *http.Request) {
 				Kind: agent.EventStatus,
 				Status: &agent.StatusEvent{
 					Text: statusText,
+				},
+			}
+			data, err := json.Marshal(ev)
+			if err != nil {
+				continue
+			}
+			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", ev.Kind, data)
+			flusher.Flush()
+			eventCount++
+		case req := <-commandApprovalCh:
+			ev := agent.TurnEvent{
+				Kind: agent.EventApprovalRequest,
+				ApprovalRequest: &agent.ApprovalRequestEvent{
+					ID:             req.ID,
+					ConversationID: req.ConversationID,
+					ToolName:       req.ToolName,
+					Command:        req.Command,
+					Workdir:        req.Workdir,
 				},
 			}
 			data, err := json.Marshal(ev)

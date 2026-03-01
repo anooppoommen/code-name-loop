@@ -196,3 +196,69 @@ func TestExecCommand_BlocksGitIgnoredPathReads(t *testing.T) {
 		t.Fatalf("expected .gitignore message, got %v", err)
 	}
 }
+
+func TestExecCommand_CommandApprovalDenied(t *testing.T) {
+	pm := NewProcessManager()
+	defer pm.Cleanup()
+	dir := t.TempDir()
+	guard := newPathGuard(testWorkspace(dir))
+
+	requestCount := 0
+	requester := CommandApprovalRequesterFunc(func(ctx context.Context, req CommandApprovalRequest) (CommandApprovalResolution, error) {
+		requestCount++
+		return CommandApprovalResolution{
+			Decision: CommandApprovalDecisionDeny,
+			Message:  "denied for safety",
+		}, nil
+	})
+
+	args, _ := json.Marshal(map[string]any{
+		"cmd":     "echo blocked",
+		"workdir": dir,
+	})
+
+	_, err := handleExecCommand(context.Background(), args, pm, guard, requester)
+	if err == nil {
+		t.Fatal("expected denial error")
+	}
+	if !strings.Contains(err.Error(), "denied by user") {
+		t.Fatalf("expected denial message, got %v", err)
+	}
+	if requestCount != 1 {
+		t.Fatalf("approval requester called %d times, want 1", requestCount)
+	}
+}
+
+func TestExecCommand_CommandApprovalAllowOnce(t *testing.T) {
+	pm := NewProcessManager()
+	defer pm.Cleanup()
+	dir := t.TempDir()
+	guard := newPathGuard(testWorkspace(dir))
+
+	requestCount := 0
+	requester := CommandApprovalRequesterFunc(func(ctx context.Context, req CommandApprovalRequest) (CommandApprovalResolution, error) {
+		requestCount++
+		return CommandApprovalResolution{Decision: CommandApprovalDecisionAllowOnce}, nil
+	})
+
+	args, _ := json.Marshal(map[string]any{
+		"cmd":     "echo approved",
+		"workdir": dir,
+	})
+
+	result, err := handleExecCommand(context.Background(), args, pm, guard, requester)
+	if err != nil {
+		t.Fatalf("handleExecCommand: %v", err)
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(result, &resp); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
+	}
+	output, _ := resp["output"].(string)
+	if !strings.Contains(output, "approved") {
+		t.Fatalf("expected approved output, got %q", output)
+	}
+	if requestCount != 1 {
+		t.Fatalf("approval requester called %d times, want 1", requestCount)
+	}
+}

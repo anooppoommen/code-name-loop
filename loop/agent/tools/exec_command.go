@@ -35,8 +35,16 @@ type writeStdinArgs struct {
 }
 
 // NewExecCommandTool creates the exec_command tool.
-func NewExecCommandTool(pm *ProcessManager, ws *models.Workspace) *agent.ToolDef {
+func NewExecCommandTool(
+	pm *ProcessManager,
+	ws *models.Workspace,
+	approvalRequesters ...CommandApprovalRequester,
+) *agent.ToolDef {
 	guard := newPathGuard(ws)
+	var approvalRequester CommandApprovalRequester
+	if len(approvalRequesters) > 0 {
+		approvalRequester = approvalRequesters[0]
+	}
 	return &agent.ToolDef{
 		Declaration: &genai.FunctionDeclaration{
 			Name:        "exec_command",
@@ -73,7 +81,7 @@ func NewExecCommandTool(pm *ProcessManager, ws *models.Workspace) *agent.ToolDef
 			},
 		},
 		Handler: func(ctx context.Context, args json.RawMessage) (json.RawMessage, error) {
-			return handleExecCommand(ctx, args, pm, guard)
+			return handleExecCommand(ctx, args, pm, guard, approvalRequester)
 		},
 		Intents: []string{
 			"Use for read-only repo inspection, diagnostics, and verification commands (tests/build/lint)",
@@ -119,7 +127,13 @@ func NewWriteStdinTool(pm *ProcessManager) *agent.ToolDef {
 	}
 }
 
-func handleExecCommand(ctx context.Context, args json.RawMessage, pm *ProcessManager, guard *pathGuard) (json.RawMessage, error) {
+func handleExecCommand(
+	ctx context.Context,
+	args json.RawMessage,
+	pm *ProcessManager,
+	guard *pathGuard,
+	approvalRequesters ...CommandApprovalRequester,
+) (json.RawMessage, error) {
 	var a execCommandArgs
 	if err := json.Unmarshal(args, &a); err != nil {
 		return nil, fmt.Errorf("failed to parse arguments: %w", err)
@@ -137,6 +151,15 @@ func handleExecCommand(ctx context.Context, args json.RawMessage, pm *ProcessMan
 	}
 	if err := validateGitIgnoreReadPolicy(ctx, a.Cmd, workdir, guard); err != nil {
 		return nil, err
+	}
+	if len(approvalRequesters) > 0 && approvalRequesters[0] != nil {
+		if err := maybeRequireCommandApproval(ctx, approvalRequesters[0], CommandApprovalRequest{
+			ToolName: "exec_command",
+			Command:  a.Cmd,
+			Workdir:  workdir,
+		}); err != nil {
+			return nil, err
+		}
 	}
 
 	yieldMs := int64(defaultExecYieldTimeMs)

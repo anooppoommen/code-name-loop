@@ -47,7 +47,7 @@ export interface ParallelToolPayload {
   results: ParallelToolResult[];
 }
 
-export type CommandToolStatus = 'running' | 'success' | 'error';
+export type CommandToolStatus = 'waiting' | 'running' | 'success' | 'error';
 
 export interface CommandToolPayload {
   shellLabel: string;

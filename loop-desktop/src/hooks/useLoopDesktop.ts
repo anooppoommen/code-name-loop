@@ -29,6 +29,7 @@ const STORAGE_KEY = 'loop-desktop-settings-v3';
 const DEFAULT_THINKING_LEVEL: ThinkingLevel = 'medium';
 const THINKING_LEVELS: readonly ThinkingLevel[] = ['minimal', 'low', 'medium', 'high'];
 const TERMINAL_TURN_KINDS = new Set(['turn_complete', 'turn_aborted', 'error']);
+const COMMAND_APPROVAL_KINDS = new Set(['approval_request']);
 
 function normalizeThinkingLevel(value: unknown): ThinkingLevel {
   if (typeof value !== 'string') {
@@ -59,6 +60,125 @@ function rowsFromUnknown(payload: unknown): unknown[] {
   return [];
 }
 
+function parseCommandApprovalEvent(
+  eventRecord: Record<string, unknown> | null,
+  fallbackConversationId: string,
+): PendingCommandApproval | null {
+  if (!eventRecord) {
+    return null;
+  }
+  const approvalRecord = asRecord(getField(eventRecord, ['approval_request', 'approvalRequest']));
+  return parsePendingCommandApprovalRecord(approvalRecord, fallbackConversationId);
+}
+
+function parsePendingCommandApprovalRecord(
+  approvalRecord: Record<string, unknown> | null,
+  fallbackConversationId = '',
+): PendingCommandApproval | null {
+  if (!approvalRecord) {
+    return null;
+  }
+
+  const id = getString(approvalRecord, ['id']);
+  const command = getString(approvalRecord, ['command']);
+  if (!id || !command) {
+    return null;
+  }
+
+  return {
+    id,
+    conversationId: getString(approvalRecord, ['conversation_id', 'conversationId']) || fallbackConversationId,
+    toolName: getString(approvalRecord, ['tool_name', 'toolName']) || 'exec_command',
+    command,
+    workdir: getString(approvalRecord, ['workdir']),
+  };
+}
+
+function toolNameMatches(toolName: string, canonical: string): boolean {
+  return (
+    toolName === canonical ||
+    toolName.endsWith(`:${canonical}`) ||
+    toolName.endsWith(`.${canonical}`)
+  );
+}
+
+function normalizeApprovalToolName(toolName: string): string {
+  const normalized = toolName.trim();
+  if (toolNameMatches(normalized, 'exec_command')) {
+    return 'exec_command';
+  }
+  if (toolNameMatches(normalized, 'shell')) {
+    return 'shell';
+  }
+  return normalized;
+}
+
+function buildApprovalKey(toolName: string, command: string): string {
+  const normalizedCommand = command.trim();
+  const normalizedToolName = normalizeApprovalToolName(toolName);
+  if (!normalizedCommand || !normalizedToolName) {
+    return '';
+  }
+  return `${normalizedToolName}::${normalizedCommand}`;
+}
+
+function annotateActivitiesWithPendingApprovals(
+  events: ActivityEvent[],
+  pendingApprovals: PendingCommandApproval[],
+): ActivityEvent[] {
+  if (events.length === 0) {
+    return events;
+  }
+
+  const pendingByKey = new Map<string, number>();
+  for (const approval of pendingApprovals) {
+    const key = buildApprovalKey(approval.toolName, approval.command);
+    if (!key) {
+      continue;
+    }
+    pendingByKey.set(key, (pendingByKey.get(key) ?? 0) + 1);
+  }
+
+  let changed = false;
+  const waitingByEventID = new Map<string, boolean>();
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const event = events[i];
+    const tool = event.tool;
+    if (!tool || tool.phase !== 'start' || !tool.command) {
+      waitingByEventID.set(event.id, false);
+      continue;
+    }
+    const key = buildApprovalKey(tool.name, tool.command);
+    const remaining = key ? (pendingByKey.get(key) ?? 0) : 0;
+    const isWaiting = remaining > 0;
+    waitingByEventID.set(event.id, isWaiting);
+    if (isWaiting && key) {
+      pendingByKey.set(key, remaining - 1);
+    }
+  }
+
+  const next = events.map((event) => {
+    const tool = event.tool;
+    if (!tool) {
+      return event;
+    }
+    const waitingApproval = waitingByEventID.get(event.id) ?? false;
+    if (Boolean(tool.waitingApproval) === waitingApproval) {
+      return event;
+    }
+    changed = true;
+    return {
+      ...event,
+      tool: {
+        ...tool,
+        waitingApproval,
+      },
+    };
+  });
+
+  return changed ? next : events;
+}
+
 interface StreamHandle {
   streamId: string;
   conversationId: string;
@@ -71,6 +191,16 @@ interface ConversationLiveState {
   draftThoughtId: string | null;
   lastStatus: string;
   openToolEventIDs: Record<string, string>;
+}
+
+export type CommandApprovalDecision = 'deny' | 'allow_once' | 'allow_session';
+
+export interface PendingCommandApproval {
+  id: string;
+  conversationId: string;
+  toolName: string;
+  command: string;
+  workdir: string;
 }
 
 export type NoticeTone = 'success' | 'error' | 'info';
@@ -127,6 +257,9 @@ export interface LoopDesktopController {
   isSending: boolean;
   sendingConversations: Record<string, boolean>;
   notices: NoticeToast[];
+  pendingCommandApproval: PendingCommandApproval | null;
+  pendingCommandApprovalCount: number;
+  isResolvingCommandApproval: boolean;
   hideLifecycle: boolean;
   setHideLifecycle: (value: boolean) => void;
   thinkingLevel: ThinkingLevel;
@@ -135,6 +268,7 @@ export interface LoopDesktopController {
   setCurrentStatus: (value: string) => void;
 
   dismissNotice: (id: string) => void;
+  resolveCommandApproval: (decision: CommandApprovalDecision, message?: string) => Promise<void>;
 
   refreshWorkspaces: () => Promise<void>;
   refreshConversations: () => Promise<void>;
@@ -199,19 +333,33 @@ export function useLoopDesktop(): LoopDesktopController {
     [queuedMessagesMap, selectedConversationId]
   );
 
+  const enqueueConversationMessage = useCallback(
+    (conversationId: string, messageText: string, messageImages: ComposerImage[]): boolean => {
+      const text = messageText.trim();
+      if (!conversationId || (!text && messageImages.length === 0)) {
+        return false;
+      }
+
+      setQueuedMessagesMap((prevMap) => {
+        const prev = prevMap[conversationId] || [];
+        return {
+          ...prevMap,
+          [conversationId]: [...prev, { id: crypto.randomUUID(), text, images: messageImages }],
+        };
+      });
+      return true;
+    },
+    [],
+  );
+
   const queueMessage = useCallback(() => {
-    const text = messageInput.trim();
-    if (!text && composerImages.length === 0) return;
-    setQueuedMessagesMap(prevMap => {
-      const prev = prevMap[selectedConversationId] || [];
-      return {
-        ...prevMap,
-        [selectedConversationId]: [...prev, { id: crypto.randomUUID(), text, images: composerImages }]
-      };
-    });
+    const queued = enqueueConversationMessage(selectedConversationId, messageInput, composerImages);
+    if (!queued) {
+      return;
+    }
     setMessageInput('');
     setComposerImages([]);
-  }, [messageInput, composerImages, selectedConversationId, setMessageInput, setComposerImages]);
+  }, [composerImages, enqueueConversationMessage, messageInput, selectedConversationId, setComposerImages, setMessageInput]);
 
   const removeQueuedMessage = useCallback((id: string) => {
     setQueuedMessagesMap(prevMap => {
@@ -243,12 +391,20 @@ export function useLoopDesktop(): LoopDesktopController {
   const isSending = !!sendingConversations[selectedConversationId];
   const [currentStatus, setCurrentStatus] = useState<string>('');
   const [notices, setNotices] = useState<NoticeToast[]>([]);
+  const [pendingCommandApprovals, setPendingCommandApprovals] = useState<PendingCommandApproval[]>([]);
+  const [isResolvingCommandApproval, setIsResolvingCommandApproval] = useState(false);
+  const pendingApprovalsForSelectedConversation = useMemo(
+    () => pendingCommandApprovals.filter((item) => item.conversationId === selectedConversationId),
+    [pendingCommandApprovals, selectedConversationId],
+  );
+  const pendingCommandApproval = pendingApprovalsForSelectedConversation[0] ?? null;
 
   const activeStreamsRef = useRef<Record<string, StreamHandle>>({});
   const feedScrollRef = useRef<HTMLDivElement | null>(null);
   const conversationLiveStateRef = useRef<Record<string, ConversationLiveState>>({});
   const handleStreamPacketRef = useRef<((packet: LoopStreamPacket, conversationId: string) => void) | null>(null);
   const selectedConversationIdRef = useRef('');
+  const pendingCommandApprovalsRef = useRef<PendingCommandApproval[]>([]);
 
   const getConversationLiveState = useCallback((conversationId: string): ConversationLiveState => {
     const existing = conversationLiveStateRef.current[conversationId];
@@ -321,9 +477,67 @@ export function useLoopDesktop(): LoopDesktopController {
     setNotices([]);
   }, []);
 
+  const enqueueCommandApproval = useCallback((approval: PendingCommandApproval): void => {
+    setPendingCommandApprovals((prev) => {
+      if (prev.some((item) => item.id === approval.id)) {
+        return prev;
+      }
+      return [...prev, approval];
+    });
+  }, []);
+
+  const syncPendingApprovalsForConversation = useCallback(
+    async (conversationId: string): Promise<void> => {
+      if (!conversationId) {
+        return;
+      }
+
+      const response = await requestJson<unknown>({
+        baseUrl: backendUrl,
+        endpointPath: `/command-approvals?conversation_id=${encodeURIComponent(conversationId)}`,
+        method: 'GET',
+      });
+      if (!response.ok) {
+        return;
+      }
+
+      const fetched = rowsFromUnknown(response.data)
+        .map((item) => parsePendingCommandApprovalRecord(asRecord(item), conversationId))
+        .filter((item): item is PendingCommandApproval => item !== null);
+
+      setPendingCommandApprovals((prev) => {
+        const others = prev.filter((item) => item.conversationId !== conversationId);
+        if (fetched.length === 0) {
+          return others;
+        }
+        const deduped = new Map<string, PendingCommandApproval>();
+        for (const item of fetched) {
+          deduped.set(item.id, item);
+        }
+        return [...others, ...Array.from(deduped.values())];
+      });
+    },
+    [backendUrl],
+  );
+
   useEffect(() => {
     selectedConversationIdRef.current = selectedConversationId;
   }, [selectedConversationId]);
+
+  useEffect(() => {
+    pendingCommandApprovalsRef.current = pendingCommandApprovals;
+  }, [pendingCommandApprovals]);
+
+  useEffect(() => {
+    if (!selectedConversationId) {
+      return;
+    }
+    void syncPendingApprovalsForConversation(selectedConversationId);
+  }, [selectedConversationId, syncPendingApprovalsForConversation]);
+
+  useEffect(() => {
+    setActivities((prev) => annotateActivitiesWithPendingApprovals(prev, pendingApprovalsForSelectedConversation));
+  }, [pendingApprovalsForSelectedConversation]);
 
   const pushActivity = useCallback((input: ActivityInput): string => {
     const event: ActivityEvent = {
@@ -666,7 +880,12 @@ export function useLoopDesktop(): LoopDesktopController {
         }
       }
 
-      setActivities(historyRowsToActivities(rows));
+      setActivities(
+        annotateActivitiesWithPendingApprovals(
+          historyRowsToActivities(rows),
+          pendingCommandApprovalsRef.current.filter((item) => item.conversationId === conversationId),
+        ),
+      );
       clearNotices();
       resetConversationLiveState(conversationId);
       setCurrentStatus('');
@@ -1169,6 +1388,22 @@ export function useLoopDesktop(): LoopDesktopController {
       if (packet.type === 'event') {
         const eventRecord = asRecord(packet.data);
         const kind = getString(eventRecord, ['kind']) || packet.eventName || 'message';
+        if (COMMAND_APPROVAL_KINDS.has(kind)) {
+          const approval = parseCommandApprovalEvent(eventRecord, conversationId);
+          if (approval) {
+            enqueueCommandApproval(approval);
+            if (isViewingStreamConversation) {
+              pushActivity({
+                kind: 'lifecycle',
+                title: 'Command approval required',
+                body: `${approval.toolName}: ${approval.command}`,
+              });
+            } else {
+              pushNotice('info', `Command approval required for ${shortID(approval.conversationId)}.`);
+            }
+          }
+          return;
+        }
         if (!isViewingStreamConversation) {
           // We intentionally skip rendering background activity to avoid mixing
           // timeline rows across conversations, but terminal events must still
@@ -1213,7 +1448,7 @@ export function useLoopDesktop(): LoopDesktopController {
         finalizeTurn(true, conversationId);
       }
     },
-    [finalizeTurn, getConversationLiveState, handleTurnEvent, pushActivity],
+    [enqueueCommandApproval, finalizeTurn, getConversationLiveState, handleTurnEvent, pushActivity, pushNotice],
   );
 
   useEffect(() => {
@@ -1363,11 +1598,21 @@ export function useLoopDesktop(): LoopDesktopController {
   }, [setMessageInput]);
 
   const sendToolResponseSuggestion = useCallback(async (text: string): Promise<void> => {
-    if (!text.trim()) {
+    const trimmed = text.trim();
+    if (!trimmed) {
       return;
     }
-    await sendMessageText(text, [], false);
-  }, [sendMessageText]);
+
+    const hasActiveSelectedStream = !!(selectedConversationId && activeStreamsRef.current[selectedConversationId]);
+    const isSelectedConversationSending = !!(selectedConversationId && sendingConversations[selectedConversationId]);
+
+    if (hasActiveSelectedStream || isSelectedConversationSending) {
+      enqueueConversationMessage(selectedConversationId, trimmed, []);
+      return;
+    }
+
+    await sendMessageText(trimmed, [], false);
+  }, [enqueueConversationMessage, selectedConversationId, sendMessageText, sendingConversations]);
 
   const cancelStream = useCallback(async (): Promise<void> => {
     const stream = activeStreamsRef.current[selectedConversationId];
@@ -1378,6 +1623,34 @@ export function useLoopDesktop(): LoopDesktopController {
     await stream.cancel();
     pushActivity({ kind: 'lifecycle', title: 'Turn cancel requested' });
   }, [pushActivity, selectedConversationId]);
+
+  const resolveCommandApproval = useCallback(async (decision: CommandApprovalDecision, message?: string): Promise<void> => {
+    if (!pendingCommandApproval || isResolvingCommandApproval) {
+      return;
+    }
+
+    const trimmedMessage = (message || '').trim();
+    setIsResolvingCommandApproval(true);
+    const response = await requestJson<unknown>({
+      baseUrl: backendUrl,
+      endpointPath: `/command-approvals/${encodeURIComponent(pendingCommandApproval.id)}/decision`,
+      method: 'POST',
+      body: { decision, message: trimmedMessage },
+    });
+    setIsResolvingCommandApproval(false);
+
+    if (!response.ok) {
+      if (response.status === 404) {
+        setPendingCommandApprovals((prev) => prev.filter((item) => item.id !== pendingCommandApproval.id));
+        pushNotice('info', 'Command approval request expired.');
+        return;
+      }
+      pushNotice('error', `Failed to resolve command approval: ${stringifyResponseError(response.data, response.error)}`);
+      return;
+    }
+
+    setPendingCommandApprovals((prev) => prev.filter((item) => item.id !== pendingCommandApproval.id));
+  }, [backendUrl, isResolvingCommandApproval, pendingCommandApproval, pushNotice]);
 
   const selectWorkspace = useCallback(
     (workspaceId: string): void => {
@@ -1479,7 +1752,11 @@ export function useLoopDesktop(): LoopDesktopController {
     isSending,
     sendingConversations,
     notices,
+    pendingCommandApproval,
+    pendingCommandApprovalCount: pendingApprovalsForSelectedConversation.length,
+    isResolvingCommandApproval,
     dismissNotice,
+    resolveCommandApproval,
     hideLifecycle,
     setHideLifecycle,
     thinkingLevel,

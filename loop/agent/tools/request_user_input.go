@@ -115,12 +115,7 @@ func handleRequestUserInput(_ context.Context, args json.RawMessage) (json.RawMe
 		seenIDs[id] = struct{}{}
 
 		header := strings.TrimSpace(q.Header)
-		if header == "" {
-			return nil, fmt.Errorf("questions[%d].header must not be empty", i)
-		}
-		if len([]rune(header)) > maxQuestionHeaderLength {
-			return nil, fmt.Errorf("questions[%d].header must be %d characters or fewer", i, maxQuestionHeaderLength)
-		}
+		header = normalizeQuestionHeader(header, q.Question, id)
 
 		question := strings.TrimSpace(q.Question)
 		if question == "" {
@@ -158,4 +153,34 @@ func handleRequestUserInput(_ context.Context, args json.RawMessage) (json.RawMe
 		"next_step": "Ask the same question(s) directly to the user in your next assistant message and wait for their reply.",
 		"questions": normalized,
 	})
+}
+
+func normalizeQuestionHeader(header string, question string, id string) string {
+	trimmed := strings.TrimSpace(header)
+	if trimmed == "" {
+		trimmed = deriveHeaderFromQuestion(question)
+	}
+	if trimmed == "" {
+		trimmed = strings.TrimSpace(id)
+	}
+	if trimmed == "" {
+		trimmed = "Question"
+	}
+
+	return truncateRunes(strings.TrimSpace(trimmed), maxQuestionHeaderLength)
+}
+
+func deriveHeaderFromQuestion(question string) string {
+	return strings.Join(strings.Fields(question), " ")
+}
+
+func truncateRunes(s string, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+	r := []rune(s)
+	if len(r) <= limit {
+		return strings.TrimSpace(s)
+	}
+	return strings.TrimSpace(string(r[:limit]))
 }

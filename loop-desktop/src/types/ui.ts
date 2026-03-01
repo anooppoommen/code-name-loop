@@ -7,6 +7,7 @@ export interface ToolActivityMeta {
   callId?: string;
   name: string;
   phase: ToolPhase;
+  waitingApproval?: boolean;
   success?: boolean;
   resultSummary?: string;
   error?: string;

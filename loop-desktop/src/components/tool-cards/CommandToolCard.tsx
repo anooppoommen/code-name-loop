@@ -26,6 +26,9 @@ export const CommandToolCard = memo(function CommandToolCard({ payload }: { payl
   const hasErrorDetail = payload.status === 'error' && payload.error.trim().length > 0;
   const hasDetails = hasOutput || hasErrorDetail;
   const statusLabel = useMemo(() => {
+    if (payload.status === 'waiting') {
+      return 'Waiting for permission';
+    }
     if (payload.status === 'success') {
       return 'Success';
     }
@@ -147,6 +150,12 @@ export const CommandToolCard = memo(function CommandToolCard({ payload }: { payl
         {payload.status === 'running' ? (
           <div className="inline-flex items-center gap-1.5 text-[13px] text-neutral-300">
             <Loader2 size={13} className="animate-spin text-blue-300" />
+            <span>{statusLabel}</span>
+          </div>
+        ) : null}
+        {payload.status === 'waiting' ? (
+          <div className="inline-flex items-center gap-1.5 text-[13px] text-neutral-300">
+            <Loader2 size={13} className="text-amber-300" />
             <span>{statusLabel}</span>
           </div>
         ) : null}

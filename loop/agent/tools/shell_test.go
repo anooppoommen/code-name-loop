@@ -229,3 +229,30 @@ func TestShell_BlocksGitIgnoredPathReads(t *testing.T) {
 		t.Fatalf("expected .gitignore message, got %v", err)
 	}
 }
+
+func TestShell_CommandApprovalDenied(t *testing.T) {
+	pm := NewProcessManager()
+	defer pm.Cleanup()
+	dir := t.TempDir()
+	guard := newPathGuard(testWorkspace(dir))
+
+	requester := CommandApprovalRequesterFunc(func(ctx context.Context, req CommandApprovalRequest) (CommandApprovalResolution, error) {
+		return CommandApprovalResolution{
+			Decision: CommandApprovalDecisionDeny,
+			Message:  "blocked by user policy",
+		}, nil
+	})
+
+	args, _ := json.Marshal(map[string]any{
+		"command": "echo denied",
+		"workdir": dir,
+	})
+
+	_, err := handleShell(context.Background(), args, pm, guard, requester)
+	if err == nil {
+		t.Fatal("expected denial error")
+	}
+	if !strings.Contains(err.Error(), "denied by user") {
+		t.Fatalf("expected denial message, got %v", err)
+	}
+}
