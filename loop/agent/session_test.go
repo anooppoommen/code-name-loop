@@ -25,6 +25,7 @@ import (
 type mockModelClient struct {
 	responses [][]agent.TurnEvent
 	callCount atomic.Int32
+	model     string
 }
 
 func (m *mockModelClient) StreamMessage(ctx context.Context, history []*models.Message, config *agent.GenerateContentConfig) <-chan agent.TurnEvent {
@@ -51,6 +52,10 @@ func (m *mockModelClient) StreamMessage(ctx context.Context, history []*models.M
 	}()
 
 	return ch
+}
+
+func (m *mockModelClient) Model() string {
+	return strings.TrimSpace(m.model)
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -248,6 +253,46 @@ func TestSessionSimpleTextResponse(t *testing.T) {
 	}
 	if msgs[1].SentBy != models.SentByAgent {
 		t.Errorf("msg[1] = %s, want agent", msgs[1].SentBy)
+	}
+}
+
+func TestSessionPersistsUserMessageModelAndThinkingLevel(t *testing.T) {
+	s := newTestStore(t)
+	ws, conv := seedConversation(t, s)
+	ctx := context.Background()
+
+	mock := &mockModelClient{
+		responses: [][]agent.TurnEvent{makeTextResponse("done")},
+		model:     "gemini-3.1-pro-preview",
+	}
+
+	session := agent.NewSession(s, mock, ws, conv, nil, 0)
+	session.ThinkingLevel = "high"
+
+	events, cancel, err := session.HandleUserMessage(ctx, textParts("persist settings"))
+	if err != nil {
+		t.Fatalf("HandleUserMessage: %v", err)
+	}
+	defer cancel()
+	_ = collectEvents(events)
+
+	msgs, err := s.Messages().GetRange(ctx, conv.ID, 1, 10)
+	if err != nil {
+		t.Fatalf("get messages: %v", err)
+	}
+	if len(msgs) < 1 {
+		t.Fatalf("expected at least one message, got %d", len(msgs))
+	}
+
+	userMsg := msgs[0]
+	if userMsg.SentBy != models.SentByUser {
+		t.Fatalf("first message sent_by=%s, want user", userMsg.SentBy)
+	}
+	if got, _ := userMsg.Metadata["model"].(string); got != "gemini-3.1-pro-preview" {
+		t.Fatalf("user metadata model=%q", got)
+	}
+	if got, _ := userMsg.Metadata["thinking_level"].(string); got != "high" {
+		t.Fatalf("user metadata thinking_level=%q", got)
 	}
 }
 

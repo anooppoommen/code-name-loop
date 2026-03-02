@@ -1,15 +1,9 @@
-import { AlertTriangle, Check, ChevronDown, Loader2, Copy, FolderSearch, FileSearch, FileText } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, Loader2, Copy } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { memo, useMemo, useState } from 'react';
 import type { FileToolPayload } from './types';
 
 const GEIST_MONO_STACK = '"Geist Mono","Geist",ui-monospace,SFMono-Regular,Menlo,monospace';
-
-function getToolIcon(toolName: string) {
-  if (toolName.includes('list_dir')) return <FolderSearch size={14} className="text-blue-400" />;
-  if (toolName.includes('grep_files')) return <FileSearch size={14} className="text-emerald-400" />;
-  return <FileText size={14} className="text-amber-400" />;
-}
 
 function formatArgs(toolName: string, args: Record<string, unknown>): string {
   if (toolName.includes('list_dir')) {

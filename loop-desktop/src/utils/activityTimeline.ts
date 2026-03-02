@@ -185,6 +185,10 @@ export function historyRowsToActivities(items: unknown[]): ActivityEvent[] {
 
     if (type === 'message') {
       const msg = asRecord(getField(record, ['message', 'Message']));
+      const msgID = getString(msg, ['ID', 'id']) || crypto.randomUUID();
+      const msgSeq = getNumber(msg, ['Seq', 'seq']) ?? undefined;
+      const msgVersion = getNumber(msg, ['Version', 'version']) ?? undefined;
+      const msgArchived = getBoolean(msg, ['Archived', 'archived']);
       const sentBy = getString(msg, ['SentBy', 'sent_by', 'sentBy']);
       if (sentBy === 'user') {
         const text = extractMessageText(msg);
@@ -194,7 +198,11 @@ export function historyRowsToActivities(items: unknown[]): ActivityEvent[] {
         const userTurn = userTurnFromMetadata(metadata);
         if (text || images.length > 0) {
           activityRows.push({
-            id: getString(msg, ['ID', 'id']) || crypto.randomUUID(),
+            id: msgID,
+            messageId: msgID,
+            messageSeq: msgSeq,
+            messageVersion: msgVersion,
+            archived: msgArchived,
             kind: 'user',
             title: 'User prompt',
             body: text || '(Images attached)',
@@ -209,7 +217,11 @@ export function historyRowsToActivities(items: unknown[]): ActivityEvent[] {
         const images = extractMessageImages(msg);
         if (text || images.length > 0) {
           activityRows.push({
-            id: getString(msg, ['ID', 'id']) || crypto.randomUUID(),
+            id: msgID,
+            messageId: msgID,
+            messageSeq: msgSeq,
+            messageVersion: msgVersion,
+            archived: msgArchived,
             kind: 'assistant',
             title: 'Assistant response',
             body: text || '(Images attached)',
@@ -568,6 +580,9 @@ function toolMessageToActivities(msg: Record<string, unknown> | null, uiEventCal
   }
 
   const messageID = getString(msg, ['ID', 'id']) || crypto.randomUUID();
+  const messageSeq = getNumber(msg, ['Seq', 'seq']) ?? undefined;
+  const messageVersion = getNumber(msg, ['Version', 'version']) ?? undefined;
+  const messageArchived = getBoolean(msg, ['Archived', 'archived']);
   const events: ActivityEvent[] = [];
 
   rawParts.forEach((part, index) => {
@@ -593,6 +608,10 @@ function toolMessageToActivities(msg: Record<string, unknown> | null, uiEventCal
 
     events.push({
       id: `${messageID}:tool:${index}`,
+      messageId: messageID,
+      messageSeq,
+      messageVersion,
+      archived: messageArchived,
       kind: 'tool',
       title: failed ? `${toolName} failed` : `${toolName} completed${summary.title ? ` (${summary.title})` : ''}`,
       body: summary.body || undefined,

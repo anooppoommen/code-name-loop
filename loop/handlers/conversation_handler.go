@@ -58,6 +58,7 @@ func (h *ConversationHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /conversations/{id}", h.Delete)
 	mux.HandleFunc("GET /command-palette/search", h.CommandPaletteSearch)
 	mux.HandleFunc("GET /conversations/{id}/messages", h.ListMessages)
+	mux.HandleFunc("GET /conversations/{id}/messages/{messageID}/history", h.MessageHistory)
 	mux.HandleFunc("GET /conversations/{id}/timeline", h.Timeline)
 	mux.HandleFunc("GET /conversations/{id}/checkpoints", h.ListCheckpoints)
 	mux.HandleFunc("POST /conversations/{id}/checkpoints", h.CreateCheckpoint)
@@ -278,6 +279,60 @@ func (h *ConversationHandler) ListMessages(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	utils.WriteJSON(w, http.StatusOK, msgs)
+}
+
+func (h *ConversationHandler) MessageHistory(w http.ResponseWriter, r *http.Request) {
+	convID := models.ConversationID(r.PathValue("id"))
+	messageID := models.MessageID(strings.TrimSpace(r.PathValue("messageID")))
+	if messageID == "" {
+		utils.WriteError(w, http.StatusBadRequest, "message id is required")
+		return
+	}
+
+	if _, err := h.store.Conversations().Get(r.Context(), convID); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			utils.WriteError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		utils.WriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	current, err := h.store.Messages().Get(r.Context(), messageID)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			utils.WriteError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		utils.WriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if current.ConversationID != convID {
+		utils.WriteError(w, http.StatusNotFound, "message not found")
+		return
+	}
+
+	type historyReader interface {
+		GetHistory(ctx context.Context, messageID models.MessageID) ([]*models.MessageHistoryEntry, error)
+	}
+	reader, ok := h.store.Messages().(historyReader)
+	if !ok {
+		utils.WriteError(w, http.StatusNotImplemented, "message history not supported by store")
+		return
+	}
+
+	history, err := reader.GetHistory(r.Context(), messageID)
+	if err != nil {
+		utils.WriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	utils.WriteJSON(w, http.StatusOK, map[string]any{
+		"conversation_id":  convID,
+		"message_id":       messageID,
+		"current_message":  current,
+		"history_versions": history,
+	})
 }
 
 func parseCheckpointLimit(raw string) int {
@@ -644,6 +699,11 @@ type timelineItem struct {
 // both monotonic within their own tables, this combined sort produces a deterministic view.
 func (h *ConversationHandler) Timeline(w http.ResponseWriter, r *http.Request) {
 	id := models.ConversationID(r.PathValue("id"))
+	includeArchived := false
+	switch strings.ToLower(strings.TrimSpace(r.URL.Query().Get("include_archived"))) {
+	case "1", "true", "yes", "y":
+		includeArchived = true
+	}
 
 	if _, err := h.store.Conversations().Get(r.Context(), id); err != nil {
 		if strings.Contains(err.Error(), "not found") {
@@ -654,13 +714,38 @@ func (h *ConversationHandler) Timeline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	msgs, err := h.store.Messages().GetRange(r.Context(), id, 1, 999999)
+	var msgs []*models.Message
+	var err error
+	if includeArchived {
+		type messageRangeAllReader interface {
+			GetRangeAll(ctx context.Context, convID models.ConversationID, fromSeq, toSeq int64) ([]*models.Message, error)
+		}
+		if reader, ok := h.store.Messages().(messageRangeAllReader); ok {
+			msgs, err = reader.GetRangeAll(r.Context(), id, 1, 999999)
+		} else {
+			msgs, err = h.store.Messages().GetRange(r.Context(), id, 1, 999999)
+		}
+	} else {
+		msgs, err = h.store.Messages().GetRange(r.Context(), id, 1, 999999)
+	}
 	if err != nil {
 		utils.WriteError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	evts, err := h.store.UIEvents().GetByConversation(r.Context(), id)
+	var evts []*models.UIEvent
+	if includeArchived {
+		type uiEventAllReader interface {
+			GetByConversationAll(ctx context.Context, convID models.ConversationID) ([]*models.UIEvent, error)
+		}
+		if reader, ok := h.store.UIEvents().(uiEventAllReader); ok {
+			evts, err = reader.GetByConversationAll(r.Context(), id)
+		} else {
+			evts, err = h.store.UIEvents().GetByConversation(r.Context(), id)
+		}
+	} else {
+		evts, err = h.store.UIEvents().GetByConversation(r.Context(), id)
+	}
 	if err != nil {
 		utils.WriteError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -697,10 +782,12 @@ func (h *ConversationHandler) Timeline(w http.ResponseWriter, r *http.Request) {
 
 // replyRequest is the JSON body for the Reply endpoint.
 type replyRequest struct {
-	Message       string       `json:"message"`
-	Model         string       `json:"model,omitempty"`
-	ThinkingLevel string       `json:"thinking_level,omitempty"`
-	Images        []replyImage `json:"images,omitempty"`
+	Message        string       `json:"message"`
+	Model          string       `json:"model,omitempty"`
+	ThinkingLevel  string       `json:"thinking_level,omitempty"`
+	Images         []replyImage `json:"images,omitempty"`
+	RetryMessageID string       `json:"retry_message_id,omitempty"`
+	EditMessageID  string       `json:"edit_message_id,omitempty"`
 }
 
 type replyImage struct {
@@ -837,10 +924,30 @@ func (h *ConversationHandler) Reply(w http.ResponseWriter, r *http.Request) {
 		utils.WriteError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if req.Message == "" && len(req.Images) == 0 {
+	retryMessageID := models.MessageID(strings.TrimSpace(req.RetryMessageID))
+	editMessageID := models.MessageID(strings.TrimSpace(req.EditMessageID))
+	if retryMessageID != "" && editMessageID != "" {
+		utils.WriteError(w, http.StatusBadRequest, "retry_message_id and edit_message_id are mutually exclusive")
+		return
+	}
+
+	isRetry := retryMessageID != ""
+	isEdit := editMessageID != ""
+	isBranch := isRetry || isEdit
+
+	if !isBranch && req.Message == "" && len(req.Images) == 0 {
 		utils.WriteError(w, http.StatusBadRequest, "message is required")
 		return
 	}
+	if isRetry && (req.Message != "" || len(req.Images) > 0) {
+		utils.WriteError(w, http.StatusBadRequest, "retry mode does not accept message/images")
+		return
+	}
+	if isEdit && req.Message == "" && len(req.Images) == 0 {
+		utils.WriteError(w, http.StatusBadRequest, "edited message is required")
+		return
+	}
+
 	for i, img := range req.Images {
 		if strings.TrimSpace(img.MIMEType) == "" {
 			utils.WriteError(w, http.StatusBadRequest, fmt.Sprintf("images[%d].mime_type is required", i))
@@ -877,8 +984,15 @@ func (h *ConversationHandler) Reply(w http.ResponseWriter, r *http.Request) {
 	if logModel == "" {
 		logModel = resolveModelName(h.client)
 	}
-	log.Printf("[reply] start conv=%s model=%s thinking=%s message_chars=%d images=%d",
-		convID, logModel, strings.ToLower(string(thinkingLevel)), len(req.Message), len(req.Images))
+	mode := "reply"
+	if isRetry {
+		mode = "retry"
+	}
+	if isEdit {
+		mode = "edit"
+	}
+	log.Printf("[reply] start conv=%s mode=%s model=%s thinking=%s message_chars=%d images=%d",
+		convID, mode, logModel, strings.ToLower(string(thinkingLevel)), len(req.Message), len(req.Images))
 
 	// Load the conversation.
 	conv, err := h.store.Conversations().Get(r.Context(), convID)
@@ -948,8 +1062,61 @@ func (h *ConversationHandler) Reply(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	userMetadata := map[string]any{}
+	if modelName := strings.TrimSpace(resolveModelName(replyClient)); modelName != "" {
+		userMetadata["model"] = modelName
+	}
+	userMetadata["thinking_level"] = strings.ToLower(string(thinkingLevel))
+
+	if isBranch {
+		type messageBrancher interface {
+			BranchFromMessage(
+				ctx context.Context,
+				convID models.ConversationID,
+				messageID models.MessageID,
+				edit *models.MessageBranchEdit,
+			) (*models.Message, int64, error)
+		}
+		brancher, ok := h.store.Messages().(messageBrancher)
+		if !ok {
+			utils.WriteError(w, http.StatusNotImplemented, "message branching not supported by store")
+			return
+		}
+
+		var branchTargetID models.MessageID
+		var editPayload *models.MessageBranchEdit
+		if isRetry {
+			branchTargetID = retryMessageID
+		} else {
+			branchTargetID = editMessageID
+			editPayload = &models.MessageBranchEdit{
+				Parts:    parts,
+				Metadata: userMetadata,
+			}
+		}
+
+		if _, _, err := brancher.BranchFromMessage(r.Context(), convID, branchTargetID, editPayload); err != nil {
+			if strings.Contains(err.Error(), "not found") {
+				utils.WriteError(w, http.StatusNotFound, err.Error())
+				return
+			}
+			if strings.Contains(err.Error(), "not a user message") {
+				utils.WriteError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			utils.WriteError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+
 	// Start the turn.
-	events, cancel, err := session.HandleUserMessage(r.Context(), parts)
+	var events <-chan agent.TurnEvent
+	var cancel context.CancelFunc
+	if isBranch {
+		events, cancel, err = session.StartTurn(r.Context())
+	} else {
+		events, cancel, err = session.HandleUserMessage(r.Context(), parts)
+	}
 	if err != nil {
 		utils.WriteError(w, http.StatusInternalServerError, err.Error())
 		return

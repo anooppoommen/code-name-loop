@@ -66,6 +66,13 @@ type UIEvent struct {
 	// This is the canonical ordering field for timeline replay.
 	TimelineSeq int64 `json:"timeline_seq,omitempty"`
 
+	// Version tracks the branch timeline this event belongs to.
+	// Default is 1 for legacy rows.
+	Version int64 `json:"version"`
+
+	// Archived marks events from superseded branches (retry/edit rewrites).
+	Archived bool `json:"archived"`
+
 	Kind UIEventKind `json:"kind"`
 
 	// Text is the human-readable description of the event shown in the UI.

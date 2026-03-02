@@ -127,4 +127,6 @@ export interface LoopDesktopController {
   undoLatestCheckpoint: () => Promise<void>;
   applyToolResponseSuggestion: (text: string) => void;
   sendToolResponseSuggestion: (text: string) => Promise<void>;
+  retryFromMessage: (messageId: string) => Promise<void>;
+  editMessageInComposer: (messageId: string, text: string, images: { mimeType: string; dataUrl: string }[]) => void;
 }

@@ -19,6 +19,10 @@ export interface ToolActivityMeta {
 
 export interface ActivityEvent {
   id: string;
+  messageId?: string;
+  messageSeq?: number;
+  messageVersion?: number;
+  archived?: boolean;
   kind: ActivityKind;
   title: string;
   body?: string;

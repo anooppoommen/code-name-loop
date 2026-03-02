@@ -267,6 +267,8 @@ export default function App() {
                   isSending={app.isSending}
                   onUseToolReply={app.applyToolResponseSuggestion}
                   onSendToolReply={app.sendToolResponseSuggestion}
+                  onRetryMessage={app.retryFromMessage}
+                  onEditMessage={app.editMessageInComposer}
                 />
               </div>
 

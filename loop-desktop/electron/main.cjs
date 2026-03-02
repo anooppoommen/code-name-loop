@@ -109,7 +109,17 @@ function parseSseBlock(block) {
   return { eventName, data };
 }
 
-async function streamReplyToRenderer(streamId, baseUrl, conversationId, message, model, thinkingLevel, images) {
+async function streamReplyToRenderer(
+  streamId,
+  baseUrl,
+  conversationId,
+  message,
+  model,
+  thinkingLevel,
+  images,
+  retryMessageId,
+  editMessageId,
+) {
   const endpoint = buildAbsoluteUrl(baseUrl, `/conversations/${conversationId}/reply`);
   const controller = new AbortController();
   const convKey = conversationKey(baseUrl, conversationId);
@@ -121,7 +131,8 @@ async function streamReplyToRenderer(streamId, baseUrl, conversationId, message,
   streamControllers.set(streamId, controller);
   streamMetaById.set(streamId, { baseUrl, conversationId, startedAt: Date.now() });
   streamIdByConversationKey.set(convKey, streamId);
-  streamLog(`start stream=${shortId(streamId)} conv=${shortId(conversationId)} model=${model || 'gemini-3.1-pro-preview'} thinking=${thinkingLevel || 'medium'} chars=${String(message || '').length} images=${Array.isArray(images) ? images.length : 0}`);
+  const mode = retryMessageId ? 'retry' : (editMessageId ? 'edit' : 'reply');
+  streamLog(`start stream=${shortId(streamId)} conv=${shortId(conversationId)} mode=${mode} model=${model || 'gemini-3.1-pro-preview'} thinking=${thinkingLevel || 'medium'} chars=${String(message || '').length} images=${Array.isArray(images) ? images.length : 0}`);
 
   try {
     const response = await fetch(endpoint, {
@@ -131,6 +142,8 @@ async function streamReplyToRenderer(streamId, baseUrl, conversationId, message,
       },
       body: JSON.stringify({
         message,
+        retry_message_id: retryMessageId,
+        edit_message_id: editMessageId,
         model,
         thinking_level: thinkingLevel || 'medium',
         images,
@@ -294,6 +307,8 @@ ipcMain.handle('loop-api:start-stream', async (event, payload) => {
     baseUrl,
     conversationId,
     message,
+    retryMessageId,
+    editMessageId,
     model,
     images,
     streamId: clientStreamId,
@@ -302,11 +317,14 @@ ipcMain.handle('loop-api:start-stream', async (event, payload) => {
 
   const hasMessage = typeof message === 'string' && message.trim().length > 0;
   const hasImages = Array.isArray(images) && images.length > 0;
-  if (!baseUrl || !conversationId || (!hasMessage && !hasImages)) {
+  const hasBranchInstruction =
+    (typeof retryMessageId === 'string' && retryMessageId.trim().length > 0) ||
+    (typeof editMessageId === 'string' && editMessageId.trim().length > 0);
+  if (!baseUrl || !conversationId || (!hasMessage && !hasImages && !hasBranchInstruction)) {
     return {
       ok: false,
       streamId: null,
-      error: 'Missing baseUrl, conversationId, or message/images.',
+      error: 'Missing baseUrl, conversationId, and message/images/branch operation.',
     };
   }
 
@@ -322,7 +340,17 @@ ipcMain.handle('loop-api:start-stream', async (event, payload) => {
   }
 
   const streamId = clientStreamId || crypto.randomUUID();
-  void streamReplyToRenderer(streamId, baseUrl, conversationId, message || '', model, thinkingLevel, images);
+  void streamReplyToRenderer(
+    streamId,
+    baseUrl,
+    conversationId,
+    message || '',
+    model,
+    thinkingLevel,
+    images,
+    typeof retryMessageId === 'string' ? retryMessageId.trim() : '',
+    typeof editMessageId === 'string' ? editMessageId.trim() : '',
+  );
 
   return {
     ok: true,

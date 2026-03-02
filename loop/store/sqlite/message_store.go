@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/uuid"
+
 	"loop/models"
 )
 
@@ -43,6 +45,24 @@ func (s *sqliteMessageStore) Append(ctx context.Context, msg *models.Message) er
 	}
 	msg.TimelineSeq = timelineSeq
 
+	if msg.Version <= 0 {
+		err = tx.QueryRowContext(ctx, `
+			SELECT COALESCE((
+				SELECT m.version
+				FROM messages m
+				WHERE m.id = (
+					SELECT head_message_id
+					FROM conversations
+					WHERE id = ?
+				)
+			), 1)
+		`, string(msg.ConversationID)).Scan(&msg.Version)
+		if err != nil {
+			return fmt.Errorf("resolve message version: %w", err)
+		}
+	}
+	msg.Archived = false
+
 	partsJSON, err := marshalJSON(msg.Parts)
 	if err != nil {
 		return fmt.Errorf("marshal parts: %w", err)
@@ -60,13 +80,15 @@ func (s *sqliteMessageStore) Append(ctx context.Context, msg *models.Message) er
 
 	_, err = tx.ExecContext(ctx,
 		`INSERT INTO messages
-		 (id, conversation_id, seq, timeline_seq, reply_to_message_id, state, sent_by,
+		 (id, conversation_id, seq, timeline_seq, version, archived, reply_to_message_id, state, sent_by,
 		  parts_json, metadata_json, attachments_json, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		string(msg.ID),
 		string(msg.ConversationID),
 		msg.Seq,
 		msg.TimelineSeq,
+		msg.Version,
+		msg.Archived,
 		string(msg.ReplyToMessageID),
 		string(msg.State),
 		string(msg.SentBy),
@@ -105,7 +127,7 @@ func (s *sqliteMessageStore) Append(ctx context.Context, msg *models.Message) er
 
 func (s *sqliteMessageStore) Get(ctx context.Context, id models.MessageID) (*models.Message, error) {
 	row := s.readDB.QueryRowContext(ctx,
-		`SELECT id, conversation_id, seq, timeline_seq, reply_to_message_id, state, sent_by,
+		`SELECT id, conversation_id, seq, timeline_seq, version, archived, reply_to_message_id, state, sent_by,
 		        parts_json, metadata_json, attachments_json, created_at, updated_at
 		 FROM messages WHERE id = ?`, string(id))
 	return scanMessage(row)
@@ -113,14 +135,29 @@ func (s *sqliteMessageStore) Get(ctx context.Context, id models.MessageID) (*mod
 
 func (s *sqliteMessageStore) GetRange(ctx context.Context, convID models.ConversationID, fromSeq, toSeq int64) ([]*models.Message, error) {
 	rows, err := s.readDB.QueryContext(ctx,
-		`SELECT id, conversation_id, seq, timeline_seq, reply_to_message_id, state, sent_by,
+		`SELECT id, conversation_id, seq, timeline_seq, version, archived, reply_to_message_id, state, sent_by,
+		        parts_json, metadata_json, attachments_json, created_at, updated_at
+		 FROM messages
+		 WHERE conversation_id = ? AND archived = 0 AND seq BETWEEN ? AND ?
+		 ORDER BY seq ASC`,
+		string(convID), fromSeq, toSeq)
+	if err != nil {
+		return nil, fmt.Errorf("get range: %w", err)
+	}
+	defer rows.Close()
+	return scanMessages(rows)
+}
+
+func (s *sqliteMessageStore) GetRangeAll(ctx context.Context, convID models.ConversationID, fromSeq, toSeq int64) ([]*models.Message, error) {
+	rows, err := s.readDB.QueryContext(ctx,
+		`SELECT id, conversation_id, seq, timeline_seq, version, archived, reply_to_message_id, state, sent_by,
 		        parts_json, metadata_json, attachments_json, created_at, updated_at
 		 FROM messages
 		 WHERE conversation_id = ? AND seq BETWEEN ? AND ?
 		 ORDER BY seq ASC`,
 		string(convID), fromSeq, toSeq)
 	if err != nil {
-		return nil, fmt.Errorf("get range: %w", err)
+		return nil, fmt.Errorf("get range all: %w", err)
 	}
 	defer rows.Close()
 	return scanMessages(rows)
@@ -165,7 +202,7 @@ func (s *sqliteMessageStore) GetParentHistory(ctx context.Context, convID models
 		// Look up the anchor message's seq in the parent conversation.
 		var anchorSeq int64
 		err = s.readDB.QueryRowContext(ctx,
-			`SELECT seq FROM messages WHERE id = ?`, anchorMsgID,
+			`SELECT seq FROM messages WHERE id = ? AND archived = 0`, anchorMsgID,
 		).Scan(&anchorSeq)
 		if err != nil {
 			return nil, fmt.Errorf("anchor msg %s seq: %w", anchorMsgID, err)
@@ -213,12 +250,14 @@ func (s *sqliteMessageStore) Update(ctx context.Context, msg *models.Message) er
 
 	res, err := s.writeDB.ExecContext(ctx,
 		`UPDATE messages
-		 SET state = ?, sent_by = ?, reply_to_message_id = ?,
+		 SET state = ?, sent_by = ?, reply_to_message_id = ?, version = ?, archived = ?,
 		     parts_json = ?, metadata_json = ?, attachments_json = ?, updated_at = ?
 		 WHERE id = ?`,
 		string(msg.State),
 		string(msg.SentBy),
 		string(msg.ReplyToMessageID),
+		msg.Version,
+		msg.Archived,
 		partsJSON,
 		metaJSON,
 		attachJSON,
@@ -231,6 +270,221 @@ func (s *sqliteMessageStore) Update(ctx context.Context, msg *models.Message) er
 	n, _ := res.RowsAffected()
 	if n == 0 {
 		return fmt.Errorf("message %s: not found", msg.ID)
+	}
+	return nil
+}
+
+func (s *sqliteMessageStore) BranchFromMessage(
+	ctx context.Context,
+	convID models.ConversationID,
+	messageID models.MessageID,
+	edit *models.MessageBranchEdit,
+) (*models.Message, int64, error) {
+	tx, err := s.writeDB.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, 0, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	target, err := scanMessage(tx.QueryRowContext(ctx,
+		`SELECT id, conversation_id, seq, timeline_seq, version, archived, reply_to_message_id, state, sent_by,
+		        parts_json, metadata_json, attachments_json, created_at, updated_at
+		 FROM messages
+		 WHERE id = ? AND conversation_id = ? AND archived = 0`,
+		string(messageID), string(convID),
+	))
+	if err != nil {
+		return nil, 0, fmt.Errorf("load branch message: %w", err)
+	}
+
+	if target.SentBy != models.SentByUser {
+		return nil, 0, fmt.Errorf("message %s is not a user message", target.ID)
+	}
+
+	var nextVersion int64
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COALESCE(MAX(version), 1) + 1 FROM messages WHERE conversation_id = ?`,
+		string(convID),
+	).Scan(&nextVersion); err != nil {
+		return nil, 0, fmt.Errorf("compute branch version: %w", err)
+	}
+
+	now := time.Now().UTC()
+
+	if edit != nil {
+		if err := insertMessageHistorySnapshotTx(ctx, tx, target, target.ID, now); err != nil {
+			return nil, 0, err
+		}
+
+		parts := edit.Parts
+		metadata := edit.Metadata
+		attachments := edit.Attachments
+		if metadata == nil {
+			metadata = target.Metadata
+		}
+		if attachments == nil {
+			attachments = target.Attachments
+		}
+
+		partsJSON, err := marshalJSON(parts)
+		if err != nil {
+			return nil, 0, fmt.Errorf("marshal edited parts: %w", err)
+		}
+		metaJSON, err := marshalMetadata(metadata)
+		if err != nil {
+			return nil, 0, fmt.Errorf("marshal edited metadata: %w", err)
+		}
+		attachJSON, err := marshalJSON(attachments)
+		if err != nil {
+			return nil, 0, fmt.Errorf("marshal edited attachments: %w", err)
+		}
+
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE messages
+			 SET parts_json = ?, metadata_json = ?, attachments_json = ?,
+			     version = ?, archived = 0, updated_at = ?
+			 WHERE id = ?`,
+			partsJSON, metaJSON, attachJSON, nextVersion, now, string(target.ID),
+		); err != nil {
+			return nil, 0, fmt.Errorf("update edited message: %w", err)
+		}
+
+		target.Parts = parts
+		target.Metadata = metadata
+		target.Attachments = attachments
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE messages
+		 SET archived = 1, updated_at = ?
+		 WHERE conversation_id = ? AND seq > ? AND archived = 0`,
+		now, string(convID), target.Seq,
+	); err != nil {
+		return nil, 0, fmt.Errorf("archive branch tail messages: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE ui_events
+		 SET archived = 1
+		 WHERE conversation_id = ? AND timeline_seq > ? AND archived = 0`,
+		string(convID), target.TimelineSeq,
+	); err != nil {
+		return nil, 0, fmt.Errorf("archive branch tail ui_events: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE messages
+		 SET version = ?, archived = 0, updated_at = ?
+		 WHERE id = ?`,
+		nextVersion, now, string(target.ID),
+	); err != nil {
+		return nil, 0, fmt.Errorf("update branch root message: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE conversations
+		 SET head_message_id = ?, updated_at = ?
+		 WHERE id = ?`,
+		string(target.ID), now, string(convID),
+	); err != nil {
+		return nil, 0, fmt.Errorf("update conversation head: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, 0, fmt.Errorf("commit branch tx: %w", err)
+	}
+
+	target.Version = nextVersion
+	target.Archived = false
+	target.UpdatedAt = now
+	return target, nextVersion, nil
+}
+
+func (s *sqliteMessageStore) GetHistory(ctx context.Context, messageID models.MessageID) ([]*models.MessageHistoryEntry, error) {
+	rows, err := s.readDB.QueryContext(ctx,
+		`SELECT id, message_id, conversation_id, version, archived,
+		        parts_json, metadata_json, attachments_json, created_by_message_id, created_at
+		 FROM message_history
+		 WHERE message_id = ?
+		 ORDER BY created_at DESC, id DESC`,
+		string(messageID),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get message history: %w", err)
+	}
+	defer rows.Close()
+
+	result := make([]*models.MessageHistoryEntry, 0)
+	for rows.Next() {
+		entry := &models.MessageHistoryEntry{}
+		var partsJSON, metaJSON, attachJSON string
+		if err := rows.Scan(
+			&entry.ID,
+			&entry.MessageID,
+			&entry.ConversationID,
+			&entry.Version,
+			&entry.Archived,
+			&partsJSON,
+			&metaJSON,
+			&attachJSON,
+			&entry.CreatedByID,
+			&entry.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("scan message history: %w", err)
+		}
+		if err := json.Unmarshal([]byte(partsJSON), &entry.Parts); err != nil {
+			return nil, fmt.Errorf("unmarshal message history parts: %w", err)
+		}
+		if err := json.Unmarshal([]byte(metaJSON), &entry.Metadata); err != nil {
+			return nil, fmt.Errorf("unmarshal message history metadata: %w", err)
+		}
+		if err := json.Unmarshal([]byte(attachJSON), &entry.Attachments); err != nil {
+			return nil, fmt.Errorf("unmarshal message history attachments: %w", err)
+		}
+		result = append(result, entry)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate message history: %w", err)
+	}
+	return result, nil
+}
+
+func insertMessageHistorySnapshotTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	msg *models.Message,
+	createdByMessageID models.MessageID,
+	createdAt time.Time,
+) error {
+	partsJSON, err := marshalJSON(msg.Parts)
+	if err != nil {
+		return fmt.Errorf("marshal history parts: %w", err)
+	}
+	metaJSON, err := marshalMetadata(msg.Metadata)
+	if err != nil {
+		return fmt.Errorf("marshal history metadata: %w", err)
+	}
+	attachJSON, err := marshalJSON(msg.Attachments)
+	if err != nil {
+		return fmt.Errorf("marshal history attachments: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO message_history
+		 (id, message_id, conversation_id, version, archived, parts_json, metadata_json, attachments_json, created_by_message_id, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		uuid.New().String(),
+		string(msg.ID),
+		string(msg.ConversationID),
+		msg.Version,
+		msg.Archived,
+		partsJSON,
+		metaJSON,
+		attachJSON,
+		string(createdByMessageID),
+		createdAt,
+	); err != nil {
+		return fmt.Errorf("insert message history: %w", err)
 	}
 	return nil
 }
@@ -253,7 +507,7 @@ func scanMessage(row *sql.Row) (*models.Message, error) {
 	msg := &models.Message{}
 	var partsJSON, metaJSON, attachJSON string
 	err := row.Scan(
-		&msg.ID, &msg.ConversationID, &msg.Seq, &msg.TimelineSeq, &msg.ReplyToMessageID,
+		&msg.ID, &msg.ConversationID, &msg.Seq, &msg.TimelineSeq, &msg.Version, &msg.Archived, &msg.ReplyToMessageID,
 		&msg.State, &msg.SentBy,
 		&partsJSON, &metaJSON, &attachJSON,
 		&msg.CreatedAt, &msg.UpdatedAt,
@@ -283,7 +537,7 @@ func scanMessages(rows *sql.Rows) ([]*models.Message, error) {
 		msg := &models.Message{}
 		var partsJSON, metaJSON, attachJSON string
 		if err := rows.Scan(
-			&msg.ID, &msg.ConversationID, &msg.Seq, &msg.TimelineSeq, &msg.ReplyToMessageID,
+			&msg.ID, &msg.ConversationID, &msg.Seq, &msg.TimelineSeq, &msg.Version, &msg.Archived, &msg.ReplyToMessageID,
 			&msg.State, &msg.SentBy,
 			&partsJSON, &metaJSON, &attachJSON,
 			&msg.CreatedAt, &msg.UpdatedAt,

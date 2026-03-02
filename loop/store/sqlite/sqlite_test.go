@@ -922,6 +922,151 @@ func TestSharedTimelineSeqAcrossMessagesAndUIEvents(t *testing.T) {
 	}
 }
 
+func TestMessageBranchEditArchivesTailAndKeepsHistory(t *testing.T) {
+	dir := t.TempDir()
+	s, err := sqlite.New(filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	ctx := context.Background()
+	ws := &models.Workspace{ID: "ws-branch", Name: "Branch", RootPath: "/branch", CanonicalRootPath: "/branch"}
+	if err := s.Workspaces().Create(ctx, ws); err != nil {
+		t.Fatal(err)
+	}
+	conv := &models.Conversation{ID: "conv-branch", WorkspaceID: ws.ID, Title: "Branch test"}
+	if err := s.Conversations().Create(ctx, conv); err != nil {
+		t.Fatal(err)
+	}
+
+	msg1 := &models.Message{
+		ID:             "msg-b-1",
+		ConversationID: conv.ID,
+		SentBy:         models.SentByUser,
+		State:          models.MessageStateCompleted,
+		Parts:          []models.MessagePart{{Kind: models.PartText, Text: &models.TextPart{Text: "original prompt"}}},
+	}
+	if err := s.Messages().Append(ctx, msg1); err != nil {
+		t.Fatal(err)
+	}
+	msg2 := &models.Message{
+		ID:             "msg-b-2",
+		ConversationID: conv.ID,
+		SentBy:         models.SentByAgent,
+		State:          models.MessageStateCompleted,
+		Parts:          []models.MessagePart{{Kind: models.PartText, Text: &models.TextPart{Text: "old answer"}}},
+	}
+	if err := s.Messages().Append(ctx, msg2); err != nil {
+		t.Fatal(err)
+	}
+	evt := &models.UIEvent{
+		ConversationID: conv.ID,
+		Kind:           models.UIEventKindStatus,
+		Text:           "old status",
+	}
+	if err := s.UIEvents().Append(ctx, evt); err != nil {
+		t.Fatal(err)
+	}
+
+	brancher, ok := s.Messages().(interface {
+		BranchFromMessage(context.Context, models.ConversationID, models.MessageID, *models.MessageBranchEdit) (*models.Message, int64, error)
+		GetRangeAll(context.Context, models.ConversationID, int64, int64) ([]*models.Message, error)
+		GetHistory(context.Context, models.MessageID) ([]*models.MessageHistoryEntry, error)
+	})
+	if !ok {
+		t.Fatal("message store does not support branch operations")
+	}
+
+	edited, nextVersion, err := brancher.BranchFromMessage(ctx, conv.ID, msg1.ID, &models.MessageBranchEdit{
+		Parts: []models.MessagePart{{Kind: models.PartText, Text: &models.TextPart{Text: "edited prompt"}}},
+		Metadata: map[string]any{
+			"model":          "gemini-3.1-pro-preview",
+			"thinking_level": "medium",
+		},
+	})
+	if err != nil {
+		t.Fatalf("branch edit: %v", err)
+	}
+	if nextVersion != 2 {
+		t.Fatalf("next version=%d want=2", nextVersion)
+	}
+	if edited.Version != 2 {
+		t.Fatalf("edited message version=%d want=2", edited.Version)
+	}
+
+	activeMsgs, err := s.Messages().GetRange(ctx, conv.ID, 1, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(activeMsgs) != 1 {
+		t.Fatalf("active message count=%d want=1", len(activeMsgs))
+	}
+	if text := activeMsgs[0].Parts[0].Text.Text; text != "edited prompt" {
+		t.Fatalf("active edited text=%q want=edited prompt", text)
+	}
+
+	allMsgs, err := brancher.GetRangeAll(ctx, conv.ID, 1, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(allMsgs) != 2 {
+		t.Fatalf("all message count=%d want=2", len(allMsgs))
+	}
+	if !allMsgs[1].Archived {
+		t.Fatalf("tail message should be archived")
+	}
+
+	history, err := brancher.GetHistory(ctx, msg1.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history) != 1 {
+		t.Fatalf("history count=%d want=1", len(history))
+	}
+	if text := history[0].Parts[0].Text.Text; text != "original prompt" {
+		t.Fatalf("history text=%q want=original prompt", text)
+	}
+	if history[0].CreatedByID != msg1.ID {
+		t.Fatalf("history created_by_message_id=%q want=%q", history[0].CreatedByID, msg1.ID)
+	}
+
+	uiEventReader, ok := s.UIEvents().(interface {
+		GetByConversationAll(context.Context, models.ConversationID) ([]*models.UIEvent, error)
+	})
+	if !ok {
+		t.Fatal("ui event store does not support archived reads")
+	}
+	activeEvents, err := s.UIEvents().GetByConversation(ctx, conv.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(activeEvents) != 0 {
+		t.Fatalf("active ui event count=%d want=0", len(activeEvents))
+	}
+	allEvents, err := uiEventReader.GetByConversationAll(ctx, conv.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(allEvents) != 1 || !allEvents[0].Archived {
+		t.Fatalf("expected archived ui event after branch rewrite")
+	}
+
+	msg3 := &models.Message{
+		ID:             "msg-b-3",
+		ConversationID: conv.ID,
+		SentBy:         models.SentByAgent,
+		State:          models.MessageStateCompleted,
+		Parts:          []models.MessagePart{{Kind: models.PartText, Text: &models.TextPart{Text: "new answer"}}},
+	}
+	if err := s.Messages().Append(ctx, msg3); err != nil {
+		t.Fatal(err)
+	}
+	if msg3.Version != 2 {
+		t.Fatalf("new message version=%d want=2", msg3.Version)
+	}
+}
+
 // ─────────────────────────────────────────────────────────────────
 // Conversation-Root back-pointer on workspace
 // ─────────────────────────────────────────────────────────────────

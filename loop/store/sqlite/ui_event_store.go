@@ -46,6 +46,24 @@ func (s *sqliteUIEventStore) Append(ctx context.Context, evt *models.UIEvent) er
 	}
 	evt.TimelineSeq = timelineSeq
 
+	if evt.Version <= 0 {
+		err = tx.QueryRowContext(ctx, `
+			SELECT COALESCE((
+				SELECT m.version
+				FROM messages m
+				WHERE m.id = (
+					SELECT head_message_id
+					FROM conversations
+					WHERE id = ?
+				)
+			), 1)
+		`, string(evt.ConversationID)).Scan(&evt.Version)
+		if err != nil {
+			return fmt.Errorf("resolve ui_event version: %w", err)
+		}
+	}
+	evt.Archived = false
+
 	metaJSON, err := marshalJSON(evt.Metadata)
 	if err != nil {
 		return fmt.Errorf("marshal metadata: %w", err)
@@ -53,13 +71,15 @@ func (s *sqliteUIEventStore) Append(ctx context.Context, evt *models.UIEvent) er
 
 	_, err = tx.ExecContext(ctx,
 		`INSERT INTO ui_events
-		 (id, conversation_id, message_id, seq, timeline_seq, kind, text, metadata_json, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 (id, conversation_id, message_id, seq, timeline_seq, version, archived, kind, text, metadata_json, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		evt.ID,
 		string(evt.ConversationID),
 		string(evt.MessageID),
 		evt.Seq,
 		evt.TimelineSeq,
+		evt.Version,
+		evt.Archived,
 		string(evt.Kind),
 		evt.Text,
 		metaJSON,
@@ -74,9 +94,9 @@ func (s *sqliteUIEventStore) Append(ctx context.Context, evt *models.UIEvent) er
 
 func (s *sqliteUIEventStore) GetByConversation(ctx context.Context, convID models.ConversationID) ([]*models.UIEvent, error) {
 	rows, err := s.readDB.QueryContext(ctx,
-		`SELECT id, conversation_id, message_id, seq, timeline_seq, kind, text, metadata_json, created_at
+		`SELECT id, conversation_id, message_id, seq, timeline_seq, version, archived, kind, text, metadata_json, created_at
 		 FROM ui_events
-		 WHERE conversation_id = ?
+		 WHERE conversation_id = ? AND archived = 0
 		 ORDER BY timeline_seq ASC, seq ASC`,
 		string(convID),
 	)
@@ -87,11 +107,26 @@ func (s *sqliteUIEventStore) GetByConversation(ctx context.Context, convID model
 	return scanUIEvents(rows)
 }
 
+func (s *sqliteUIEventStore) GetByConversationAll(ctx context.Context, convID models.ConversationID) ([]*models.UIEvent, error) {
+	rows, err := s.readDB.QueryContext(ctx,
+		`SELECT id, conversation_id, message_id, seq, timeline_seq, version, archived, kind, text, metadata_json, created_at
+		 FROM ui_events
+		 WHERE conversation_id = ?
+		 ORDER BY timeline_seq ASC, seq ASC`,
+		string(convID),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get all ui_events by conversation: %w", err)
+	}
+	defer rows.Close()
+	return scanUIEvents(rows)
+}
+
 func (s *sqliteUIEventStore) GetByMessage(ctx context.Context, msgID models.MessageID) ([]*models.UIEvent, error) {
 	rows, err := s.readDB.QueryContext(ctx,
-		`SELECT id, conversation_id, message_id, seq, timeline_seq, kind, text, metadata_json, created_at
+		`SELECT id, conversation_id, message_id, seq, timeline_seq, version, archived, kind, text, metadata_json, created_at
 		 FROM ui_events
-		 WHERE message_id = ?
+		 WHERE message_id = ? AND archived = 0
 		 ORDER BY timeline_seq ASC, seq ASC`,
 		string(msgID),
 	)
@@ -111,7 +146,7 @@ func scanUIEvents(rows *sql.Rows) ([]*models.UIEvent, error) {
 		var metaJSON string
 		if err := rows.Scan(
 			&evt.ID, &evt.ConversationID, &evt.MessageID,
-			&evt.Seq, &evt.TimelineSeq, &evt.Kind, &evt.Text,
+			&evt.Seq, &evt.TimelineSeq, &evt.Version, &evt.Archived, &evt.Kind, &evt.Text,
 			&metaJSON, &evt.CreatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan ui_event: %w", err)

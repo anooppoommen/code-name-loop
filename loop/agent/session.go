@@ -1329,26 +1329,13 @@ func (s *Session) createCheckpointForUserMessage(ctx context.Context, userMsg *m
 // one (abort-before-spawn pattern).
 //
 // The returned context.CancelFunc can be used to cancel the turn.
-func (s *Session) HandleUserMessage(ctx context.Context, parts []models.MessagePart) (<-chan TurnEvent, context.CancelFunc, error) {
+func (s *Session) startTurn(ctx context.Context) (<-chan TurnEvent, context.CancelFunc, error) {
 	// Abort any previously running turn.
 	s.mu.Lock()
 	if s.activeTurnCancel != nil {
 		s.activeTurnCancel()
 	}
 	s.mu.Unlock()
-
-	// Create and persist the user message.
-	userMsg := &models.Message{
-		ID:             models.MessageID(uuid.New().String()),
-		ConversationID: s.Conversation.ID,
-		SentBy:         models.SentByUser,
-		State:          models.MessageStateCompleted,
-		Parts:          parts,
-	}
-
-	if err := s.Store.Messages().Append(ctx, userMsg); err != nil {
-		return nil, nil, fmt.Errorf("append user message: %w", err)
-	}
 
 	// Create a cancellable context for the turn.
 	turnCtx, cancel := context.WithCancel(ctx)
@@ -1365,4 +1352,34 @@ func (s *Session) HandleUserMessage(ctx context.Context, parts []models.MessageP
 
 	ch := turn.Run(turnCtx)
 	return ch, cancel, nil
+}
+
+func (s *Session) StartTurn(ctx context.Context) (<-chan TurnEvent, context.CancelFunc, error) {
+	return s.startTurn(ctx)
+}
+
+func (s *Session) HandleUserMessage(ctx context.Context, parts []models.MessagePart) (<-chan TurnEvent, context.CancelFunc, error) {
+	// Create and persist the user message.
+	metadata := map[string]any{}
+	if model := strings.TrimSpace(resolveModelName(s.Client)); model != "" {
+		metadata["model"] = model
+	}
+	if thinking, err := ParseThinkingLevel(strings.TrimSpace(s.ThinkingLevel)); err == nil {
+		metadata["thinking_level"] = strings.ToLower(string(thinking))
+	}
+
+	userMsg := &models.Message{
+		ID:             models.MessageID(uuid.New().String()),
+		ConversationID: s.Conversation.ID,
+		SentBy:         models.SentByUser,
+		State:          models.MessageStateCompleted,
+		Parts:          parts,
+		Metadata:       metadata,
+	}
+
+	if err := s.Store.Messages().Append(ctx, userMsg); err != nil {
+		return nil, nil, fmt.Errorf("append user message: %w", err)
+	}
+
+	return s.startTurn(ctx)
 }

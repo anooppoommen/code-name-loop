@@ -25,6 +25,15 @@ type Message struct {
 	// retries/branches share the same ReplyToMessageID.
 	ReplyToMessageID MessageID
 
+	// Version identifies the active conversation branch the message belongs to.
+	// Default is 1. Retry/edit branch operations increment this for the branch root
+	// and all newly generated messages after that point.
+	Version int64 `json:"version"`
+
+	// Archived marks a message as belonging to a superseded branch.
+	// Archived messages are omitted from active history/model replay by default.
+	Archived bool `json:"archived"`
+
 	State  MessageState
 	SentBy Sender
 
@@ -41,6 +50,28 @@ type Message struct {
 
 	CreatedAt time.Time
 	UpdatedAt time.Time
+}
+
+// MessageBranchEdit describes an edited replacement for an existing user message.
+type MessageBranchEdit struct {
+	Parts       []MessagePart
+	Metadata    map[string]any
+	Attachments []Attachment
+}
+
+// MessageHistoryEntry is an immutable snapshot of a prior message state.
+// It is written before an in-place edit so older versions remain inspectable.
+type MessageHistoryEntry struct {
+	ID             string         `json:"id"`
+	MessageID      MessageID      `json:"message_id"`
+	ConversationID ConversationID `json:"conversation_id"`
+	Version        int64          `json:"version"`
+	Archived       bool           `json:"archived"`
+	Parts          []MessagePart  `json:"parts"`
+	Metadata       map[string]any `json:"metadata,omitempty"`
+	Attachments    []Attachment   `json:"attachments,omitempty"`
+	CreatedByID    MessageID      `json:"created_by_message_id,omitempty"`
+	CreatedAt      time.Time      `json:"created_at"`
 }
 
 // ---------- Message Parts ----------

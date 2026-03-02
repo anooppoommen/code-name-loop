@@ -1,5 +1,6 @@
 import { ArrowDown } from 'lucide-react';
-import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { RefObject } from 'react';
 import { ActivityItem } from './activity-feed/ActivityItem';
 import { textTargetForEvent } from './activity-feed/textTarget';
@@ -11,6 +12,8 @@ interface ActivityFeedProps extends ToolReplyActions {
   conversationId: string;
   containerRef: RefObject<HTMLDivElement | null>;
   currentStatus: string;
+  onRetryMessage: (messageId: string) => Promise<void>;
+  onEditMessage: (messageId: string, text: string, images: { mimeType: string; dataUrl: string }[]) => void;
 }
 
 const BOTTOM_THRESHOLD_PX = 24;
@@ -24,6 +27,8 @@ export const ActivityFeed = memo(function ActivityFeed({
   isSending,
   onUseToolReply,
   onSendToolReply,
+  onRetryMessage,
+  onEditMessage,
 }: ActivityFeedProps) {
   const [visibleChars, setVisibleChars] = useState<Record<string, number>>({});
   const [copiedToolID, setCopiedToolID] = useState('');
@@ -33,6 +38,8 @@ export const ActivityFeed = memo(function ActivityFeed({
   const programmaticScrollRef = useRef(false);
   const stickyBottomRef = useRef(true);
   const pendingInitialSnapRef = useRef(false);
+  const previousConversationIdRef = useRef(conversationId);
+  const previousEventIDsRef = useRef<Set<string>>(new Set());
 
   const scrollToBottom = useCallback(
     (behavior: ScrollBehavior = 'auto'): void => {
@@ -90,6 +97,32 @@ export const ActivityFeed = memo(function ActivityFeed({
     stickyBottomRef.current = true;
     pendingInitialSnapRef.current = true;
   }, [conversationId, scrollToBottom]);
+
+  const shouldSkipTimelineAnimation = useMemo(() => {
+    const didConversationChange = previousConversationIdRef.current !== conversationId;
+    if (didConversationChange) {
+      return true;
+    }
+
+    const prevIDs = previousEventIDsRef.current;
+    if (prevIDs.size === 0 || events.length === 0) {
+      return false;
+    }
+
+    let overlap = 0;
+    for (const event of events) {
+      if (prevIDs.has(event.id)) {
+        overlap++;
+        break;
+      }
+    }
+    return overlap === 0;
+  }, [conversationId, events]);
+
+  useEffect(() => {
+    previousConversationIdRef.current = conversationId;
+    previousEventIDsRef.current = new Set(events.map((event) => event.id));
+  }, [conversationId, events]);
 
   useLayoutEffect(() => {
     if (!pendingInitialSnapRef.current) {
@@ -181,6 +214,32 @@ export const ActivityFeed = memo(function ActivityFeed({
     void copyToolCommand(command, eventId, setCopiedToolID);
   }, []);
 
+  const renderEventItem = useCallback((event: ActivityEvent) => (
+    <ActivityItem
+      key={event.id}
+      event={event}
+      visibleChars={visibleChars[event.id]}
+      isCopied={copiedToolID === event.id}
+      onCopyToolCommand={handleCopyToolCommand}
+      canCompose={canCompose}
+      isSending={isSending}
+      onUseToolReply={onUseToolReply}
+      onSendToolReply={onSendToolReply}
+      onRetryMessage={onRetryMessage}
+      onEditMessage={onEditMessage}
+    />
+  ), [
+    canCompose,
+    copiedToolID,
+    handleCopyToolCommand,
+    isSending,
+    onEditMessage,
+    onRetryMessage,
+    onSendToolReply,
+    onUseToolReply,
+    visibleChars,
+  ]);
+
   return (
     <section className="relative flex h-full min-h-0 flex-col bg-transparent">
       <div
@@ -190,20 +249,23 @@ export const ActivityFeed = memo(function ActivityFeed({
         <div className="mx-auto w-full max-w-[720px]">
           {events.length === 0 ? (
             <p className="m-0 px-4 py-3 text-sm text-loop-500">No run activity yet. Send a task to start streaming events.</p>
+          ) : shouldSkipTimelineAnimation ? (
+            events.map((event) => renderEventItem(event))
           ) : (
-            events.map((event) => (
-              <ActivityItem
-                key={event.id}
-                event={event}
-                visibleChars={visibleChars[event.id]}
-                isCopied={copiedToolID === event.id}
-                onCopyToolCommand={handleCopyToolCommand}
-                canCompose={canCompose}
-                isSending={isSending}
-                onUseToolReply={onUseToolReply}
-                onSendToolReply={onSendToolReply}
-              />
-            ))
+            <AnimatePresence initial={false} mode="popLayout">
+              {events.map((event) => (
+                <motion.div
+                  key={event.id}
+                  layout
+                  initial={{ opacity: 0, y: 8, scale: 0.995 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -8, scale: 0.995 }}
+                  transition={{ duration: 0.18, ease: 'easeOut' }}
+                >
+                  {renderEventItem(event)}
+                </motion.div>
+              ))}
+            </AnimatePresence>
           )}
         </div>
         {isSending ? (

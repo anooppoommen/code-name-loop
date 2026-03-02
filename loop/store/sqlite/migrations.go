@@ -13,6 +13,7 @@ func migrate(db *sql.DB) error {
 		migrationPathGrants,
 		migrationConversations,
 		migrationMessages,
+		migrationMessageHistory,
 		migrationUIEvents,
 		migrationTimelineCursors,
 		migrationCheckpoints,
@@ -31,7 +32,11 @@ func migrate(db *sql.DB) error {
 
 	// Timeline ordering migration adds shared ordering fields and backfills
 	// deterministic values for existing rows.
-	return migrateTimelineOrdering(db)
+	if err := migrateTimelineOrdering(db); err != nil {
+		return err
+	}
+
+	return migrateBranchVersioning(db)
 }
 
 const migrationWorkspaces = `
@@ -89,6 +94,8 @@ CREATE TABLE IF NOT EXISTS messages (
     conversation_id     TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
     seq                 INTEGER NOT NULL,
     timeline_seq        INTEGER NOT NULL DEFAULT 0,
+    version             INTEGER NOT NULL DEFAULT 1,
+    archived            BOOLEAN NOT NULL DEFAULT 0,
     reply_to_message_id TEXT NOT NULL DEFAULT '',
     state               TEXT NOT NULL DEFAULT 'pending',
     sent_by             TEXT NOT NULL,
@@ -105,6 +112,24 @@ CREATE INDEX IF NOT EXISTS idx_messages_conversation_seq
     ON messages(conversation_id, seq);
 `
 
+const migrationMessageHistory = `
+CREATE TABLE IF NOT EXISTS message_history (
+    id                     TEXT PRIMARY KEY,
+    message_id             TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    conversation_id        TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    version                INTEGER NOT NULL DEFAULT 1,
+    archived               BOOLEAN NOT NULL DEFAULT 0,
+    parts_json             TEXT NOT NULL DEFAULT '[]',
+    metadata_json          TEXT NOT NULL DEFAULT '{}',
+    attachments_json       TEXT NOT NULL DEFAULT '[]',
+    created_by_message_id  TEXT NOT NULL DEFAULT '',
+    created_at             DATETIME NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_message_history_message_created
+    ON message_history(message_id, created_at DESC);
+`
+
 const migrationUIEvents = `
 CREATE TABLE IF NOT EXISTS ui_events (
     id              TEXT PRIMARY KEY,
@@ -112,6 +137,8 @@ CREATE TABLE IF NOT EXISTS ui_events (
     message_id      TEXT NOT NULL DEFAULT '',
     seq             INTEGER NOT NULL,
     timeline_seq    INTEGER NOT NULL DEFAULT 0,
+    version         INTEGER NOT NULL DEFAULT 1,
+    archived        BOOLEAN NOT NULL DEFAULT 0,
     kind            TEXT NOT NULL,
     text            TEXT NOT NULL DEFAULT '',
     metadata_json   TEXT NOT NULL DEFAULT '{}',
@@ -224,6 +251,38 @@ func migrateTimelineOrdering(db *sql.DB) error {
 			return err
 		}
 	}
+	return nil
+}
+
+func migrateBranchVersioning(db *sql.DB) error {
+	alters := []string{
+		`ALTER TABLE messages ADD COLUMN version INTEGER NOT NULL DEFAULT 1`,
+		`ALTER TABLE messages ADD COLUMN archived BOOLEAN NOT NULL DEFAULT 0`,
+		`ALTER TABLE ui_events ADD COLUMN version INTEGER NOT NULL DEFAULT 1`,
+		`ALTER TABLE ui_events ADD COLUMN archived BOOLEAN NOT NULL DEFAULT 0`,
+	}
+	for _, stmt := range alters {
+		if _, err := db.Exec(stmt); err != nil && !isDuplicateColumn(err) {
+			return fmt.Errorf("branch versioning migration: %w", err)
+		}
+	}
+
+	indexes := []string{
+		`CREATE INDEX IF NOT EXISTS idx_messages_conversation_archived_seq
+		 ON messages(conversation_id, archived, seq)`,
+		`CREATE INDEX IF NOT EXISTS idx_ui_events_conversation_archived_timeline
+		 ON ui_events(conversation_id, archived, timeline_seq)`,
+	}
+	for _, stmt := range indexes {
+		if _, err := db.Exec(stmt); err != nil {
+			return fmt.Errorf("branch versioning index migration: %w", err)
+		}
+	}
+
+	if _, err := db.Exec(migrationMessageHistory); err != nil {
+		return fmt.Errorf("branch versioning message_history migration: %w", err)
+	}
+
 	return nil
 }
 

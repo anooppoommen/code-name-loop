@@ -17,6 +17,8 @@ export interface LoopStreamStartRequest {
   baseUrl: string;
   conversationId: string;
   message: string;
+  retryMessageId?: string;
+  editMessageId?: string;
   model?: 'gemini-3.1-pro-preview' | 'gemini-3-flash-preview' | 'gemini-3-pro-preview';
   thinkingLevel?: 'minimal' | 'low' | 'medium' | 'high';
   images?: { mime_type: string; data: string }[];

@@ -55,6 +55,14 @@ export type {
   QueuedMessage,
 } from './useLoopDesktop.types';
 
+function dataUrlToBase64(dataUrl: string): string {
+  const commaIndex = dataUrl.indexOf(',');
+  if (commaIndex < 0) {
+    return dataUrl.trim();
+  }
+  return dataUrl.slice(commaIndex + 1).trim();
+}
+
 export function useLoopDesktop(): LoopDesktopController {
   const [backendUrl, setBackendUrl] = useState('http://localhost:8080');
   const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);
@@ -76,7 +84,10 @@ export function useLoopDesktop(): LoopDesktopController {
 
   const [composerInputs, setComposerInputs] = useState<Record<string, string>>({});
   const [composerImagesMap, setComposerImagesMap] = useState<Record<string, ComposerImage[]>>({});
+  const [editingMessageByConversation, setEditingMessageByConversation] = useState<Record<string, string>>({});
   const [queuedMessagesMap, setQueuedMessagesMap] = useState<Record<string, QueuedMessage[]>>({});
+
+  const editingMessageId = editingMessageByConversation[selectedConversationId] || '';
 
   const messageInput = composerInputs[selectedConversationId] || '';
   const setMessageInput = useCallback((value: React.SetStateAction<string>) => {
@@ -1011,6 +1022,14 @@ export function useLoopDesktop(): LoopDesktopController {
         delete next[conversationId];
         return next;
       });
+      setEditingMessageByConversation((prev) => {
+        if (!(conversationId in prev)) {
+          return prev;
+        }
+        const next = { ...prev };
+        delete next[conversationId];
+        return next;
+      });
       pushNotice('success', `Deleted conversation "${displayName}".`);
       await refreshConversationsByWorkspace(selectedWorkspaceId, selectedConversationId === '' && !wasSelected);
     },
@@ -1113,17 +1132,35 @@ export function useLoopDesktop(): LoopDesktopController {
       messageImages: ComposerImage[],
       clearComposer: boolean,
       forceSend = false,
+      options?: { retryMessageId?: string; editMessageId?: string },
     ): Promise<void> => {
       const text = messageText.trim();
+      const retryMessageId = options?.retryMessageId?.trim() || '';
+      const editMessageId = options?.editMessageId?.trim() || '';
+      const isRetry = retryMessageId.length > 0;
+      const isEdit = editMessageId.length > 0;
+      const isBranch = isRetry || isEdit;
+      const hasContent = text.length > 0 || messageImages.length > 0;
+
+      if (isRetry && isEdit) {
+        return;
+      }
       const hasActiveSelectedStream = !!(selectedConversationId && activeStreamsRef.current[selectedConversationId]);
       const isSelectedConversationSending = !!(selectedConversationId && sendingConversations[selectedConversationId]);
-      if ((!text && messageImages.length === 0) || ((hasActiveSelectedStream || isSelectedConversationSending) && !forceSend)) {
+      if (((!isBranch && !hasContent) || (isEdit && !hasContent)) || ((hasActiveSelectedStream || isSelectedConversationSending) && !forceSend)) {
         return;
       }
       const selectedComposerModel = normalizeComposerModel(composerModel);
       const selectedThinkingLevel = normalizeThinkingLevelForModel(thinkingLevel, selectedComposerModel);
 
-      const conversationId = await ensureConversationId(text);
+      let conversationId = selectedConversationId;
+      if (!isBranch) {
+        const ensuredConversationId = await ensureConversationId(text);
+        if (!ensuredConversationId) {
+          return;
+        }
+        conversationId = ensuredConversationId;
+      }
       if (!conversationId) {
         return;
       }
@@ -1140,20 +1177,62 @@ export function useLoopDesktop(): LoopDesktopController {
       setSendingConversations((prev) => ({ ...prev, [conversationId]: true }));
       resetConversationLiveState(conversationId);
 
-      const userEventId = pushActivity({
-        kind: 'user', 
-        title: 'User prompt', 
-        body: text || '(Images attached)',
-        userTurn: {
-          model: selectedComposerModel,
-          thinkingLevel: selectedThinkingLevel,
-        },
-        images: messageImages.map(img => ({ mimeType: img.mimeType, dataUrl: img.dataUrl })),
-      });
+      let userEventId: string | null = null;
+      if (isBranch) {
+        const anchorMessageId = isRetry ? retryMessageId : editMessageId;
+        if (anchorMessageId) {
+          setActivities((prev) => {
+            const anchorIndex = prev.findIndex(
+              (event) => event.messageId === anchorMessageId || (event.kind === 'user' && event.id === anchorMessageId),
+            );
+            if (anchorIndex < 0) {
+              return prev;
+            }
+
+            const next = prev.slice(0, anchorIndex + 1);
+            if (isEdit) {
+              const anchor = next[anchorIndex];
+              if (anchor) {
+                next[anchorIndex] = {
+                  ...anchor,
+                  body: text || '(Images attached)',
+                  images: messageImages.map((img) => ({ mimeType: img.mimeType, dataUrl: img.dataUrl })),
+                  userTurn: {
+                    model: selectedComposerModel,
+                    thinkingLevel: selectedThinkingLevel,
+                  },
+                };
+              }
+            }
+            return next;
+          });
+        }
+      } else {
+        userEventId = pushActivity({
+          kind: 'user',
+          title: 'User prompt',
+          body: text || '(Images attached)',
+          userTurn: {
+            model: selectedComposerModel,
+            thinkingLevel: selectedThinkingLevel,
+          },
+          images: messageImages.map((img) => ({ mimeType: img.mimeType, dataUrl: img.dataUrl })),
+        });
+      }
       pushActivity({ kind: 'lifecycle', title: 'Turn started' });
       if (clearComposer) {
         setMessageInput('');
         setComposerImages([]);
+      }
+      if (isEdit) {
+        setEditingMessageByConversation((prev) => {
+          if (!(conversationId in prev)) {
+            return prev;
+          }
+          const next = { ...prev };
+          delete next[conversationId];
+          return next;
+        });
       }
       const requestedStreamID = crypto.randomUUID();
       activeStreamsRef.current[conversationId] = {
@@ -1169,9 +1248,11 @@ export function useLoopDesktop(): LoopDesktopController {
           baseUrl: backendUrl,
           conversationId,
           message: text,
+          retryMessageId: isRetry ? retryMessageId : undefined,
+          editMessageId: isEdit ? editMessageId : undefined,
           model: selectedComposerModel,
           thinkingLevel: selectedThinkingLevel,
-          images: messageImages.length > 0 ? messageImages.map(img => ({
+          images: messageImages.length > 0 ? messageImages.map((img) => ({
             mime_type: img.mimeType,
             data: img.data,
           })) : undefined,
@@ -1198,21 +1279,24 @@ export function useLoopDesktop(): LoopDesktopController {
         conversationId,
       };
 
-      // Attach the latest checkpoint to the just-sent user message row.
-      void refreshCheckpointsForConversation(conversationId).then((checkpointsList) => {
-        const latestCheckpoint = checkpointsList[0];
-        if (!latestCheckpoint) {
-          return;
-        }
-        mutateActivity(userEventId, (event) => ({
-          ...event,
-          checkpointId: event.checkpointId || latestCheckpoint.id,
-        }));
-      });
+      if (!isBranch && userEventId) {
+        // Attach the latest checkpoint to the just-sent user message row.
+        void refreshCheckpointsForConversation(conversationId).then((checkpointsList) => {
+          const latestCheckpoint = checkpointsList[0];
+          if (!latestCheckpoint) {
+            return;
+          }
+          mutateActivity(userEventId!, (event) => ({
+            ...event,
+            checkpointId: event.checkpointId || latestCheckpoint.id,
+          }));
+        });
+      }
     },
     [
       backendUrl,
       clearNotices,
+      composerModel,
       ensureConversationId,
       finalizeTurn,
       handleStreamPacket,
@@ -1222,28 +1306,62 @@ export function useLoopDesktop(): LoopDesktopController {
       resetConversationLiveState,
       selectedConversationId,
       sendingConversations,
-      composerModel,
-      thinkingLevel,
+      setActivities,
       setComposerImages,
       setMessageInput,
+      thinkingLevel,
     ],
   );
+
+  const retryFromMessage = useCallback(async (messageId: string): Promise<void> => {
+    const targetMessageId = messageId.trim();
+    if (!targetMessageId || !selectedConversationId || isSending) {
+      return;
+    }
+    setEditingMessageByConversation((prev) => {
+      if (!(selectedConversationId in prev)) {
+        return prev;
+      }
+      const next = { ...prev };
+      delete next[selectedConversationId];
+      return next;
+    });
+    await sendMessageText('', [], false, true, { retryMessageId: targetMessageId });
+  }, [isSending, selectedConversationId, sendMessageText]);
+
+  const editMessageInComposer = useCallback((messageId: string, text: string, images: { mimeType: string; dataUrl: string }[]): void => {
+    const targetMessageId = messageId.trim();
+    if (!targetMessageId || !selectedConversationId) {
+      return;
+    }
+
+    setEditingMessageByConversation((prev) => ({ ...prev, [selectedConversationId]: targetMessageId }));
+    setMessageInput(text);
+    setComposerImages(
+      images.map((img) => ({
+        id: crypto.randomUUID(),
+        mimeType: img.mimeType,
+        dataUrl: img.dataUrl,
+        data: dataUrlToBase64(img.dataUrl),
+      })),
+    );
+  }, [selectedConversationId, setComposerImages, setMessageInput]);
 
   const steerQueuedMessage = useCallback(async (id: string) => {
     if (!selectedConversationId) {
       return;
     }
-    const msg = queuedMessagesMap[selectedConversationId]?.find(m => m.id === id);
+    const msg = queuedMessagesMap[selectedConversationId]?.find((m) => m.id === id);
     if (!msg) return;
 
     removeQueuedMessage(id);
 
     const stream = activeStreamsRef.current[selectedConversationId];
     if (stream) {
-       await stream.cancel();
-       stream.dispose();
-       delete activeStreamsRef.current[selectedConversationId];
-       pushActivity({ kind: 'lifecycle', title: 'Turn cancel requested for steering' });
+      await stream.cancel();
+      stream.dispose();
+      delete activeStreamsRef.current[selectedConversationId];
+      pushActivity({ kind: 'lifecycle', title: 'Turn cancel requested for steering' });
     }
 
     setSendingConversations((prev) => ({ ...prev, [selectedConversationId]: false }));
@@ -1251,8 +1369,30 @@ export function useLoopDesktop(): LoopDesktopController {
   }, [queuedMessagesMap, selectedConversationId, removeQueuedMessage, pushActivity, sendMessageText]);
 
   const sendMessage = useCallback(async (): Promise<void> => {
+    if (editingMessageId) {
+      await sendMessageText(messageInput, composerImages, true, false, { editMessageId: editingMessageId });
+      return;
+    }
     await sendMessageText(messageInput, composerImages, true);
-  }, [messageInput, composerImages, sendMessageText]);
+  }, [composerImages, editingMessageId, messageInput, sendMessageText]);
+
+  useEffect(() => {
+    if (!selectedConversationId || !editingMessageId) {
+      return;
+    }
+    const exists = activities.some((event) => (event.messageId || event.id) === editingMessageId);
+    if (exists) {
+      return;
+    }
+    setEditingMessageByConversation((prev) => {
+      if (!(selectedConversationId in prev)) {
+        return prev;
+      }
+      const next = { ...prev };
+      delete next[selectedConversationId];
+      return next;
+    });
+  }, [activities, editingMessageId, selectedConversationId]);
 
   useEffect(() => {
     const hasActiveSelectedStream = !!(selectedConversationId && activeStreamsRef.current[selectedConversationId]);
@@ -1563,5 +1703,7 @@ export function useLoopDesktop(): LoopDesktopController {
     undoLatestCheckpoint,
     applyToolResponseSuggestion,
     sendToolResponseSuggestion,
+    retryFromMessage,
+    editMessageInComposer,
   };
 }
