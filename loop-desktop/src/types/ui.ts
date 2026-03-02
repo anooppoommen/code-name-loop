@@ -22,6 +22,10 @@ export interface ActivityEvent {
   kind: ActivityKind;
   title: string;
   body?: string;
+  userTurn?: {
+    model?: string;
+    thinkingLevel?: string;
+  };
   checkpointId?: string;
   timestamp: number;
   streaming?: boolean;

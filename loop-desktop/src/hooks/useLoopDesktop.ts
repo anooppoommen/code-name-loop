@@ -369,6 +369,7 @@ export function useLoopDesktop(): LoopDesktopController {
       kind: input.kind,
       title: input.title,
       body: input.body,
+      userTurn: input.userTurn,
       tool: input.tool,
       images: input.images,
       timestamp: Date.now(),
@@ -1143,6 +1144,10 @@ export function useLoopDesktop(): LoopDesktopController {
         kind: 'user', 
         title: 'User prompt', 
         body: text || '(Images attached)',
+        userTurn: {
+          model: selectedComposerModel,
+          thinkingLevel: selectedThinkingLevel,
+        },
         images: messageImages.map(img => ({ mimeType: img.mimeType, dataUrl: img.dataUrl })),
       });
       pushActivity({ kind: 'lifecycle', title: 'Turn started' });

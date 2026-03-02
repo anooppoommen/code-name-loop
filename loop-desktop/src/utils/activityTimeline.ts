@@ -17,6 +17,7 @@ export interface ActivityInput {
   streaming?: boolean;
   tool?: ActivityEvent['tool'];
   images?: { mimeType: string; dataUrl: string }[];
+  userTurn?: ActivityEvent['userTurn'];
 }
 
 function isApplyPatch(toolName: string): boolean {
@@ -190,12 +191,14 @@ export function historyRowsToActivities(items: unknown[]): ActivityEvent[] {
         const images = extractMessageImages(msg);
         const metadata = asRecord(getField(msg, ['Metadata', 'metadata']));
         const checkpointId = getString(metadata, ['checkpoint_id', 'checkpointId']);
+        const userTurn = userTurnFromMetadata(metadata);
         if (text || images.length > 0) {
           activityRows.push({
             id: getString(msg, ['ID', 'id']) || crypto.randomUUID(),
             kind: 'user',
             title: 'User prompt',
             body: text || '(Images attached)',
+            userTurn,
             checkpointId: checkpointId || undefined,
             timestamp: messageTimestamp(msg),
             images,
@@ -462,6 +465,19 @@ function statusInputToEvent(id: string, timestamp: number, input: ActivityInput)
     title: input.title,
     body: input.body,
     tool: input.tool,
+    userTurn: input.userTurn,
+  };
+}
+
+function userTurnFromMetadata(metadata: Record<string, unknown> | null): ActivityEvent['userTurn'] {
+  const model = getString(metadata, ['model', 'Model']);
+  const thinkingLevel = getString(metadata, ['thinking_level', 'thinkingLevel', 'ThinkingLevel']);
+  if (!model && !thinkingLevel) {
+    return undefined;
+  }
+  return {
+    model: model || undefined,
+    thinkingLevel: thinkingLevel || undefined,
   };
 }
 
