@@ -263,8 +263,6 @@ export default function App() {
                   conversationId={app.selectedConversationId}
                   containerRef={app.feedScrollRef}
                   currentStatus={app.currentStatus}
-                  isRestoringCheckpoint={app.isRestoringCheckpoint}
-                  onRestoreCheckpoint={(checkpointId) => void app.restoreCheckpoint(checkpointId)}
                   canCompose={app.canCompose}
                   isSending={app.isSending}
                   onUseToolReply={app.applyToolResponseSuggestion}

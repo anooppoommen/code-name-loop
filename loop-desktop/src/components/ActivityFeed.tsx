@@ -11,8 +11,6 @@ interface ActivityFeedProps extends ToolReplyActions {
   conversationId: string;
   containerRef: RefObject<HTMLDivElement | null>;
   currentStatus: string;
-  isRestoringCheckpoint: boolean;
-  onRestoreCheckpoint: (checkpointId: string) => void;
 }
 
 const BOTTOM_THRESHOLD_PX = 24;
@@ -22,8 +20,6 @@ export const ActivityFeed = memo(function ActivityFeed({
   conversationId,
   containerRef,
   currentStatus,
-  isRestoringCheckpoint,
-  onRestoreCheckpoint,
   canCompose,
   isSending,
   onUseToolReply,
@@ -202,8 +198,6 @@ export const ActivityFeed = memo(function ActivityFeed({
                 visibleChars={visibleChars[event.id]}
                 isCopied={copiedToolID === event.id}
                 onCopyToolCommand={handleCopyToolCommand}
-                isRestoringCheckpoint={isRestoringCheckpoint}
-                onRestoreCheckpoint={onRestoreCheckpoint}
                 canCompose={canCompose}
                 isSending={isSending}
                 onUseToolReply={onUseToolReply}

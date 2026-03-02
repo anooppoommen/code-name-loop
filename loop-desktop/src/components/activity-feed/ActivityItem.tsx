@@ -4,7 +4,6 @@ import {
   Cog,
   GitBranch,
   Info,
-  RotateCcw,
   UserRound,
   Workflow,
   X,
@@ -37,8 +36,6 @@ export interface ActivityItemProps extends ToolReplyActions {
   visibleChars?: number;
   isCopied: boolean;
   onCopyToolCommand: (command: string, id: string) => void;
-  isRestoringCheckpoint: boolean;
-  onRestoreCheckpoint: (checkpointId: string) => void;
 }
 
 interface ActivityFrameProps {
@@ -70,8 +67,6 @@ function ActivityFrame({
 export const ActivityItem = memo(function ActivityItem({
   event,
   visibleChars,
-  isRestoringCheckpoint,
-  onRestoreCheckpoint,
   canCompose,
   isSending,
   onUseToolReply,
@@ -107,8 +102,6 @@ export const ActivityItem = memo(function ActivityItem({
 
   const toolPhase = toolPhaseLabel(event);
   const visual = visualStyleFor(event);
-  const canRestoreUserCheckpoint = event.kind === 'user' && !!event.checkpointId && !isSending && !isRestoringCheckpoint;
-
   const isUser = event.kind === 'user';
   const isAsst = event.kind === 'assistant';
   const isSystemEvent = !isUser && !isAsst;
@@ -241,25 +234,9 @@ export const ActivityItem = memo(function ActivityItem({
             <MarkdownBlock text={renderedText} dense />
           </div>
           <div className="mt-1.5 flex justify-end">
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  if (event.checkpointId) {
-                    onRestoreCheckpoint(event.checkpointId);
-                  }
-                }}
-                disabled={!canRestoreUserCheckpoint}
-                className="inline-flex items-center gap-1 rounded-md border border-loop-700/80 bg-loop-900/50 px-2 py-0.5 text-[10px] font-medium text-loop-400 transition hover:border-loop-500 hover:text-loop-200 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-loop-700/80 disabled:hover:text-loop-400 disabled:hover:bg-loop-900/50"
-                title={event.checkpointId ? "Restore workspace to this user message checkpoint" : "Checkpoint not available yet"}
-              >
-                <RotateCcw size={11} />
-                <span>Restore</span>
-              </button>
-              <time className="text-[10px] font-medium text-loop-500">
-                {new Date(event.timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
-              </time>
-            </div>
+            <time className="text-[10px] font-medium text-loop-500">
+              {new Date(event.timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+            </time>
           </div>
         </div>
       </ActivityFrame>

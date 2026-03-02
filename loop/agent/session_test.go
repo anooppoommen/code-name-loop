@@ -251,6 +251,70 @@ func TestSessionSimpleTextResponse(t *testing.T) {
 	}
 }
 
+func TestSessionCheckpointFailureDoesNotBlockMessage(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	workspaceRoot := fmt.Sprintf("%s/missing-workspace-root", t.TempDir())
+	ws := &models.Workspace{
+		ID:                "ws-ckpt-fail-open",
+		Name:              "Missing workspace",
+		RootPath:          workspaceRoot,
+		CanonicalRootPath: workspaceRoot,
+	}
+	if err := s.Workspaces().Create(ctx, ws); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+
+	conv := &models.Conversation{
+		ID:          "conv-ckpt-fail-open",
+		WorkspaceID: ws.ID,
+		Title:       "Checkpoint fail-open",
+	}
+	if err := s.Conversations().Create(ctx, conv); err != nil {
+		t.Fatalf("create conversation: %v", err)
+	}
+
+	mock := &mockModelClient{responses: [][]agent.TurnEvent{makeTextResponse("Hello!")}}
+	session := agent.NewSession(s, mock, ws, conv, nil, 0)
+
+	events, cancel, err := session.HandleUserMessage(ctx, textParts("Hi"))
+	if err != nil {
+		t.Fatalf("HandleUserMessage: %v", err)
+	}
+	defer cancel()
+
+	allEvents := collectEvents(events)
+	if findEvent(allEvents, agent.EventTurnComplete) == nil {
+		t.Fatalf("expected turn_complete, events=%+v", allEvents)
+	}
+
+	msgs, err := s.Messages().GetRange(ctx, conv.ID, 1, 100)
+	if err != nil {
+		t.Fatalf("get messages: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(msgs))
+	}
+	if msgs[0].SentBy != models.SentByUser {
+		t.Fatalf("msg[0] = %s, want user", msgs[0].SentBy)
+	}
+	if msgs[1].SentBy != models.SentByAgent {
+		t.Fatalf("msg[1] = %s, want agent", msgs[1].SentBy)
+	}
+	if msgs[0].Metadata != nil && msgs[0].Metadata["checkpoint_id"] != nil {
+		t.Fatalf("expected no checkpoint metadata on user message, got %#v", msgs[0].Metadata)
+	}
+
+	checkpoints, err := s.Checkpoints().ListByConversation(ctx, conv.ID, 10)
+	if err != nil {
+		t.Fatalf("list checkpoints: %v", err)
+	}
+	if len(checkpoints) != 0 {
+		t.Fatalf("expected no checkpoints, got %d", len(checkpoints))
+	}
+}
+
 func TestSessionRetriesOn503AndEmitsRetryEvents(t *testing.T) {
 	s := newTestStore(t)
 	ws, conv := seedConversation(t, s)
