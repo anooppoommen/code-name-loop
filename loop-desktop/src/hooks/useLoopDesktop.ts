@@ -176,6 +176,7 @@ export function useLoopDesktop(): LoopDesktopController {
   const conversationLiveStateRef = useRef<Record<string, ConversationLiveState>>({});
   const handleStreamPacketRef = useRef<((packet: LoopStreamPacket, conversationId: string) => void) | null>(null);
   const selectedConversationIdRef = useRef('');
+  const sendingConversationsRef = useRef<Record<string, boolean>>({});
   const pendingCommandApprovalsRef = useRef<PendingCommandApproval[]>([]);
 
   const getConversationLiveState = useCallback((conversationId: string): ConversationLiveState => {
@@ -342,6 +343,10 @@ export function useLoopDesktop(): LoopDesktopController {
   useEffect(() => {
     selectedConversationIdRef.current = selectedConversationId;
   }, [selectedConversationId]);
+
+  useEffect(() => {
+    sendingConversationsRef.current = sendingConversations;
+  }, [sendingConversations]);
 
   useEffect(() => {
     pendingCommandApprovalsRef.current = pendingCommandApprovals;
@@ -759,6 +764,15 @@ export function useLoopDesktop(): LoopDesktopController {
           });
           return;
         }
+      }
+
+      if (selectedConversationIdRef.current !== conversationId) {
+        return;
+      }
+      const hasActiveStream = !!activeStreamsRef.current[conversationId];
+      const isConversationSending = !!sendingConversationsRef.current[conversationId];
+      if (rows.length === 0 && (hasActiveStream || isConversationSending)) {
+        return;
       }
 
       setActivities(

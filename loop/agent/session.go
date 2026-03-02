@@ -1346,18 +1346,6 @@ func (s *Session) HandleUserMessage(ctx context.Context, parts []models.MessageP
 		Parts:          parts,
 	}
 
-	if cp, err := s.createCheckpointForUserMessage(ctx, userMsg); err != nil {
-		// Checkpoints are best-effort. A snapshot failure must not block sending
-		// the user's message or starting the turn.
-		log.Printf("[session] checkpoint capture skipped conv=%s: %v", s.Conversation.ID, err)
-	} else if cp != nil {
-		userMsg.Metadata = map[string]any{
-			"checkpoint_id":        cp.ID,
-			"checkpoint_commit_id": cp.CommitID,
-			"checkpoint_label":     cp.Label,
-		}
-	}
-
 	if err := s.Store.Messages().Append(ctx, userMsg); err != nil {
 		return nil, nil, fmt.Errorf("append user message: %w", err)
 	}
