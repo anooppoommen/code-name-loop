@@ -52,7 +52,7 @@ interface ActivityFrameProps {
   onMouseLeave?: () => void;
 }
 
-function ActivityFrame({
+export function ActivityFrame({
   children,
   className = '',
   left = null,
@@ -240,10 +240,10 @@ export const ActivityItem = memo(function ActivityItem({
                       {nestedEvent.body &&
                         (nestedEvent.tool?.phase === 'result' || nestedEvent.tool?.error) &&
                         nestedEvent.body !== nestedEvent.tool?.command ? (
-                          <pre className="max-h-96 overflow-y-auto whitespace-pre-wrap rounded-md bg-loop-900/35 px-3 py-2 text-xs leading-relaxed text-loop-300 scrollbar-thin">
-                            {nestedEvent.body}
-                          </pre>
-                        ) : null}
+                        <pre className="max-h-96 overflow-y-auto whitespace-pre-wrap rounded-md bg-loop-900/35 px-3 py-2 text-xs leading-relaxed text-loop-300 scrollbar-thin">
+                          {nestedEvent.body}
+                        </pre>
+                      ) : null}
                       <PatchViewer patchText={nestedEvent.tool?.command || nestedEvent.body || ''} />
                     </div>
                   ) : nestedFallbackText ? (
@@ -262,211 +262,211 @@ export const ActivityItem = memo(function ActivityItem({
 
   return (
     <>
-    {isUser ? (
-      <ActivityFrame
-        className="px-2 py-3"
-        right={userMessageActions}
-        contentClassName="min-w-0"
-        onMouseEnter={() => setIsUserHovered(true)}
-        onMouseLeave={() => setIsUserHovered(false)}
-      >
-        <div className="ml-auto flex max-w-[85%] flex-col rounded-2xl rounded-tr-sm bg-loop-800/80 px-5 pt-2.5 pb-3 shadow-sm">
-          {event.images && event.images.length > 0 ? (
-            <div className="mb-2 flex flex-wrap gap-2">
-              {event.images.map((img, idx) => (
-                <button
-                  key={idx}
-                  type="button"
-                  className="h-16 w-16 cursor-pointer overflow-hidden rounded-md border border-loop-700 bg-loop-900 transition-opacity hover:opacity-80"
-                  onClick={() => setSelectedImage(img.dataUrl)}
-                >
-                  <img src={img.dataUrl} alt="attached" className="h-full w-full object-cover" />
-                </button>
-              ))}
-            </div>
-          ) : null}
-          <div className="text-loop-200">
-            <MarkdownBlock text={renderedText} dense />
-          </div>
-          <div className="mt-3 flex items-center justify-end gap-2">
-            {(userModel || userThinkingLevel) ? (
-              <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
-                {userModel ? (
-                  <span
-                    className="inline-flex items-center gap-1 rounded-full bg-loop-700/80 px-2 py-0.5 text-loop-300"
-                    title={`Model: ${userModel}`}
-                    aria-label={`Model ${userModel}`}
-                  >
-                    <Cog size={11} />
-                    <span className="max-w-[180px] truncate text-[10px] font-medium text-loop-300">
-                      {userModel}
-                    </span>
-                  </span>
-                ) : null}
-                {userThinkingLevel ? (
-                  <span
-                    className="inline-flex items-center gap-1 rounded-full bg-loop-700/80 px-2 py-0.5"
-                    title={`Thinking level: ${userThinkingLevel}`}
-                    aria-label={`Thinking level ${userThinkingLevel}`}
-                  >
-                    <Brain size={11} className={thinkingToneClass} />
-                    <span className={`text-[10px] font-medium ${thinkingToneClass}`}>
-                      {userThinkingLevel}
-                    </span>
-                  </span>
-                ) : null}
-              </div>
-            ) : null}
-            <time className="text-[10px] font-medium text-loop-500">
-              {new Date(event.timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
-            </time>
-          </div>
-        </div>
-      </ActivityFrame>
-    ) : (
-      <ActivityFrame
-        className={`group px-2 py-2 ${visual.row}`}
-        left={leftGutterIcon}
-        right={null}
-        contentClassName="min-w-0"
-      >
-        <div className="flex min-w-0 w-full flex-col gap-0.5">
-          {isSystemEvent ? (
-            <div className="mb-0.5 flex items-baseline justify-between gap-3">
-              <p className={`m-0 min-w-0 text-[15px] leading-relaxed ${visual.copy}`}>
-                {renderedText}
-              </p>
-              <div className="flex shrink-0 items-center gap-2 text-[11px] text-loop-500">
-                <time className="font-medium text-loop-500">
-                  {new Date(event.timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
-                </time>
-                <span>{labelFor(event.kind)}</span>
-                {event.tool?.callId ? (
-                  <span className="font-mono text-[10px] text-loop-500">
-                    {shortID(event.tool.callId)}
-                  </span>
-                ) : null}
-                {event.tool ? (
-                  <span
-                    className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${event.tool.success === false
-                        ? 'bg-red-500/10 text-red-300'
-                        : 'bg-blue-500/10 text-blue-300'
-                      }`}
-                  >
-                    {toolPhase}
-                  </span>
-                ) : null}
-              </div>
-            </div>
-          ) : (
-            <div className="mb-0.5 flex flex-wrap items-baseline gap-2">
-              <span className="font-semibold text-loop-200">
-                Gemini
-              </span>
-              <time className="text-[11px] font-medium text-loop-500">
-                {new Date(event.timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
-              </time>
-            </div>
-          )}
-
-          <div className={`text-[15px] leading-relaxed ${visual.copy}`}>
+      {isUser ? (
+        <ActivityFrame
+          className="px-2 py-3"
+          right={userMessageActions}
+          contentClassName="min-w-0"
+          onMouseEnter={() => setIsUserHovered(true)}
+          onMouseLeave={() => setIsUserHovered(false)}
+        >
+          <div className="ml-auto flex max-w-[85%] flex-col rounded-2xl rounded-tr-sm bg-loop-800/80 px-5 pt-2.5 pb-3 shadow-sm">
             {event.images && event.images.length > 0 ? (
-              <div className="flex flex-wrap gap-2 mb-2">
+              <div className="mb-2 flex flex-wrap gap-2">
                 {event.images.map((img, idx) => (
                   <button
                     key={idx}
                     type="button"
-                    className="rounded-md border border-loop-700 overflow-hidden w-16 h-16 bg-loop-900 cursor-pointer hover:opacity-80 transition-opacity"
+                    className="h-16 w-16 cursor-pointer overflow-hidden rounded-md border border-loop-700 bg-loop-900 transition-opacity hover:opacity-80"
                     onClick={() => setSelectedImage(img.dataUrl)}
                   >
-                    <img src={img.dataUrl} alt="attached" className="w-full h-full object-cover" />
+                    <img src={img.dataUrl} alt="attached" className="h-full w-full object-cover" />
                   </button>
                 ))}
               </div>
             ) : null}
-
-            {!isSystemEvent ? <MarkdownBlock text={renderedText} /> : null}
-
-            {requestInputPayload ? (
-              <RequestUserInputCard
-                payload={requestInputPayload}
-                canCompose={canCompose}
-                isSending={isSending}
-                onUseToolReply={onUseToolReply}
-                onSendToolReply={onSendToolReply}
-              />
-            ) : commandToolPayload ? (
-              <CommandToolCard payload={commandToolPayload} />
-            ) : updatePlanPayload ? (
-              <UpdatePlanCard payload={updatePlanPayload} />
-            ) : fileToolPayload ? (
-              <FileToolCard payload={fileToolPayload} />
-            ) : isPatchToolEvent && (event.tool?.command || event.body) ? (
-              <div className="space-y-2">
-                {event.body && (event.tool?.phase === 'result' || event.tool?.error) && event.body !== event.tool?.command ? (
-                  <pre className="max-h-96 overflow-y-auto whitespace-pre-wrap rounded-lg border border-loop-800/90 bg-loop-900/35 px-3 py-2 text-xs leading-relaxed text-loop-300 scrollbar-thin">
-                    {event.body}
-                  </pre>
-                ) : null}
-                <PatchViewer patchText={event.tool?.command || event.body || ''} />
-              </div>
-            ) : systemErrorDetails ? (
-              systemErrorDetails.mode === 'card' ? (
-                <div className="mt-2 rounded-lg border border-loop-700/90 bg-loop-800/70 px-3.5 py-3">
-                  <p className="m-0 text-[13px] leading-relaxed text-loop-200">
-                    {systemErrorDetails.summary}
-                  </p>
-                  {systemErrorDetails.rows.length > 0 ? (
-                    <div className="mt-3 overflow-hidden rounded-md border border-loop-700/80 bg-loop-800/60">
-                      <dl className="grid text-[11px]">
-                        {systemErrorDetails.rows.map((row) => (
-                          <div
-                            key={`${row.label}:${row.value}`}
-                            className="flex items-baseline justify-between gap-3 border-t border-loop-700/80 px-3 py-2 first:border-t-0"
-                          >
-                            <dt className="text-loop-400">{row.label}</dt>
-                            <dd className="font-medium text-loop-200">{row.value}</dd>
-                          </div>
-                        ))}
-                      </dl>
-                    </div>
+            <div className="text-loop-200">
+              <MarkdownBlock text={renderedText} dense />
+            </div>
+            <div className="mt-3 flex items-center justify-end gap-2">
+              {(userModel || userThinkingLevel) ? (
+                <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
+                  {userModel ? (
+                    <span
+                      className="inline-flex items-center gap-1 rounded-full bg-loop-700/80 px-2 py-0.5 text-loop-300"
+                      title={`Model: ${userModel}`}
+                      aria-label={`Model ${userModel}`}
+                    >
+                      <Cog size={11} />
+                      <span className="max-w-[180px] truncate text-[10px] font-medium text-loop-300">
+                        {userModel}
+                      </span>
+                    </span>
+                  ) : null}
+                  {userThinkingLevel ? (
+                    <span
+                      className="inline-flex items-center gap-1 rounded-full bg-loop-700/80 px-2 py-0.5"
+                      title={`Thinking level: ${userThinkingLevel}`}
+                      aria-label={`Thinking level ${userThinkingLevel}`}
+                    >
+                      <Brain size={11} className={thinkingToneClass} />
+                      <span className={`text-[10px] font-medium ${thinkingToneClass}`}>
+                        {userThinkingLevel}
+                      </span>
+                    </span>
                   ) : null}
                 </div>
-              ) : (
-                <p className="mt-2 whitespace-pre-wrap text-[13px] leading-relaxed text-loop-300">
-                  {systemErrorDetails.text}
+              ) : null}
+              <time className="text-[10px] font-medium text-loop-500">
+                {new Date(event.timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+              </time>
+            </div>
+          </div>
+        </ActivityFrame>
+      ) : (
+        <ActivityFrame
+          className={`group px-2 py-2 ${visual.row}`}
+          left={leftGutterIcon}
+          right={null}
+          contentClassName="min-w-0"
+        >
+          <div className="flex min-w-0 w-full flex-col gap-0.5">
+            {isSystemEvent ? (
+              <div className="mb-0.5 flex items-baseline justify-between gap-3">
+                <p className={`m-0 min-w-0 text-[15px] leading-relaxed ${visual.copy}`}>
+                  {renderedText}
                 </p>
-              )
-            ) : isSystemEvent && event.body ? (
-              <pre className={`mt-2 max-h-96 overflow-y-auto whitespace-pre-wrap rounded-lg border border-loop-800/90 px-3 py-2 text-xs leading-relaxed scrollbar-thin ${visual.detail}`}>
-                {event.body}
-              </pre>
-            ) : null}
-            {event.streaming ? <span className="animate-pulse text-loop-500">▍</span> : null}
+                <div className="flex shrink-0 items-center gap-2 text-[11px] text-loop-500">
+                  <time className="font-medium text-loop-500">
+                    {new Date(event.timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+                  </time>
+                  <span>{labelFor(event.kind)}</span>
+                  {event.tool?.callId ? (
+                    <span className="font-mono text-[10px] text-loop-500">
+                      {shortID(event.tool.callId)}
+                    </span>
+                  ) : null}
+                  {event.tool ? (
+                    <span
+                      className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${event.tool.success === false
+                        ? 'bg-red-500/10 text-red-300'
+                        : 'bg-blue-500/10 text-blue-300'
+                        }`}
+                    >
+                      {toolPhase}
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+            ) : (
+              <div className="mb-0.5 flex flex-wrap items-baseline gap-2">
+                <span className="font-semibold text-loop-200">
+                  Gemini
+                </span>
+                <time className="text-[11px] font-medium text-loop-500">
+                  {new Date(event.timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+                </time>
+              </div>
+            )}
+
+            <div className={`text-[15px] leading-relaxed ${visual.copy}`}>
+              {event.images && event.images.length > 0 ? (
+                <div className="flex flex-wrap gap-2 mb-2">
+                  {event.images.map((img, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      className="rounded-md border border-loop-700 overflow-hidden w-16 h-16 bg-loop-900 cursor-pointer hover:opacity-80 transition-opacity"
+                      onClick={() => setSelectedImage(img.dataUrl)}
+                    >
+                      <img src={img.dataUrl} alt="attached" className="w-full h-full object-cover" />
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+
+              {!isSystemEvent ? <MarkdownBlock text={renderedText} /> : null}
+
+              {requestInputPayload ? (
+                <RequestUserInputCard
+                  payload={requestInputPayload}
+                  canCompose={canCompose}
+                  isSending={isSending}
+                  onUseToolReply={onUseToolReply}
+                  onSendToolReply={onSendToolReply}
+                />
+              ) : commandToolPayload ? (
+                <CommandToolCard payload={commandToolPayload} />
+              ) : updatePlanPayload ? (
+                <UpdatePlanCard payload={updatePlanPayload} />
+              ) : fileToolPayload ? (
+                <FileToolCard payload={fileToolPayload} />
+              ) : isPatchToolEvent && (event.tool?.command || event.body) ? (
+                <div className="space-y-2">
+                  {event.body && (event.tool?.phase === 'result' || event.tool?.error) && event.body !== event.tool?.command ? (
+                    <pre className="max-h-96 overflow-y-auto whitespace-pre-wrap rounded-lg border border-loop-800/90 bg-loop-900/35 px-3 py-2 text-xs leading-relaxed text-loop-300 scrollbar-thin">
+                      {event.body}
+                    </pre>
+                  ) : null}
+                  <PatchViewer patchText={event.tool?.command || event.body || ''} />
+                </div>
+              ) : systemErrorDetails ? (
+                systemErrorDetails.mode === 'card' ? (
+                  <div className="mt-2 rounded-lg border border-loop-700/90 bg-loop-800/70 px-3.5 py-3">
+                    <p className="m-0 text-[13px] leading-relaxed text-loop-200">
+                      {systemErrorDetails.summary}
+                    </p>
+                    {systemErrorDetails.rows.length > 0 ? (
+                      <div className="mt-3 overflow-hidden rounded-md border border-loop-700/80 bg-loop-800/60">
+                        <dl className="grid text-[11px]">
+                          {systemErrorDetails.rows.map((row) => (
+                            <div
+                              key={`${row.label}:${row.value}`}
+                              className="flex items-baseline justify-between gap-3 border-t border-loop-700/80 px-3 py-2 first:border-t-0"
+                            >
+                              <dt className="text-loop-400">{row.label}</dt>
+                              <dd className="font-medium text-loop-200">{row.value}</dd>
+                            </div>
+                          ))}
+                        </dl>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : (
+                  <p className="mt-2 whitespace-pre-wrap text-[13px] leading-relaxed text-loop-300">
+                    {systemErrorDetails.text}
+                  </p>
+                )
+              ) : isSystemEvent && event.body ? (
+                <pre className={`mt-2 max-h-96 overflow-y-auto whitespace-pre-wrap rounded-lg border border-loop-800/90 px-3 py-2 text-xs leading-relaxed scrollbar-thin ${visual.detail}`}>
+                  {event.body}
+                </pre>
+              ) : null}
+              {event.streaming ? <span className="animate-pulse text-loop-500">▍</span> : null}
+            </div>
+          </div>
+        </ActivityFrame>
+      )}
+
+      {selectedImage && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-loop-950/80 p-4 backdrop-blur-sm"
+          onClick={() => setSelectedImage(null)}
+        >
+          <button
+            className="absolute top-6 right-6 text-white bg-loop-800 rounded-full p-2 hover:bg-loop-700 border border-loop-600 shadow-lg z-50 transition-colors"
+            onClick={(e) => {
+              e.stopPropagation();
+              setSelectedImage(null);
+            }}
+          >
+            <X size={20} />
+          </button>
+          <div className="relative flex max-w-[50vw] max-h-[50vh] items-center justify-center">
+            <img src={selectedImage} alt="full size" className="max-w-full max-h-full object-contain rounded-md shadow-2xl" />
           </div>
         </div>
-      </ActivityFrame>
-    )}
-
-    {selectedImage && (
-      <div 
-        className="fixed inset-0 z-50 flex items-center justify-center bg-loop-950/80 p-4 backdrop-blur-sm"
-        onClick={() => setSelectedImage(null)}
-      >
-        <button 
-          className="absolute top-6 right-6 text-white bg-loop-800 rounded-full p-2 hover:bg-loop-700 border border-loop-600 shadow-lg z-50 transition-colors"
-          onClick={(e) => {
-            e.stopPropagation();
-            setSelectedImage(null);
-          }}
-        >
-          <X size={20} />
-        </button>
-        <div className="relative flex max-w-[50vw] max-h-[50vh] items-center justify-center">
-          <img src={selectedImage} alt="full size" className="max-w-full max-h-full object-contain rounded-md shadow-2xl" />
-        </div>
-      </div>
-    )}
+      )}
     </>
   );
 });
@@ -623,14 +623,14 @@ interface SystemErrorDetailRow {
 
 type SystemErrorDetails =
   | {
-      mode: 'text';
-      text: string;
-    }
+    mode: 'text';
+    text: string;
+  }
   | {
-      mode: 'card';
-      summary: string;
-      rows: SystemErrorDetailRow[];
-    };
+    mode: 'card';
+    summary: string;
+    rows: SystemErrorDetailRow[];
+  };
 
 function parseSystemErrorDetails(event: ActivityEvent): SystemErrorDetails | null {
   const isErrorLike =

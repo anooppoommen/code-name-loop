@@ -2,7 +2,7 @@ import { ArrowDown } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { RefObject } from 'react';
-import { ActivityItem } from './activity-feed/ActivityItem';
+import { ActivityFrame, ActivityItem } from './activity-feed/ActivityItem';
 import { textTargetForEvent } from './activity-feed/textTarget';
 import type { ToolReplyActions } from './tool-cards';
 import type { ActivityEvent } from '../types/ui';
@@ -267,14 +267,14 @@ export const ActivityFeed = memo(function ActivityFeed({
               ))}
             </AnimatePresence>
           )}
+          {isSending ? (
+            <ActivityFrame className="group px-2 py-2">
+              <span className="animate-googleStatus pb-1 text-left text-[11px] font-medium bg-[linear-gradient(110deg,transparent_25%,rgba(255,255,255,0.7)_50%,transparent_75%)] bg-[length:200%_auto] bg-clip-text text-transparent drop-shadow-sm">
+                {currentStatus || 'Thinking...'}
+              </span>
+            </ActivityFrame>
+          ) : null}
         </div>
-        {isSending ? (
-          <div className="mx-auto w-full max-w-[720px] px-8 pb-1 text-left text-[11px] font-medium">
-            <span className="animate-googleStatus bg-[linear-gradient(110deg,transparent_25%,rgba(255,255,255,0.7)_50%,transparent_75%)] bg-[length:200%_auto] bg-clip-text text-transparent drop-shadow-sm">
-              {currentStatus || 'Thinking...'}
-            </span>
-          </div>
-        ) : null}
       </div>
       {!isAtBottom && events.length > 0 ? (
         <button
