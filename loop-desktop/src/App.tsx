@@ -11,6 +11,7 @@ import { QueuedMessages } from './components/QueuedMessages';
 import { Powerline } from './components/Powerline';
 import { WorkingRobotFlare } from './components/activity-feed/WorkingRobotFlare';
 import { CommandPalette } from './components/CommandPalette';
+import { ConnectionSettings } from './components/ConnectionSettings';
 
 const MOBILE_SIDEBAR_BREAKPOINT_PX = 920;
 const COMMAND_APPROVAL_OPTIONS: Array<{ decision: CommandApprovalDecision; label: string; keyHint: string }> = [
@@ -34,6 +35,8 @@ export default function App() {
   // Navigation history (jumplist)
   const [, setHistoryState] = useState<{ list: string[]; index: number }>({ list: [], index: -1 });
   const isNavigatingRef = useRef(false);
+
+  const [isConnectionSettingsOpen, setIsConnectionSettingsOpen] = useState(false);
 
   // Track selected conversation history
   useEffect(() => {
@@ -188,6 +191,11 @@ export default function App() {
           onStartNewConversation={startConversationFromPalette}
           onOpenConversation={openConversationFromPalette}
         />
+        <AnimatePresence>
+          {isConnectionSettingsOpen && (
+            <ConnectionSettings onClose={() => setIsConnectionSettingsOpen(false)} />
+          )}
+        </AnimatePresence>
 
         <AnimatePresence initial={false}>
           {isSidebarOpen && (
@@ -236,6 +244,8 @@ export default function App() {
             conversationTitle={app.selectedConversation?.title ?? ''}
             isSidebarOpen={isSidebarOpen}
             onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
+            sshTunnelStatus={app.sshTunnelStatus}
+            onOpenConnectionSettings={() => setIsConnectionSettingsOpen(true)}
           />
           <AnimatePresence initial={false}>
             {app.isSending && app.showMascot ? (

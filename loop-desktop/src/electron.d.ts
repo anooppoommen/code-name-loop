@@ -57,6 +57,20 @@ interface LoopDesktopBridge {
   getActiveReplyStream: (payload: LoopActiveStreamRequest) => Promise<LoopActiveStreamResponse>;
   cancelReplyStream: (payload: { streamId: string }) => Promise<{ ok: boolean }>;
   onStreamPacket: (handler: (packet: LoopStreamPacket) => void) => () => void;
+  sshTunnel: {
+    connect: (config: {
+      host: string;
+      port: number;
+      username: string;
+      privateKeyPath: string;
+      remotePort: number;
+    }) => Promise<{ ok: boolean; localPort?: number; error?: string }>;
+    disconnect: () => Promise<{ ok: boolean }>;
+    status: () => Promise<{ status: string; localPort: number | null; error: string | null }>;
+    onStatusChange: (
+      handler: (status: { status: string; localPort: number | null; error: string | null }) => void,
+    ) => () => void;
+  };
 }
 
 declare global {

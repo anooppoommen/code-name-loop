@@ -8,6 +8,16 @@ import type {
   WorkspaceSummary,
 } from '../types/ui';
 
+export interface SshTunnelConfig {
+  host: string;
+  port: number;
+  username: string;
+  privateKeyPath: string;
+  remotePort: number;
+}
+
+export type SshTunnelStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
+
 export interface StreamHandle {
   streamId: string;
   conversationId: string;
@@ -57,6 +67,13 @@ export interface NoticeToast {
 export interface LoopDesktopController {
   backendUrl: string;
   setBackendUrl: (value: string) => void;
+
+  sshTunnelConfig: SshTunnelConfig;
+  setSshTunnelConfig: Dispatch<SetStateAction<SshTunnelConfig>>;
+  sshTunnelStatus: SshTunnelStatus;
+  sshTunnelError: string | null;
+  connectTunnel: (config: SshTunnelConfig) => Promise<void>;
+  disconnectTunnel: () => Promise<void>;
 
   workspaces: WorkspaceSummary[];
   selectedWorkspaceId: string;

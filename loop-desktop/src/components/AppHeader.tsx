@@ -1,10 +1,13 @@
-import { PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { PanelLeftClose, PanelLeftOpen, Server } from 'lucide-react';
+import type { SshTunnelStatus } from '../hooks/useLoopDesktop.types';
 
 interface AppHeaderProps {
   workspaceName: string;
   conversationTitle: string;
   isSidebarOpen: boolean;
   onToggleSidebar: () => void;
+  sshTunnelStatus: SshTunnelStatus;
+  onOpenConnectionSettings: () => void;
 }
 
 export function AppHeader({
@@ -12,6 +15,8 @@ export function AppHeader({
   conversationTitle,
   isSidebarOpen,
   onToggleSidebar,
+  sshTunnelStatus,
+  onOpenConnectionSettings,
 }: AppHeaderProps) {
   return (
     <header className={`drag-region flex items-center justify-between h-[40px] bg-transparent shrink-0 transition-spacing duration-200 pr-4 ${isSidebarOpen ? 'pl-4' : 'pl-[72px]'}`}>
@@ -30,6 +35,23 @@ export function AppHeader({
             {conversationTitle || 'New thread'}
           </span>
         </div>
+      </div>
+
+      <div className="flex items-center pointer-events-auto">
+        <button
+          onClick={onOpenConnectionSettings}
+          className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-medium transition-colors hover:bg-loop-700/50"
+          title="Connection Settings"
+        >
+          <Server className="h-3.5 w-3.5 opacity-70" />
+          {sshTunnelStatus === 'connected' ? (
+            <span className="text-emerald-500">Connected</span>
+          ) : sshTunnelStatus === 'connecting' ? (
+            <span className="text-amber-500">Connecting</span>
+          ) : (
+            <span className="text-loop-400">Local</span>
+          )}
+        </button>
       </div>
     </header>
   );

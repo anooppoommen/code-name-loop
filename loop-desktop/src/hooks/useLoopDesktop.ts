@@ -43,6 +43,8 @@ import type {
   NoticeToast,
   PendingCommandApproval,
   QueuedMessage,
+  SshTunnelConfig,
+  SshTunnelStatus,
   StreamHandle,
 } from './useLoopDesktop.types';
 
@@ -53,6 +55,8 @@ export type {
   NoticeToast,
   PendingCommandApproval,
   QueuedMessage,
+  SshTunnelConfig,
+  SshTunnelStatus,
 } from './useLoopDesktop.types';
 
 function dataUrlToBase64(dataUrl: string): string {
@@ -65,6 +69,17 @@ function dataUrlToBase64(dataUrl: string): string {
 
 export function useLoopDesktop(): LoopDesktopController {
   const [backendUrl, setBackendUrl] = useState('http://localhost:8080');
+
+  const [sshTunnelConfig, setSshTunnelConfig] = useState<SshTunnelConfig>({
+    host: 'localhost',
+    port: 22,
+    username: '',
+    privateKeyPath: '',
+    remotePort: 8080,
+  });
+  const [sshTunnelStatus, setSshTunnelStatus] = useState<SshTunnelStatus>('disconnected');
+  const [sshTunnelError, setSshTunnelError] = useState<string | null>(null);
+
   const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);
   const [selectedWorkspaceId, setSelectedWorkspaceId] = useState('');
   const [workspacePath, setWorkspacePath] = useState('');
@@ -155,7 +170,7 @@ export function useLoopDesktop(): LoopDesktopController {
       const prev = prevMap[selectedConversationId] || [];
       const idx = prev.findIndex(m => m.id === id);
       if (idx < 0) return prevMap;
-      
+
       const next = [...prev];
       if (direction === 'up' && idx > 0) {
         [next[idx - 1], next[idx]] = [next[idx], next[idx - 1]];
@@ -537,6 +552,7 @@ export function useLoopDesktop(): LoopDesktopController {
         thinkingLevelsByConversation?: Record<string, unknown>;
         draftComposerModel?: ComposerModel;
         composerModelsByConversation?: Record<string, unknown>;
+        sshTunnelConfig?: SshTunnelConfig;
       };
 
       if (parsed.backendUrl) {
@@ -583,6 +599,9 @@ export function useLoopDesktop(): LoopDesktopController {
         }
         setComposerModelsByConversation(normalized);
       }
+      if (parsed.sshTunnelConfig) {
+        setSshTunnelConfig((prev) => ({ ...prev, ...parsed.sshTunnelConfig }));
+      }
     } catch {
       // Ignore invalid local storage state.
     }
@@ -602,6 +621,7 @@ export function useLoopDesktop(): LoopDesktopController {
         thinkingLevelsByConversation,
         draftComposerModel,
         composerModelsByConversation,
+        sshTunnelConfig,
       }),
     );
   }, [
@@ -615,6 +635,7 @@ export function useLoopDesktop(): LoopDesktopController {
     thinkingLevelsByConversation,
     draftComposerModel,
     composerModelsByConversation,
+    sshTunnelConfig,
   ]);
 
   const refreshWorkspaces = useCallback(async (): Promise<void> => {
@@ -1631,9 +1652,63 @@ export function useLoopDesktop(): LoopDesktopController {
     };
   }, [backendUrl, handleStreamPacket, pushActivity, selectedConversationId]);
 
+  useEffect(() => {
+    if (!window.loopDesktop?.isElectron) {
+      return;
+    }
+
+    const unsubscribe = window.loopDesktop.sshTunnel.onStatusChange((status) => {
+      setSshTunnelStatus(status.status as SshTunnelStatus);
+      setSshTunnelError(status.error);
+
+      if (status.status === 'connected' && status.localPort) {
+        setBackendUrl(`http://localhost:${status.localPort}`);
+        pushNotice('success', 'SSH tunnel connected. Workspaces resynced.');
+      } else if (status.status === 'disconnected' || status.status === 'error') {
+        setBackendUrl('http://localhost:8080');
+        if (status.status === 'error' && status.error) {
+          pushNotice('error', `SSH tunnel error: ${status.error}`);
+        }
+      }
+    });
+
+    // Check initial status
+    void window.loopDesktop.sshTunnel.status().then((status) => {
+      setSshTunnelStatus(status.status as SshTunnelStatus);
+      setSshTunnelError(status.error);
+      if (status.status === 'connected' && status.localPort) {
+        setBackendUrl(`http://localhost:${status.localPort}`);
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [pushNotice]);
+
+  const connectTunnel = useCallback(async (config: SshTunnelConfig): Promise<void> => {
+    if (!window.loopDesktop?.isElectron) return;
+    const res = await window.loopDesktop.sshTunnel.connect(config);
+    if (!res.ok) {
+      pushNotice('error', `Tunnel connection failed: ${res.error}`);
+    }
+  }, [pushNotice]);
+
+  const disconnectTunnel = useCallback(async (): Promise<void> => {
+    if (!window.loopDesktop?.isElectron) return;
+    await window.loopDesktop.sshTunnel.disconnect();
+  }, []);
+
   return {
     backendUrl,
     setBackendUrl,
+
+    sshTunnelConfig,
+    setSshTunnelConfig,
+    sshTunnelStatus,
+    sshTunnelError,
+    connectTunnel,
+    disconnectTunnel,
 
     workspaces,
     selectedWorkspaceId,

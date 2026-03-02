@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  loop-server:
+    build:
+      context: ./loop
+      dockerfile: Dockerfile
+    ports:
+      - "2222:22"
+    volumes:
+      - ./.run/test-keys/test_rsa.pub:/root/.ssh/authorized_keys:ro
+    environment:
+      # Inject a mock or real GEMINI_API_KEY for tests (just needed to start server)
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-mock_key_for_testing}

@@ -31,4 +31,17 @@ contextBridge.exposeInMainWorld('loopDesktop', {
       ipcRenderer.removeListener('loop-stream:packet', listener);
     };
   },
+
+  sshTunnel: {
+    connect: (config) => ipcRenderer.invoke('ssh-tunnel:connect', config),
+    disconnect: () => ipcRenderer.invoke('ssh-tunnel:disconnect'),
+    status: () => ipcRenderer.invoke('ssh-tunnel:status'),
+    onStatusChange: (handler) => {
+      const listener = (_event, status) => handler(status);
+      ipcRenderer.on('ssh-tunnel:status-change', listener);
+      return () => {
+        ipcRenderer.removeListener('ssh-tunnel:status-change', listener);
+      };
+    },
+  },
 });

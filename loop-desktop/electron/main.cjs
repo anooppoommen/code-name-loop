@@ -1,6 +1,7 @@
 const { app, BrowserWindow, dialog, ipcMain } = require('electron');
 const crypto = require('node:crypto');
 const path = require('node:path');
+const { createTunnel, destroyTunnel, getTunnelStatus, tunnelEvents } = require('./ssh-tunnel.cjs');
 
 /** @type {Map<string, AbortController>} */
 const streamControllers = new Map();
@@ -384,6 +385,28 @@ ipcMain.handle('loop-api:cancel-stream', async (_event, payload) => {
   streamControllers.delete(streamId);
   streamLog(`cancel requested stream=${shortId(streamId)}`);
   return { ok: true };
+});
+
+tunnelEvents.on('status-change', (status) => {
+  const windows = BrowserWindow.getAllWindows();
+  for (const win of windows) {
+    if (!win.isDestroyed()) {
+      win.webContents.send('ssh-tunnel:status-change', status);
+    }
+  }
+});
+
+ipcMain.handle('ssh-tunnel:connect', async (_event, config) => {
+  return await createTunnel(config);
+});
+
+ipcMain.handle('ssh-tunnel:disconnect', async () => {
+  await destroyTunnel();
+  return { ok: true };
+});
+
+ipcMain.handle('ssh-tunnel:status', async () => {
+  return getTunnelStatus();
 });
 
 app.whenReady().then(() => {
