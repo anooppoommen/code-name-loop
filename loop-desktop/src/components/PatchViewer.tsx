@@ -27,6 +27,39 @@ function parsePatchData(patchText: string): PatchFile[] {
   const files: PatchFile[] = [];
   let currentFile: PatchFile | null = null;
   let currentHunk: (PatchHunk & { oldStart: number; newStart: number }) | null = null;
+  let fallbackOldStart = 1;
+  let fallbackNewStart = 1;
+
+  const beginHunk = (header: string, oldStart: number, newStart: number) => {
+    if (!currentFile) {
+      return null;
+    }
+    currentHunk = {
+      header,
+      lines: [],
+      oldStart,
+      newStart,
+    };
+    currentFile.hunks.push(currentHunk);
+    fallbackOldStart = oldStart;
+    fallbackNewStart = newStart;
+    return currentHunk;
+  };
+
+  const ensureHunkForContent = () => {
+    if (!currentFile) {
+      return null;
+    }
+    if (currentHunk) {
+      return currentHunk;
+    }
+
+    if (currentFile.action === 'Add') {
+      return beginHunk('@@', 0, 1);
+    }
+
+    return beginHunk('@@', fallbackOldStart, fallbackNewStart);
+  };
 
   for (const line of lines) {
     if (line.startsWith('*** ')) {
@@ -41,41 +74,48 @@ function parsePatchData(patchText: string): PatchFile[] {
         };
         files.push(currentFile);
         currentHunk = null;
+        fallbackOldStart = 1;
+        fallbackNewStart = 1;
       }
       else if (line.trim() === '*** End Patch') {
         break;
       }
-    } else if (line.startsWith('@@ ') && currentFile) {
-      const match = line.match(/@@\s+-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@/);
-      currentHunk = {
-        header: line,
-        lines: [],
-        oldStart: match ? parseInt(match[1], 10) : 1,
-        newStart: match ? parseInt(match[2], 10) : 1,
-      };
-      currentFile.hunks.push(currentHunk);
-    } else if (currentHunk) {
+      continue;
+    }
+
+    if (line.startsWith('@@') && currentFile) {
+      const match = line.match(/@@\s*-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s*@@/);
+      const oldStart = match ? parseInt(match[1], 10) : fallbackOldStart;
+      const newStart = match ? parseInt(match[2], 10) : fallbackNewStart;
+      beginHunk(line, oldStart, newStart);
+      continue;
+    }
+
+    const targetHunk = currentHunk || (line ? ensureHunkForContent() : null);
+    if (targetHunk) {
       if (line.startsWith('+') && currentFile) {
         currentFile.added++;
-        currentHunk.lines.push({ type: 'add', text: line, newLn: currentHunk.newStart++ });
+        targetHunk.lines.push({ type: 'add', text: line, newLn: targetHunk.newStart++ });
       } else if (line.startsWith('-') && currentFile) {
         currentFile.removed++;
-        currentHunk.lines.push({ type: 'remove', text: line, oldLn: currentHunk.oldStart++ });
+        targetHunk.lines.push({ type: 'remove', text: line, oldLn: targetHunk.oldStart++ });
       } else if (line.startsWith('\\')) {
-        currentHunk.lines.push({
+        targetHunk.lines.push({
           type: 'context',
           text: line,
           oldLn: undefined,
           newLn: undefined,
         });
       } else {
-        currentHunk.lines.push({
+        targetHunk.lines.push({
           type: 'context',
           text: line,
-          oldLn: currentHunk.oldStart++,
-          newLn: currentHunk.newStart++,
+          oldLn: targetHunk.oldStart++,
+          newLn: targetHunk.newStart++,
         });
       }
+      fallbackOldStart = targetHunk.oldStart;
+      fallbackNewStart = targetHunk.newStart;
     }
   }
   return files;
