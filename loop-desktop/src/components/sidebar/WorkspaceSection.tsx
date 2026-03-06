@@ -9,6 +9,7 @@ interface WorkspaceSectionProps {
   hasMoreConversationsByWorkspace: Record<string, boolean>;
   selectedConversationId: string;
   sendingConversations: Record<string, boolean>;
+  awaitingApprovalConversations: Record<string, boolean>;
   onToggleWorkspace: (workspaceId: string) => void;
   onDeleteWorkspace: (workspaceId: string) => void;
   onSelectConversation: (conversationId: string) => void;
@@ -25,6 +26,7 @@ export function WorkspaceSection({
   hasMoreConversationsByWorkspace,
   selectedConversationId,
   sendingConversations,
+  awaitingApprovalConversations,
   onToggleWorkspace,
   onDeleteWorkspace,
   onSelectConversation,
@@ -52,6 +54,7 @@ export function WorkspaceSection({
             hasMore={!!hasMoreConversationsByWorkspace[workspace.id]}
             selectedConversationId={selectedConversationId}
             sendingConversations={sendingConversations}
+            awaitingApprovalConversations={awaitingApprovalConversations}
             onToggle={onToggleWorkspace}
             onDeleteWorkspace={onDeleteWorkspace}
             onSelectConversation={onSelectConversation}

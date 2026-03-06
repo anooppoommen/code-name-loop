@@ -1,28 +1,33 @@
 import { ArrowDown } from 'lucide-react';
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { RefObject } from 'react';
+import { ActivityIntermediateGroup } from './activity-feed/ActivityIntermediateGroup';
 import { ActivityFrame, ActivityItem } from './activity-feed/ActivityItem';
 import { textTargetForEvent } from './activity-feed/textTarget';
 import type { ToolReplyActions } from './tool-cards';
 import { CombinedPatchViewer } from './CombinedPatchViewer';
 import type { ActivityEvent } from '../types/ui';
+import { useEventStore } from '../stores/eventStore';
+import { useGroupStore } from '../stores/groupStore';
+import { buildRenderGroups, visibleEventsForGroup } from '../utils/activityRenderGroups';
 
 interface ActivityFeedProps extends ToolReplyActions {
-  events: ActivityEvent[];
   conversationId: string;
   containerRef: RefObject<HTMLDivElement | null>;
   currentStatus: string;
+  hideLifecycle: boolean;
   onRetryMessage: (messageId: string) => Promise<void>;
   onEditMessage: (messageId: string, text: string, images: { mimeType: string; dataUrl: string }[]) => void;
 }
 
 const BOTTOM_THRESHOLD_PX = 24;
+const EMPTY_GROUPS: ReturnType<typeof useGroupStore.getState>['groupsByConversation'][string] = [];
 
 export const ActivityFeed = memo(function ActivityFeed({
-  events,
   conversationId,
   containerRef,
   currentStatus,
+  hideLifecycle,
   canCompose,
   isSending,
   onUseToolReply,
@@ -30,6 +35,26 @@ export const ActivityFeed = memo(function ActivityFeed({
   onRetryMessage,
   onEditMessage,
 }: ActivityFeedProps) {
+  const groups = useGroupStore(
+    useCallback((state) => state.groupsByConversation[conversationId] ?? EMPTY_GROUPS, [conversationId]),
+  );
+  const eventsById = useEventStore((state) => state.events);
+
+  const events = useMemo(() => {
+    const next: ActivityEvent[] = [];
+    for (const group of groups) {
+      for (const event of visibleEventsForGroup(group, eventsById, hideLifecycle)) {
+        next.push(event);
+      }
+    }
+    return next;
+  }, [eventsById, groups, hideLifecycle]);
+
+  const groupedEvents = useMemo(
+    () => buildRenderGroups(groups, eventsById, hideLifecycle, isSending),
+    [eventsById, groups, hideLifecycle, isSending],
+  );
+
   const [visibleChars, setVisibleChars] = useState<Record<string, number>>({});
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [hasUserScrolled, setHasUserScrolled] = useState(false);
@@ -37,8 +62,6 @@ export const ActivityFeed = memo(function ActivityFeed({
   const programmaticScrollRef = useRef(false);
   const stickyBottomRef = useRef(true);
   const pendingInitialSnapRef = useRef(false);
-  const previousConversationIdRef = useRef(conversationId);
-  const previousEventIDsRef = useRef<Set<string>>(new Set());
 
   const scrollToBottom = useCallback(
     (behavior: ScrollBehavior = 'auto'): void => {
@@ -48,10 +71,7 @@ export const ActivityFeed = memo(function ActivityFeed({
       }
 
       programmaticScrollRef.current = true;
-      node.scrollTo({
-        top: node.scrollHeight,
-        behavior,
-      });
+      node.scrollTo({ top: node.scrollHeight, behavior });
       setIsAtBottom(true);
       stickyBottomRef.current = true;
 
@@ -95,12 +115,7 @@ export const ActivityFeed = memo(function ActivityFeed({
     setIsAtBottom(true);
     stickyBottomRef.current = true;
     pendingInitialSnapRef.current = true;
-  }, [conversationId, scrollToBottom]);
-
-  useEffect(() => {
-    previousConversationIdRef.current = conversationId;
-    previousEventIDsRef.current = new Set(events.map((event) => event.id));
-  }, [conversationId, events]);
+  }, [conversationId]);
 
   useLayoutEffect(() => {
     if (!pendingInitialSnapRef.current) {
@@ -111,7 +126,7 @@ export const ActivityFeed = memo(function ActivityFeed({
     if (events.length > 0) {
       pendingInitialSnapRef.current = false;
     }
-  }, [events, scrollToBottom]);
+  }, [events.length, scrollToBottom]);
 
   useEffect(() => {
     setVisibleChars((prev) => {
@@ -161,7 +176,7 @@ export const ActivityFeed = memo(function ActivityFeed({
           const fullText = textTargetForEvent(event);
           const current = next[event.id] ?? 0;
           const target = fullText.length;
-          
+
           let advanced = current;
           if (current < target) {
             const match = fullText.slice(current).match(/\s+/);
@@ -198,22 +213,25 @@ export const ActivityFeed = memo(function ActivityFeed({
   }, [events, scrollToBottom, visibleChars]);
 
   const finalAgentEventId = useMemo(() => {
-    for (let i = events.length - 1; i >= 0; i--) {
-      if (events[i].kind === 'assistant') {
-        return events[i].id;
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+      if (events[index].kind === 'assistant') {
+        return events[index].id;
       }
     }
     return null;
   }, [events]);
 
   const assistantPatches = useMemo(() => {
-    const map = new Map<string, string[]>();
+    const patchesByAssistant = new Map<string, string[]>();
     let currentPatches: string[] = [];
-    
+
     for (const event of events) {
       if (event.kind === 'user') {
         currentPatches = [];
-      } else if (event.kind === 'tool') {
+        continue;
+      }
+
+      if (event.kind === 'tool') {
         const toolName = event.tool?.name || '';
         if ((toolName === 'apply_patch' || toolName.endsWith(':apply_patch')) && event.tool?.success !== false) {
           const patchText = event.tool?.command || event.body;
@@ -221,21 +239,24 @@ export const ActivityFeed = memo(function ActivityFeed({
             currentPatches.push(patchText);
           }
         }
-        // parallel_tool_use is generally disallowed for apply_patch, but checked for completeness
-      } else if (event.kind === 'assistant') {
+        continue;
+      }
+
+      if (event.kind === 'assistant') {
         if (currentPatches.length > 0) {
-          map.set(event.id, [...currentPatches]);
+          patchesByAssistant.set(event.id, [...currentPatches]);
         }
         currentPatches = [];
       }
     }
-    return map;
+
+    return patchesByAssistant;
   }, [events]);
 
   const renderEventItem = useCallback((event: ActivityEvent) => {
     const isFinalAgent = event.id === finalAgentEventId;
     return (
-      <div key={event.id}>
+      <div key={event.id} data-activity-event-id={event.id}>
         <ActivityItem
           event={event}
           visibleChars={visibleChars[event.id]}
@@ -257,29 +278,44 @@ export const ActivityFeed = memo(function ActivityFeed({
           </ActivityFrame>
         ) : null}
       </div>
-  )}, [
+    );
+  }, [
+    assistantPatches,
     canCompose,
+    finalAgentEventId,
     isSending,
     onEditMessage,
     onRetryMessage,
     onSendToolReply,
     onUseToolReply,
     visibleChars,
-    assistantPatches,
-    finalAgentEventId,
   ]);
 
   return (
     <section className="relative flex h-full min-h-0 flex-col bg-transparent">
       <div
         ref={containerRef}
+        data-activity-scroll-container="true"
         className={`flex-1 overflow-y-auto px-4 py-3 ${hasUserScrolled ? '' : 'scrollbar-hidden'}`}
       >
         <div className="mx-auto w-full max-w-[720px]">
           {events.length === 0 ? (
             <p className="m-0 px-4 py-3 text-sm text-loop-500">No run activity yet. Send a task to start streaming events.</p>
           ) : (
-            events.map((event) => renderEventItem(event))
+            groupedEvents.map((group) => {
+              if (group.type === 'single') {
+                return renderEventItem(group.events[0]);
+              }
+              return (
+                <ActivityIntermediateGroup
+                  key={group.id}
+                  events={group.events}
+                  defaultExpanded={group.defaultExpanded ?? false}
+                  scrollAnchorId={group.scrollAnchorId ?? group.events[0]?.id ?? ''}
+                  renderEventItem={renderEventItem}
+                />
+              );
+            })
           )}
           {isSending ? (
             <ActivityFrame className="group px-2 py-2">
@@ -293,8 +329,7 @@ export const ActivityFeed = memo(function ActivityFeed({
       {!isAtBottom && events.length > 0 ? (
         <button
           type="button"
-          className={`absolute left-1/2 z-10 -translate-x-1/2 inline-flex items-center gap-1.5 rounded-full border border-loop-700 bg-loop-900/95 px-3 py-1.5 text-xs font-medium text-loop-200 shadow-lg shadow-black/30 backdrop-blur transition-colors hover:border-loop-500 hover:bg-loop-800 ${isSending ? 'bottom-8' : 'bottom-4'
-            }`}
+          className={`absolute left-1/2 z-10 -translate-x-1/2 inline-flex items-center gap-1.5 rounded-full border border-loop-700 bg-loop-900/95 px-3 py-1.5 text-xs font-medium text-loop-200 shadow-lg shadow-black/30 backdrop-blur transition-colors hover:border-loop-500 hover:bg-loop-800 ${isSending ? 'bottom-8' : 'bottom-4'}`}
           onClick={() => scrollToBottom('smooth')}
           aria-label="Scroll to bottom"
         >

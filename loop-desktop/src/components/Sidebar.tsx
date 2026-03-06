@@ -21,6 +21,7 @@ interface SidebarProps {
   hasMoreConversationsByWorkspace: Record<string, boolean>;
   selectedConversationId: string;
   sendingConversations: Record<string, boolean>;
+  awaitingApprovalConversations: Record<string, boolean>;
   onSelectConversation: (conversationId: string) => void;
   onNewConversation: () => void;
   onDeleteConversation: (conversationId: string) => void;
@@ -46,6 +47,7 @@ export function Sidebar({
   hasMoreConversationsByWorkspace,
   selectedConversationId,
   sendingConversations,
+  awaitingApprovalConversations,
   onSelectConversation,
   onNewConversation,
   onDeleteConversation,
@@ -69,6 +71,7 @@ export function Sidebar({
         hasMoreConversationsByWorkspace={hasMoreConversationsByWorkspace}
         selectedConversationId={selectedConversationId}
         sendingConversations={sendingConversations}
+        awaitingApprovalConversations={awaitingApprovalConversations}
         onToggleWorkspace={onToggleWorkspace}
         onDeleteWorkspace={onDeleteWorkspace}
         onSelectConversation={onSelectConversation}

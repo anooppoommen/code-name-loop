@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, useMemo } from 'react';
 import { attachReplyStream, getActiveReplyStream, openReplyStream } from '../lib/loopClient';
 import type { ConversationSummary } from '../types/ui';
 import { shortID } from '../utils/parsers';
@@ -58,6 +58,7 @@ export function useLoopDesktop(): LoopDesktopController {
 
   // ── Activities & Streaming ─────────────────────────────
   const activitiesHook = useActivities(
+    selectedConversationId,
     selectedConversationIdRef,
     commandApprovals.enqueueCommandApproval,
     notices.pushNotice,
@@ -94,7 +95,7 @@ export function useLoopDesktop(): LoopDesktopController {
       }
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []),
-    useCallback((_workspaceId: string) => {
+    useCallback(() => {
       setSelectedConversationId('');
     }, []),
   );
@@ -109,7 +110,7 @@ export function useLoopDesktop(): LoopDesktopController {
     selectedConversationIdRef,
     notices.pushNotice,
     activitiesHook.pushActivity,
-    activitiesHook.setActivities,
+    activitiesHook.replaceConversationActivities,
     activitiesHook.clearConversationView,
     notices.clearNotices,
     activitiesHook.resetConversationLiveState,
@@ -208,7 +209,7 @@ export function useLoopDesktop(): LoopDesktopController {
       if (isBranch) {
         const anchorMessageId = isRetry ? retryMessageId : editMessageId;
         if (anchorMessageId) {
-          activitiesHook.setActivities((prev) => {
+          activitiesHook.updateConversationActivities(conversationId, (prev) => {
             const anchorIndex = prev.findIndex(
               (event) => event.messageId === anchorMessageId || (event.kind === 'user' && event.id === anchorMessageId),
             );
@@ -244,9 +245,9 @@ export function useLoopDesktop(): LoopDesktopController {
             thinkingLevel: selectedThinkingLevel,
           },
           images: messageImages.map((img) => ({ mimeType: img.mimeType, dataUrl: img.dataUrl })),
-        });
+        }, conversationId);
       }
-      activitiesHook.pushActivity({ kind: 'lifecycle', title: 'Turn started' });
+      activitiesHook.pushActivity({ kind: 'lifecycle', title: 'Turn started' }, conversationId);
       if (clearComposer) {
         composer.setMessageInput('');
         composer.setComposerImages([]);
@@ -292,7 +293,7 @@ export function useLoopDesktop(): LoopDesktopController {
           kind: 'error',
           title: 'Unable to start stream',
           body: error instanceof Error ? error.message : 'Unknown stream error',
-        });
+        }, conversationId);
         activitiesHook.finalizeTurn(true, conversationId);
         return null;
       });
@@ -377,7 +378,7 @@ export function useLoopDesktop(): LoopDesktopController {
       await stream.cancel();
       stream.dispose();
       delete activitiesHook.activeStreamsRef.current[selectedConversationId];
-      activitiesHook.pushActivity({ kind: 'lifecycle', title: 'Turn cancel requested for steering' });
+      activitiesHook.pushActivity({ kind: 'lifecycle', title: 'Turn cancel requested for steering' }, selectedConversationId);
     }
 
     activitiesHook.setSendingConversations((prev) => ({ ...prev, [selectedConversationId]: false }));
@@ -456,7 +457,7 @@ export function useLoopDesktop(): LoopDesktopController {
     }
 
     await stream.cancel();
-    activitiesHook.pushActivity({ kind: 'lifecycle', title: 'Turn cancel requested' });
+    activitiesHook.pushActivity({ kind: 'lifecycle', title: 'Turn cancel requested' }, selectedConversationId);
   }, [activitiesHook, selectedConversationId]);
 
   // Reconnect to active stream on conversation select
@@ -488,7 +489,7 @@ export function useLoopDesktop(): LoopDesktopController {
         kind: 'lifecycle',
         title: 'Reconnected to active run',
         body: `stream ${shortID(active.streamId)}`,
-      });
+      }, selectedConversationId);
     })();
 
     return () => {
@@ -497,6 +498,14 @@ export function useLoopDesktop(): LoopDesktopController {
   }, [backendUrl, activitiesHook, selectedConversationId]);
 
   // ── Return LoopDesktopController ───────────────────────
+
+  const awaitingApprovalConversations = useMemo(() => {
+    const result: Record<string, boolean> = {};
+    for (const approval of commandApprovals.pendingCommandApprovals) {
+      result[approval.conversationId] = true;
+    }
+    return result;
+  }, [commandApprovals.pendingCommandApprovals]);
 
   return {
     backendUrl,
@@ -540,6 +549,7 @@ export function useLoopDesktop(): LoopDesktopController {
     canCompose: workspacesHook.selectedWorkspaceId !== '',
     isSending,
     sendingConversations: activitiesHook.sendingConversations,
+    awaitingApprovalConversations,
     notices: notices.notices,
     pendingCommandApproval: commandApprovals.pendingCommandApproval,
     pendingCommandApprovalCount: commandApprovals.pendingApprovalsForSelectedConversation.length,

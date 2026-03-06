@@ -28,6 +28,7 @@ interface ThreadItemProps {
   conversation: ConversationSummary;
   isActive: boolean;
   isWorking: boolean;
+  isAwaitingApproval: boolean;
   onSelect: () => void;
   onDelete: () => void;
   onRename: (title: string) => void;
@@ -37,6 +38,7 @@ export function ThreadItem({
   conversation,
   isActive,
   isWorking,
+  isAwaitingApproval,
   onSelect,
   onDelete,
   onRename,
@@ -116,7 +118,13 @@ export function ThreadItem({
       }}
     >
       <div className="flex min-w-0 flex-1 items-center gap-2">
-        <div className="flex w-[15px] shrink-0 items-center justify-center">{isWorking && <BrailleSpinner />}</div>
+        <div className="flex w-[15px] shrink-0 items-center justify-center">
+          {isAwaitingApproval ? (
+            <div className="h-2 w-2 rounded-full bg-orange-500 shadow-[0_0_8px_rgba(249,115,22,0.6)] animate-pulse" title="Waiting for approval" />
+          ) : isWorking ? (
+            <BrailleSpinner />
+          ) : null}
+        </div>
         <div className="flex min-w-0 flex-1 items-center justify-between gap-2 pr-1">
           {isEditing ? (
             <input

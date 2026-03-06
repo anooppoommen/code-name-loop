@@ -5,6 +5,7 @@ import { shortID } from '../../utils/parsers';
 import type { ActivityVisualStyle } from './ActivityItemHelpers';
 import { formatActivityTime, labelFor, toolPhaseLabel } from './ActivityItemHelpers';
 import { ActivityFrame, ActivityImageStrip, CopyDropdown, MarkdownBlock } from './ActivityItemShared';
+import { parseFileToolPayload } from '../tool-cards';
 import { ActivityToolEventDetails } from './ActivityToolEventDetails';
 import type { ActivityImageSelectHandler, ActivityToolReplyProps } from './ActivityItemTypes';
 
@@ -34,6 +35,7 @@ export const ActivityNonUserItem = memo(function ActivityNonUserItem({
   onSendToolReply,
 }: ActivityNonUserItemProps) {
   const markdownContainerRef = useRef<HTMLDivElement>(null);
+  const isFileTool = !!parseFileToolPayload(event);
 
   return (
     <ActivityFrame
@@ -53,7 +55,7 @@ export const ActivityNonUserItem = memo(function ActivityNonUserItem({
       <div className="flex min-w-0 w-full flex-col gap-0.5">
         {isSystemEvent ? (
           <div className="mb-0.5 flex items-baseline justify-between gap-3">
-            <p className={`m-0 min-w-0 text-[15px] leading-relaxed ${visual.copy}`}>
+            <p className={`m-0 min-w-0 leading-relaxed ${isFileTool ? 'text-[13px] text-loop-400' : `text-[15px] ${visual.copy}`}`}>
               {renderedText}
             </p>
             <div className="flex shrink-0 items-center gap-2 text-[11px] text-loop-500">

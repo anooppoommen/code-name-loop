@@ -94,6 +94,9 @@ function buildParallelNestedEvent(
 
   return {
     id: `${event.id}-inner-${idx}`,
+    conversationId: event.conversationId,
+    sequenceNo: event.sequenceNo + (idx + 1) / 1000,
+    timelineSeq: event.timelineSeq,
     kind: 'tool',
     timestamp: event.timestamp + idx,
     title: `${result.name} ${result.success ? 'completed' : 'failed'}`,

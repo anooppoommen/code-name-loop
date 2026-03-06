@@ -106,6 +106,7 @@ export interface LoopDesktopController {
   canCompose: boolean;
   isSending: boolean;
   sendingConversations: Record<string, boolean>;
+  awaitingApprovalConversations: Record<string, boolean>;
   notices: NoticeToast[];
   pendingCommandApproval: PendingCommandApproval | null;
   pendingCommandApprovalCount: number;

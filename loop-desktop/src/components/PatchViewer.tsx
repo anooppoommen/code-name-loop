@@ -1,25 +1,9 @@
 import { useState, useMemo } from 'react';
-import { ChevronDown, ChevronRight, FileCode2, FileJson, FileText, FileImage, File } from 'lucide-react';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { parsePatchData } from '../utils/patches';
 import type { PatchFile } from '../utils/patches';
-
-export function getFileIcon(path: string) {
-  const ext = path.split('.').pop()?.toLowerCase() || '';
-  if (['ts', 'tsx', 'js', 'jsx', 'py', 'go', 'rs', 'java', 'c', 'cpp'].includes(ext)) {
-    return <FileCode2 size={14} className="text-blue-400" />;
-  }
-  if (['json', 'yaml', 'yml'].includes(ext)) {
-    return <FileJson size={14} className="text-yellow-400" />;
-  }
-  if (['md', 'txt', 'csv'].includes(ext)) {
-    return <FileText size={14} className="text-loop-400" />;
-  }
-  if (['png', 'jpg', 'jpeg', 'svg', 'gif'].includes(ext)) {
-    return <FileImage size={14} className="text-purple-400" />;
-  }
-  return <File size={14} className="text-loop-500" />;
-}
+import { getPatchFileIcon } from './patchViewerFileIcon';
 
 export function PatchViewer({ patchText }: { patchText: string }) {
   const files = useMemo(() => parsePatchData(patchText), [patchText]);
@@ -62,7 +46,7 @@ export function FilePatchView({ file }: { file: PatchFile }) {
           <div className="text-loop-300">
             {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
           </div>
-          {getFileIcon(file.path)}
+          {getPatchFileIcon(file.path)}
           <span className="truncate text-[13px] font-medium text-loop-200">
             {file.previousPath ? `${file.previousPath} -> ${file.path}` : file.path}
           </span>

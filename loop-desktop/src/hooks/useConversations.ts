@@ -95,8 +95,8 @@ export function useConversations(
     setSelectedConversationId: React.Dispatch<React.SetStateAction<string>>,
     selectedConversationIdRef: React.RefObject<string>,
     pushNotice: (tone: NoticeTone, message: string) => void,
-    pushActivity: (input: ActivityInput) => string,
-    setActivities: React.Dispatch<React.SetStateAction<ActivityEvent[]>>,
+    pushActivity: (input: ActivityInput, conversationId?: string) => string,
+    replaceConversationActivities: (conversationId: string, events: ActivityEvent[]) => void,
     clearConversationView: () => void,
     clearNotices: () => void,
     resetConversationLiveState: (conversationId: string) => void,
@@ -146,11 +146,12 @@ export function useConversations(
             });
 
             if (!response.ok) {
+                pushNotice('error', `Unable to load conversations: ${response.error ?? 'Unknown error'}`);
                 pushActivity({
                     kind: 'error',
                     title: 'Unable to load conversations',
                     body: response.error ?? 'Unknown error',
-                });
+                }, selectedConversationIdRef.current);
                 return;
             }
 
@@ -212,7 +213,7 @@ export function useConversations(
                 setSelectedConversationId(mergedConversations[0]?.id ?? '');
             }
         },
-        [backendUrl, pushActivity, activeStreamsRef, handleStreamPacketRef, setSendingConversations, selectedConversationIdRef, setSelectedConversationId],
+        [backendUrl, pushActivity, pushNotice, activeStreamsRef, handleStreamPacketRef, setSendingConversations, selectedConversationIdRef, setSelectedConversationId],
     );
 
     const loadMoreConversations = useCallback(
@@ -290,7 +291,7 @@ export function useConversations(
                         kind: 'error',
                         title: 'History unavailable',
                         body: restartMsg,
-                    });
+                    }, conversationId);
                     return;
                 }
             }
@@ -304,7 +305,8 @@ export function useConversations(
                 return;
             }
 
-            setActivities(
+            replaceConversationActivities(
+                conversationId,
                 annotateActivitiesWithPendingApprovals(
                     historyRowsToActivities(rows),
                     pendingCommandApprovalsRef.current.filter((item) => item.conversationId === conversationId),
@@ -313,7 +315,7 @@ export function useConversations(
             resetConversationLiveState(conversationId);
             setCurrentStatus('');
         },
-        [backendUrl, pushActivity, pushNotice, resetConversationLiveState, setActivities, activeStreamsRef, sendingConversationsRef, pendingCommandApprovalsRef, setCurrentStatus, selectedConversationIdRef],
+        [backendUrl, pushActivity, pushNotice, replaceConversationActivities, resetConversationLiveState, activeStreamsRef, sendingConversationsRef, pendingCommandApprovalsRef, setCurrentStatus, selectedConversationIdRef],
     );
 
     const createConversation = useCallback(

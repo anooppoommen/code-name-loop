@@ -12,6 +12,7 @@ interface WorkspaceItemProps {
   hasMore: boolean;
   selectedConversationId: string;
   sendingConversations: Record<string, boolean>;
+  awaitingApprovalConversations: Record<string, boolean>;
   onToggle: (workspaceId: string) => void;
   onDeleteWorkspace: (workspaceId: string) => void;
   onSelectConversation: (conversationId: string) => void;
@@ -28,6 +29,7 @@ export function WorkspaceItem({
   hasMore,
   selectedConversationId,
   sendingConversations,
+  awaitingApprovalConversations,
   onToggle,
   onDeleteWorkspace,
   onSelectConversation,
@@ -91,6 +93,7 @@ export function WorkspaceItem({
                       conversation={conversation}
                       isActive={isActive}
                       isWorking={!!sendingConversations[conversation.id]}
+                      isAwaitingApproval={!!awaitingApprovalConversations[conversation.id]}
                       onSelect={() => onSelectConversation(conversation.id)}
                       onDelete={() => onDeleteConversation(conversation.id)}
                       onRename={(title) => onRenameConversation(conversation.id, title)}

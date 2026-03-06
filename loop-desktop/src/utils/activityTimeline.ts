@@ -8,7 +8,7 @@ import {
   parseToolResultPayload,
   trimForUI,
   extractMessageImages,
-} from './parsers';
+} from './parsers.ts';
 
 export interface ActivityInput {
   kind: ActivityKind;
@@ -178,14 +178,18 @@ export function historyRowsToActivities(items: unknown[]): ActivityEvent[] {
   const activityRows: ActivityEvent[] = [];
   const toolResultCallIDs = collectPersistedToolResultCallIDs(items);
   const openToolByCallID = new Map<string, number>();
+  let fallbackSequenceNo = 1;
 
   for (const item of items) {
     const record = asRecord(item);
     const type = getString(record, ['type', 'Type']);
+    const timelineSeq = getNumber(record, ['timeline_seq', 'timelineSeq']) ?? undefined;
+    const sequenceNo = timelineSeq ?? fallbackSequenceNo++;
 
     if (type === 'message') {
       const msg = asRecord(getField(record, ['message', 'Message']));
       const msgID = getString(msg, ['ID', 'id']) || crypto.randomUUID();
+      const conversationId = getString(msg, ['ConversationID', 'conversation_id', 'conversationId']);
       const msgSeq = getNumber(msg, ['Seq', 'seq']) ?? undefined;
       const msgVersion = getNumber(msg, ['Version', 'version']) ?? undefined;
       const msgArchived = getBoolean(msg, ['Archived', 'archived']);
@@ -199,6 +203,9 @@ export function historyRowsToActivities(items: unknown[]): ActivityEvent[] {
         if (text || images.length > 0) {
           activityRows.push({
             id: msgID,
+            conversationId,
+            sequenceNo,
+            timelineSeq,
             messageId: msgID,
             messageSeq: msgSeq,
             messageVersion: msgVersion,
@@ -218,6 +225,9 @@ export function historyRowsToActivities(items: unknown[]): ActivityEvent[] {
         if (text || images.length > 0) {
           activityRows.push({
             id: msgID,
+            conversationId,
+            sequenceNo,
+            timelineSeq,
             messageId: msgID,
             messageSeq: msgSeq,
             messageVersion: msgVersion,
@@ -230,11 +240,16 @@ export function historyRowsToActivities(items: unknown[]): ActivityEvent[] {
           });
         }
       } else if (sentBy === 'tool') {
-        activityRows.push(...toolMessageToActivities(msg, toolResultCallIDs));
+        activityRows.push(...toolMessageToActivities(msg, toolResultCallIDs, sequenceNo, timelineSeq));
       }
     } else if (type === 'ui_event') {
       const uiEvt = asRecord(getField(record, ['ui_event', 'UIEvent']));
       const id = getString(uiEvt, ['id', 'ID']) || crypto.randomUUID();
+      const conversationId = getString(uiEvt, ['conversation_id', 'ConversationID', 'conversationId']);
+      const messageId = getString(uiEvt, ['message_id', 'MessageID', 'messageId']) || undefined;
+      const eventSeq = getNumber(uiEvt, ['seq', 'Seq']) ?? undefined;
+      const messageVersion = getNumber(uiEvt, ['version', 'Version']) ?? undefined;
+      const archived = getBoolean(uiEvt, ['archived', 'Archived']);
       const kind = getString(uiEvt, ['kind', 'Kind']);
       const text = getString(uiEvt, ['text', 'Text']);
       const timestamp = messageTimestamp(uiEvt);
@@ -242,7 +257,18 @@ export function historyRowsToActivities(items: unknown[]): ActivityEvent[] {
 
       switch (kind) {
         case 'thought': {
-          appendThoughtChunk(activityRows, { id, timestamp, text });
+          appendThoughtChunk(activityRows, {
+            id,
+            conversationId,
+            sequenceNo,
+            timelineSeq,
+            eventSeq,
+            messageId,
+            messageVersion,
+            archived,
+            timestamp,
+            text,
+          });
           break;
         }
         case 'tool_start': {
@@ -253,6 +279,13 @@ export function historyRowsToActivities(items: unknown[]): ActivityEvent[] {
           const command = parseToolCommand(toolName, argsText);
           activityRows.push({
             id,
+            conversationId,
+            sequenceNo,
+            timelineSeq,
+            eventSeq,
+            messageId,
+            messageVersion,
+            archived,
             kind: 'tool',
             title: `${toolName || 'tool'} started`,
             body: isApplyPatch(toolName) ? (command || argsText || text || undefined) : (trimForUI(command || argsText || text, 900) || undefined),
@@ -289,6 +322,13 @@ export function historyRowsToActivities(items: unknown[]): ActivityEvent[] {
             if (existing && existing.kind === 'tool') {
               activityRows[existingIndex] = {
                 ...existing,
+                conversationId,
+                sequenceNo,
+                timelineSeq,
+                eventSeq,
+                messageId,
+                messageVersion,
+                archived,
                 title: success ? `${toolName} completed${summary.title ? ` (${summary.title})` : ''}` : `${toolName} failed`,
                 body: isApplyPatch(toolName) ? (summary.body || fallbackBody || undefined) : (summary.body || trimForUI(fallbackBody, 900) || undefined),
                 tool: {
@@ -311,6 +351,13 @@ export function historyRowsToActivities(items: unknown[]): ActivityEvent[] {
 
           activityRows.push({
             id,
+            conversationId,
+            sequenceNo,
+            timelineSeq,
+            eventSeq,
+            messageId,
+            messageVersion,
+            archived,
             kind: 'tool',
             title: success ? `${toolName} completed${summary.title ? ` (${summary.title})` : ''}` : `${toolName} failed`,
             body: isApplyPatch(toolName) ? (summary.body || fallbackBody || undefined) : (summary.body || trimForUI(fallbackBody, 900) || undefined),
@@ -332,10 +379,23 @@ export function historyRowsToActivities(items: unknown[]): ActivityEvent[] {
         case 'thread_status': {
           const parsed = parseStatusLine(text);
           if (parsed) {
-            activityRows.push(statusInputToEvent(id, timestamp, parsed));
+            activityRows.push(statusInputToEvent(id, conversationId, sequenceNo, timestamp, parsed, {
+              timelineSeq,
+              eventSeq,
+              messageId,
+              messageVersion,
+              archived,
+            }));
           } else {
             activityRows.push({
               id,
+              conversationId,
+              sequenceNo,
+              timelineSeq,
+              eventSeq,
+              messageId,
+              messageVersion,
+              archived,
               kind: 'thread',
               title: text || 'Thread update',
               timestamp,
@@ -349,6 +409,13 @@ export function historyRowsToActivities(items: unknown[]): ActivityEvent[] {
           const reason = getString(metadata, ['reason']);
           activityRows.push({
             id,
+            conversationId,
+            sequenceNo,
+            timelineSeq,
+            eventSeq,
+            messageId,
+            messageVersion,
+            archived,
             kind: 'lifecycle',
             title: from && to ? `State: ${from} -> ${to}` : text || 'State transition',
             body: reason || undefined,
@@ -361,6 +428,13 @@ export function historyRowsToActivities(items: unknown[]): ActivityEvent[] {
           const model = getString(metadata, ['model']);
           activityRows.push({
             id,
+            conversationId,
+            sequenceNo,
+            timelineSeq,
+            eventSeq,
+            messageId,
+            messageVersion,
+            archived,
             kind: 'lifecycle',
             title: attempt !== null ? `Model wait started (attempt ${attempt})` : (text || 'Model wait started'),
             body: model ? `Model: ${model}` : undefined,
@@ -387,6 +461,13 @@ export function historyRowsToActivities(items: unknown[]): ActivityEvent[] {
           const error = getString(metadata, ['error']);
           activityRows.push({
             id,
+            conversationId,
+            sequenceNo,
+            timelineSeq,
+            eventSeq,
+            messageId,
+            messageVersion,
+            archived,
             kind: outcome === 'error' ? 'error' : 'status',
             title: outcome ? `Model wait finished (${outcome})` : (text || 'Model wait finished'),
             body: [parts.join(' · '), error].filter(Boolean).join('\n') || undefined,
@@ -399,6 +480,13 @@ export function historyRowsToActivities(items: unknown[]): ActivityEvent[] {
           const toolName = getString(metadata, ['tool_name']);
           activityRows.push({
             id,
+            conversationId,
+            sequenceNo,
+            timelineSeq,
+            eventSeq,
+            messageId,
+            messageVersion,
+            archived,
             kind: 'lifecycle',
             title: 'Command approval required',
             body: `${toolName || 'tool'}: ${command || text}`.trim(),
@@ -409,21 +497,60 @@ export function historyRowsToActivities(items: unknown[]): ActivityEvent[] {
         case 'status': {
           const parsed = parseStatusLine(text);
           if (parsed) {
-            activityRows.push(statusInputToEvent(id, timestamp, parsed));
+            activityRows.push(statusInputToEvent(id, conversationId, sequenceNo, timestamp, parsed, {
+              timelineSeq,
+              eventSeq,
+              messageId,
+              messageVersion,
+              archived,
+            }));
           }
           break;
         }
         case 'error': {
-          activityRows.push({ id, kind: 'error', title: 'Agent error', body: text, timestamp });
+          activityRows.push({
+            id,
+            conversationId,
+            sequenceNo,
+            timelineSeq,
+            eventSeq,
+            messageId,
+            messageVersion,
+            archived,
+            kind: 'error',
+            title: 'Agent error',
+            body: text,
+            timestamp,
+          });
           break;
         }
         case 'abort': {
-          activityRows.push({ id, kind: 'lifecycle', title: 'Turn aborted', body: text || undefined, timestamp });
+          activityRows.push({
+            id,
+            conversationId,
+            sequenceNo,
+            timelineSeq,
+            eventSeq,
+            messageId,
+            messageVersion,
+            archived,
+            kind: 'lifecycle',
+            title: 'Turn aborted',
+            body: text || undefined,
+            timestamp,
+          });
           break;
         }
         case 'checkpoint_created': {
           activityRows.push({
             id,
+            conversationId,
+            sequenceNo,
+            timelineSeq,
+            eventSeq,
+            messageId,
+            messageVersion,
+            archived,
             kind: 'lifecycle',
             title: 'Checkpoint created',
             body: text || undefined,
@@ -434,6 +561,13 @@ export function historyRowsToActivities(items: unknown[]): ActivityEvent[] {
         case 'checkpoint_restored': {
           activityRows.push({
             id,
+            conversationId,
+            sequenceNo,
+            timelineSeq,
+            eventSeq,
+            messageId,
+            messageVersion,
+            archived,
             kind: 'lifecycle',
             title: 'Checkpoint restored',
             body: text || undefined,
@@ -444,6 +578,13 @@ export function historyRowsToActivities(items: unknown[]): ActivityEvent[] {
         case 'checkpoint_restore_failed': {
           activityRows.push({
             id,
+            conversationId,
+            sequenceNo,
+            timelineSeq,
+            eventSeq,
+            messageId,
+            messageVersion,
+            archived,
             kind: 'error',
             title: 'Checkpoint restore failed',
             body: text || undefined,
@@ -469,9 +610,29 @@ function messageTimestamp(record: Record<string, unknown> | null): number {
   return parsed;
 }
 
-function statusInputToEvent(id: string, timestamp: number, input: ActivityInput): ActivityEvent {
+function statusInputToEvent(
+  id: string,
+  conversationId: string,
+  sequenceNo: number,
+  timestamp: number,
+  input: ActivityInput,
+  metadata?: {
+    timelineSeq?: number;
+    eventSeq?: number;
+    messageId?: string;
+    messageVersion?: number;
+    archived?: boolean;
+  },
+): ActivityEvent {
   return {
     id,
+    conversationId,
+    sequenceNo,
+    timelineSeq: metadata?.timelineSeq,
+    eventSeq: metadata?.eventSeq,
+    messageId: metadata?.messageId,
+    messageVersion: metadata?.messageVersion,
+    archived: metadata?.archived,
     timestamp,
     kind: input.kind,
     title: input.title,
@@ -497,6 +658,13 @@ function appendThoughtChunk(
   activityRows: ActivityEvent[],
   input: {
     id: string;
+    conversationId: string;
+    sequenceNo: number;
+    timelineSeq?: number;
+    eventSeq?: number;
+    messageId?: string;
+    messageVersion?: number;
+    archived?: boolean;
     timestamp: number;
     text: string;
   },
@@ -541,6 +709,13 @@ function appendThoughtChunk(
 
   activityRows.push({
     id: input.id,
+    conversationId: input.conversationId,
+    sequenceNo: input.sequenceNo,
+    timelineSeq: input.timelineSeq,
+    eventSeq: input.eventSeq,
+    messageId: input.messageId,
+    messageVersion: input.messageVersion,
+    archived: input.archived,
     kind: 'thought',
     title: 'Model thought',
     body: normalized,
@@ -572,7 +747,12 @@ function collectPersistedToolResultCallIDs(items: unknown[]): Set<string> {
   return ids;
 }
 
-function toolMessageToActivities(msg: Record<string, unknown> | null, uiEventCallIDs: Set<string>): ActivityEvent[] {
+function toolMessageToActivities(
+  msg: Record<string, unknown> | null,
+  uiEventCallIDs: Set<string>,
+  baseSequenceNo: number,
+  timelineSeq?: number,
+): ActivityEvent[] {
   const timestamp = messageTimestamp(msg);
   const rawParts = getField(msg, ['Parts', 'parts']);
   if (!Array.isArray(rawParts)) {
@@ -580,6 +760,7 @@ function toolMessageToActivities(msg: Record<string, unknown> | null, uiEventCal
   }
 
   const messageID = getString(msg, ['ID', 'id']) || crypto.randomUUID();
+  const conversationId = getString(msg, ['ConversationID', 'conversation_id', 'conversationId']);
   const messageSeq = getNumber(msg, ['Seq', 'seq']) ?? undefined;
   const messageVersion = getNumber(msg, ['Version', 'version']) ?? undefined;
   const messageArchived = getBoolean(msg, ['Archived', 'archived']);
@@ -608,6 +789,9 @@ function toolMessageToActivities(msg: Record<string, unknown> | null, uiEventCal
 
     events.push({
       id: `${messageID}:tool:${index}`,
+      conversationId,
+      sequenceNo: baseSequenceNo + index / 1000,
+      timelineSeq,
       messageId: messageID,
       messageSeq,
       messageVersion,

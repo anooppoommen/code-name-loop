@@ -226,6 +226,7 @@ export default function App() {
                 hasMoreConversationsByWorkspace={app.hasMoreConversationsByWorkspace}
                 selectedConversationId={app.selectedConversationId}
                 sendingConversations={app.sendingConversations}
+                awaitingApprovalConversations={app.awaitingApprovalConversations}
                 onSelectConversation={app.selectConversation}
                 onNewConversation={() => void app.newConversation()}
                 onDeleteConversation={(conversationId) => {
@@ -273,10 +274,10 @@ export default function App() {
             <div className="flex h-full w-full min-h-0 flex-col">
               <div className="min-h-0 flex-1 overflow-hidden">
                 <ActivityFeed
-                  events={app.activities}
                   conversationId={app.selectedConversationId}
                   containerRef={app.feedScrollRef}
                   currentStatus={app.currentStatus}
+                  hideLifecycle={app.hideLifecycle}
                   canCompose={app.canCompose}
                   isSending={app.isSending}
                   onUseToolReply={app.applyToolResponseSuggestion}

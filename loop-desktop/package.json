@@ -10,6 +10,9 @@
     "dev:electron": "wait-on tcp:${VITE_DEV_PORT:-5173} && VITE_DEV_SERVER_URL=http://localhost:${VITE_DEV_PORT:-5173} electron electron/main.cjs",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
+    "test": "npm run test:unit",
+    "test:unit": "node --test test/activity-stores.test.ts test/combined-patch.test.ts",
+    "test:e2e:ssh": "node --test test/ssh-tunnel.test.mjs",
     "preview": "vite preview",
     "start": "npm run build && electron electron/main.cjs"
   },
@@ -20,7 +23,8 @@
     "react-dom": "^19.2.0",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
-    "ssh2": "^1.17.0"
+    "ssh2": "^1.17.0",
+    "zustand": "^5.0.11"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",

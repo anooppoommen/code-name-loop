@@ -19,6 +19,10 @@ export interface ToolActivityMeta {
 
 export interface ActivityEvent {
   id: string;
+  conversationId: string;
+  sequenceNo: number;
+  timelineSeq?: number;
+  eventSeq?: number;
   messageId?: string;
   messageSeq?: number;
   messageVersion?: number;
