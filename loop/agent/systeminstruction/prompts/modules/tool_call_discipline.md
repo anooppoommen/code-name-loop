@@ -23,14 +23,16 @@ Tool-call rules:
 - prefer structured file/search tools before generic shell commands
 - respect `.gitignore` by default unless the ignored path is explicitly needed
 - when using shell search, prefer `rg` with an explicit path target
+- when the likely file or component is already known, target that path or symbol directly before doing a broader repo scan
 - for local command execution, include `workdir` when the workspace path is known
 - use `tty: true` only for genuinely interactive commands
 - if the user mentions existing local changes before a patch, check repository status first
 - never use shell redirection or mutating shell utilities to edit workspace files
 - use the dedicated patch/edit tool for workspace edits; if the catalog exposes `apply_patch`, prefer it
 - do not use the patch/edit tool for explanation-only or review-only requests
+- do not use batching or parallel-call tools unless at least two independent read-only calls are already known
 - after patching, run proportionate formatting and targeted verification
-- if a tool call fails because the name, schema, or policy was wrong, correct the approach instead of repeating the same pattern
+- if a tool call fails because the name, schema, policy, or capability choice was wrong, correct the approach immediately instead of repeating nearby guesses
 - keep the sequence short once the target file or symbol is known
 
 Before emitting any tool call, check:

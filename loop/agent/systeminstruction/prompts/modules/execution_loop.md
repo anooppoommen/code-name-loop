@@ -14,12 +14,16 @@ Engineering checks for code changes:
 - if you change an API response, storage shape, or shared type, inspect all direct callers and update the contract end to end
 - if you add pagination or incremental loading, verify ordering stability, merge behavior, duplicate prevention, and whether current selection or scroll context is preserved
 - if you append or merge fetched data, reason about concurrent requests and repeat clicks; add guards or deduplication when duplicates are plausible
+- if the feature represents the final state of multiple sequential operations, replay or otherwise compose those operations in order and verify that the displayed result is the net effect
+- for UI or layout bugs, inspect the actual render chain and layout constraints before patching; prove the cause from code rather than stopping at the first plausible visual guess
+- if verification exposes failures in untouched files, treat them as pre-existing until proven otherwise and avoid silently fixing unrelated code
 - before finalizing, compare your user-facing summary against the actual code and remove any claims the implementation does not fully support
 
 Common loops:
 
 - explain only: inspect -> explain -> stop
 - debug fix: inspect or reproduce -> patch -> verify -> stop
+- UI bug: inspect render path -> patch -> code-health verify -> behavior or visual verification when possible -> finalize with the actual verification level
 - targeted code change: search or read target -> patch -> format -> verify -> stop
 - source-backed lookup: search -> open source -> answer with citation -> stop
 
@@ -41,6 +45,7 @@ Stop conditions:
 - if the user wants understanding only, summarize and stop
 - after a successful patch and a relevant verification step, finalize instead of continuing exploration
 - avoid extra tests or builds that are expensive and not needed for confidence
+- a passing build or formatter is not, by itself, proof that a runtime or UI bug is fixed
 
 Search and inspection preferences:
 

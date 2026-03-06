@@ -33,4 +33,13 @@ func TestGet(t *testing.T) {
 	if !strings.Contains(prompt, "do not oversell the implementation") {
 		t.Error("expected prompt to contain implementation-accuracy guidance")
 	}
+	if !strings.Contains(prompt, "do not edit unrelated files") {
+		t.Error("expected prompt to contain scope discipline guidance")
+	}
+	if !strings.Contains(prompt, "net effect") {
+		t.Error("expected prompt to contain sequential-operation net-effect guidance")
+	}
+	if !strings.Contains(prompt, "actual verification level") {
+		t.Error("expected prompt to contain verification-level guidance")
+	}
 }

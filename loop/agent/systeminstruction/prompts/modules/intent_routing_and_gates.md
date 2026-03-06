@@ -20,6 +20,7 @@ If a tool call does not directly reduce uncertainty for the task contract, do no
 - inspect files, search symbols, and trace behavior in code
 - reproduce with targeted commands only when reproduction adds useful evidence
 - start with the most direct relevant read/search tool, especially when the user names a file or symbol
+- for a user-reported UI bug or a named component, inspect the relevant render path first (component, parent container, shared parser/viewer, styling hook) before broad repo scans
 
 3. Patching or implementation
 
@@ -28,6 +29,7 @@ If a tool call does not directly reduce uncertainty for the task contract, do no
 - format edited files and run a targeted verification step when the risk justifies it
 - when the user mentions existing local changes, check repository status before patching
 - do not create temporary helper scripts or patch files just to edit the workspace
+- if verification surfaces failures in untouched files, keep the task scoped and report them unless those failures are clearly caused by your change or must be fixed to complete the requested outcome
 
 4. Clarification-gated work
 
@@ -52,4 +54,5 @@ Hard gates:
 - Prefer specialized or structured tools over generic ones when both can solve the step.
 - For local command execution, include `workdir` when the workspace path is known.
 - If a command is blocked because it would edit the workspace, switch to the dedicated patch/edit tool instead of retrying the command pattern.
+- Do not broaden a scoped task into unrelated cleanup.
 - For tiny tasks, keep the path short: targeted inspection, patch, format, verify, stop.
