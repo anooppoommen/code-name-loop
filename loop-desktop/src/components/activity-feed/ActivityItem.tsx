@@ -2,6 +2,8 @@ import {
   AlertTriangle,
   Brain,
   Cog,
+  Copy,
+  Check,
   GitBranch,
   Info,
   Pencil,
@@ -37,6 +39,7 @@ export interface ActivityItemProps extends ToolReplyActions {
   event: ActivityEvent;
   visibleChars?: number;
   isCopied: boolean;
+  isFinalAgent?: boolean;
   onCopyToolCommand: (command: string, id: string) => void;
   onRetryMessage: (messageId: string) => Promise<void>;
   onEditMessage: (messageId: string, text: string, images: { mimeType: string; dataUrl: string }[]) => void;
@@ -72,9 +75,76 @@ export function ActivityFrame({
   );
 }
 
+function CopyDropdown({ getMarkdown, getText }: { getMarkdown: () => string; getText: () => string }) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [copiedMode, setCopiedMode] = useState<'text' | 'markdown' | null>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setIsOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const handleCopy = async (mode: 'text' | 'markdown') => {
+    const text = mode === 'text' ? getText() : getMarkdown();
+    await navigator.clipboard.writeText(text);
+    setCopiedMode(mode);
+    setTimeout(() => {
+      setCopiedMode(null);
+      setIsOpen(false);
+    }, 2000);
+  };
+
+  return (
+    <div className="relative inline-block" ref={dropdownRef}>
+      <button
+        type="button"
+        aria-label="Copy options"
+        title="Copy options"
+        className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-loop-800/70 text-loop-300 transition hover:bg-loop-700 hover:text-loop-100 disabled:cursor-not-allowed disabled:opacity-40"
+        onClick={() => setIsOpen(!isOpen)}
+      >
+        {copiedMode ? <Check size={13} /> : <Copy size={13} />}
+      </button>
+      <AnimatePresence>
+        {isOpen && (
+          <motion.div
+            initial={{ opacity: 0, y: 4, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 4, scale: 0.96 }}
+            transition={{ duration: 0.16 }}
+            className="absolute right-0 top-full mt-1 z-50 flex w-40 flex-col rounded-md border border-loop-700 bg-loop-800 p-1 shadow-lg"
+          >
+            <button
+              className="flex items-center gap-2 rounded px-2 py-1.5 text-xs text-loop-200 hover:bg-loop-700 hover:text-loop-100"
+              onClick={() => handleCopy('text')}
+            >
+              {copiedMode === 'text' ? <Check size={12} /> : <Copy size={12} />}
+              Copy as text
+            </button>
+            <button
+              className="flex items-center gap-2 rounded px-2 py-1.5 text-xs text-loop-200 hover:bg-loop-700 hover:text-loop-100"
+              onClick={() => handleCopy('markdown')}
+            >
+              {copiedMode === 'markdown' ? <Check size={12} /> : <Copy size={12} />}
+              Copy as markdown
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
 export const ActivityItem = memo(function ActivityItem({
   event,
   visibleChars,
+  isFinalAgent,
   canCompose,
   isSending,
   onUseToolReply,
@@ -84,6 +154,7 @@ export const ActivityItem = memo(function ActivityItem({
 }: ActivityItemProps) {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [isUserHovered, setIsUserHovered] = useState(false);
+  const markdownContainerRef = useRef<HTMLDivElement>(null);
   const icon = iconFor(event.kind);
   const userModel = event.userTurn?.model?.trim() || '';
   const userThinkingLevel = event.userTurn?.thinkingLevel?.trim() || '';
@@ -144,6 +215,13 @@ export const ActivityItem = memo(function ActivityItem({
             transition={{ duration: 0.16, ease: 'easeOut' }}
             className="flex flex-col items-center gap-1 pt-1"
           >
+            <CopyDropdown
+              getMarkdown={() => renderedText}
+              getText={() => {
+                if (!markdownContainerRef.current) return renderedText;
+                return markdownContainerRef.current.innerText || renderedText;
+              }}
+            />
             <button
               type="button"
               aria-label="Retry from this message"
@@ -285,7 +363,7 @@ export const ActivityItem = memo(function ActivityItem({
                 ))}
               </div>
             ) : null}
-            <div className="text-loop-200">
+            <div ref={markdownContainerRef} className="text-loop-200">
               <MarkdownBlock text={renderedText} dense />
             </div>
             <div className="mt-3 flex items-center justify-end gap-2">
@@ -325,11 +403,22 @@ export const ActivityItem = memo(function ActivityItem({
         </ActivityFrame>
       ) : (
         <ActivityFrame
-          className={`group px-2 py-2 ${visual.row}`}
+          className={`group px-2 py-2 relative ${visual.row}`}
           left={leftGutterIcon}
           right={null}
           contentClassName="min-w-0"
         >
+          {isAsst && isFinalAgent ? (
+            <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+              <CopyDropdown
+                getMarkdown={() => renderedText}
+                getText={() => {
+                  if (!markdownContainerRef.current) return renderedText;
+                  return markdownContainerRef.current.innerText || renderedText;
+                }}
+              />
+            </div>
+          ) : null}
           <div className="flex min-w-0 w-full flex-col gap-0.5">
             {isSystemEvent ? (
               <div className="mb-0.5 flex items-baseline justify-between gap-3">
@@ -369,7 +458,7 @@ export const ActivityItem = memo(function ActivityItem({
               </div>
             )}
 
-            <div className={`text-[15px] leading-relaxed ${visual.copy}`}>
+            <div ref={markdownContainerRef} className={`text-[15px] leading-relaxed ${visual.copy}`}>
               {event.images && event.images.length > 0 ? (
                 <div className="flex flex-wrap gap-2 mb-2">
                   {event.images.map((img, idx) => (

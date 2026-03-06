@@ -4,6 +4,7 @@ import type { RefObject } from 'react';
 import { ActivityFrame, ActivityItem } from './activity-feed/ActivityItem';
 import { textTargetForEvent } from './activity-feed/textTarget';
 import type { ToolReplyActions } from './tool-cards';
+import { CombinedPatchViewer } from './CombinedPatchViewer';
 import type { ActivityEvent } from '../types/ui';
 
 interface ActivityFeedProps extends ToolReplyActions {
@@ -201,21 +202,69 @@ export const ActivityFeed = memo(function ActivityFeed({
     void copyToolCommand(command, eventId, setCopiedToolID);
   }, []);
 
-  const renderEventItem = useCallback((event: ActivityEvent) => (
-    <ActivityItem
-      key={event.id}
-      event={event}
-      visibleChars={visibleChars[event.id]}
-      isCopied={copiedToolID === event.id}
-      onCopyToolCommand={handleCopyToolCommand}
-      canCompose={canCompose}
-      isSending={isSending}
-      onUseToolReply={onUseToolReply}
-      onSendToolReply={onSendToolReply}
-      onRetryMessage={onRetryMessage}
-      onEditMessage={onEditMessage}
-    />
-  ), [
+  const finalAgentEventId = useMemo(() => {
+    for (let i = events.length - 1; i >= 0; i--) {
+      if (events[i].kind === 'assistant') {
+        return events[i].id;
+      }
+    }
+    return null;
+  }, [events]);
+
+  const assistantPatches = useMemo(() => {
+    const map = new Map<string, string[]>();
+    let currentPatches: string[] = [];
+    
+    for (const event of events) {
+      if (event.kind === 'user') {
+        currentPatches = [];
+      } else if (event.kind === 'tool') {
+        const toolName = event.tool?.name || '';
+        if ((toolName === 'apply_patch' || toolName.endsWith(':apply_patch')) && event.tool?.success !== false) {
+          const patchText = event.tool?.command || event.body;
+          if (patchText) {
+            currentPatches.push(patchText);
+          }
+        }
+        // parallel_tool_use is generally disallowed for apply_patch, but checked for completeness
+      } else if (event.kind === 'assistant') {
+        if (currentPatches.length > 0) {
+          map.set(event.id, [...currentPatches]);
+        }
+        currentPatches = [];
+      }
+    }
+    return map;
+  }, [events]);
+
+  const renderEventItem = useCallback((event: ActivityEvent) => {
+    const isFinalAgent = event.id === finalAgentEventId;
+    return (
+      <div key={event.id}>
+        <ActivityItem
+          event={event}
+          visibleChars={visibleChars[event.id]}
+          isCopied={copiedToolID === event.id}
+          isFinalAgent={isFinalAgent}
+          onCopyToolCommand={handleCopyToolCommand}
+          canCompose={canCompose}
+          isSending={isSending}
+          onUseToolReply={onUseToolReply}
+          onSendToolReply={onSendToolReply}
+          onRetryMessage={onRetryMessage}
+          onEditMessage={onEditMessage}
+        />
+        {event.kind === 'assistant' && assistantPatches.has(event.id) ? (
+          <ActivityFrame
+            className="px-2 pb-3 pt-1"
+            left={<div className="flex h-8 w-8 shrink-0 items-center justify-center" />}
+            contentClassName="min-w-0"
+          >
+            <CombinedPatchViewer patches={assistantPatches.get(event.id) || []} />
+          </ActivityFrame>
+        ) : null}
+      </div>
+  )}, [
     canCompose,
     copiedToolID,
     handleCopyToolCommand,
@@ -225,6 +274,8 @@ export const ActivityFeed = memo(function ActivityFeed({
     onSendToolReply,
     onUseToolReply,
     visibleChars,
+    assistantPatches,
+    finalAgentEventId,
   ]);
 
   return (

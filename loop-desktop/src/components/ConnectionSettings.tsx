@@ -1,8 +1,6 @@
-import React, { useCallback } from 'react';
 import { motion } from 'framer-motion';
-import { X, Server, Key, User, Play, Square, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { X, Server, Key, User, Play, Square, AlertCircle } from 'lucide-react';
 import { useLoopDesktop } from '../hooks/useLoopDesktop';
-import { chooseFolder } from '../lib/loopClient';
 
 export function ConnectionSettings({ onClose }: { onClose: () => void }) {
     const app = useLoopDesktop();
@@ -12,12 +10,12 @@ export function ConnectionSettings({ onClose }: { onClose: () => void }) {
         setSshTunnelConfig((prev) => ({ ...prev, [field]: value }));
     };
 
-    const handlePickKey = async () => {
-        const folder = await chooseFolder();
-        if (folder) {
-            handleChange('privateKeyPath', folder); // In Electron, chooseFolder currently picks directories. In a real app we'd pick a file, but for now we'll allow manually editing it too.
-        }
-    };
+    // const handlePickKey = async () => {
+    //     const folder = await chooseFolder();
+    //     if (folder) {
+    //         handleChange('privateKeyPath', folder); // In Electron, chooseFolder currently picks directories. In a real app we'd pick a file, but for now we'll allow manually editing it too.
+    //     }
+    // };
 
     const handleConnect = () => {
         void connectTunnel(sshTunnelConfig);

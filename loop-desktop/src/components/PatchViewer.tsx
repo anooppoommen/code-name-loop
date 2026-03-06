@@ -1,127 +1,10 @@
 import { useState, useMemo } from 'react';
 import { ChevronDown, ChevronRight, FileCode2, FileJson, FileText, FileImage, File } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { parsePatchData } from '../utils/patches';
+import type { PatchFile } from '../utils/patches';
 
-export interface PatchFile {
-  action: string;
-  path: string;
-  added: number;
-  removed: number;
-  hunks: PatchHunk[];
-}
-
-export interface PatchHunk {
-  header: string;
-  lines: PatchLine[];
-}
-
-export interface PatchLine {
-  type: 'add' | 'remove' | 'context';
-  text: string;
-  oldLn?: number;
-  newLn?: number;
-}
-
-function parsePatchData(patchText: string): PatchFile[] {
-  const lines = patchText.split('\n');
-  const files: PatchFile[] = [];
-  let currentFile: PatchFile | null = null;
-  let currentHunk: (PatchHunk & { oldStart: number; newStart: number }) | null = null;
-  let fallbackOldStart = 1;
-  let fallbackNewStart = 1;
-
-  const beginHunk = (header: string, oldStart: number, newStart: number) => {
-    if (!currentFile) {
-      return null;
-    }
-    currentHunk = {
-      header,
-      lines: [],
-      oldStart,
-      newStart,
-    };
-    currentFile.hunks.push(currentHunk);
-    fallbackOldStart = oldStart;
-    fallbackNewStart = newStart;
-    return currentHunk;
-  };
-
-  const ensureHunkForContent = () => {
-    if (!currentFile) {
-      return null;
-    }
-    if (currentHunk) {
-      return currentHunk;
-    }
-
-    if (currentFile.action === 'Add') {
-      return beginHunk('@@', 0, 1);
-    }
-
-    return beginHunk('@@', fallbackOldStart, fallbackNewStart);
-  };
-
-  for (const line of lines) {
-    if (line.startsWith('*** ')) {
-      const match = line.match(/\*\*\* (Update|Add|Delete) File:\s+(.*)/);
-      if (match) {
-        currentFile = {
-          action: match[1],
-          path: match[2],
-          added: 0,
-          removed: 0,
-          hunks: [],
-        };
-        files.push(currentFile);
-        currentHunk = null;
-        fallbackOldStart = 1;
-        fallbackNewStart = 1;
-      }
-      else if (line.trim() === '*** End Patch') {
-        break;
-      }
-      continue;
-    }
-
-    if (line.startsWith('@@') && currentFile) {
-      const match = line.match(/@@\s*-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s*@@/);
-      const oldStart = match ? parseInt(match[1], 10) : fallbackOldStart;
-      const newStart = match ? parseInt(match[2], 10) : fallbackNewStart;
-      beginHunk(line, oldStart, newStart);
-      continue;
-    }
-
-    const targetHunk = currentHunk || (line ? ensureHunkForContent() : null);
-    if (targetHunk) {
-      if (line.startsWith('+') && currentFile) {
-        currentFile.added++;
-        targetHunk.lines.push({ type: 'add', text: line, newLn: targetHunk.newStart++ });
-      } else if (line.startsWith('-') && currentFile) {
-        currentFile.removed++;
-        targetHunk.lines.push({ type: 'remove', text: line, oldLn: targetHunk.oldStart++ });
-      } else if (line.startsWith('\\')) {
-        targetHunk.lines.push({
-          type: 'context',
-          text: line,
-          oldLn: undefined,
-          newLn: undefined,
-        });
-      } else {
-        targetHunk.lines.push({
-          type: 'context',
-          text: line,
-          oldLn: targetHunk.oldStart++,
-          newLn: targetHunk.newStart++,
-        });
-      }
-      fallbackOldStart = targetHunk.oldStart;
-      fallbackNewStart = targetHunk.newStart;
-    }
-  }
-  return files;
-}
-
-function getFileIcon(path: string) {
+export function getFileIcon(path: string) {
   const ext = path.split('.').pop()?.toLowerCase() || '';
   if (['ts', 'tsx', 'js', 'jsx', 'py', 'go', 'rs', 'java', 'c', 'cpp'].includes(ext)) {
     return <FileCode2 size={14} className="text-blue-400" />;
@@ -156,8 +39,17 @@ export function PatchViewer({ patchText }: { patchText: string }) {
   );
 }
 
-function FilePatchView({ file }: { file: PatchFile }) {
+export function FilePatchView({ file }: { file: PatchFile }) {
   const [expanded, setExpanded] = useState(false);
+  const badgeLabel = file.action === 'Move' ? 'Moved' : file.action !== 'Update' ? file.action : null;
+  const emptyStateText =
+    file.action === 'Move'
+      ? 'File moved without text changes.'
+      : file.action === 'Delete'
+        ? 'File deleted with no textual diff available.'
+        : file.action === 'Add'
+          ? 'File added with no textual diff available.'
+          : 'No textual diff available.';
 
   return (
     <div className="flex flex-col rounded-lg border border-loop-600/60 bg-loop-800/55 overflow-hidden">
@@ -172,13 +64,13 @@ function FilePatchView({ file }: { file: PatchFile }) {
           </div>
           {getFileIcon(file.path)}
           <span className="truncate text-[13px] font-medium text-loop-200">
-            {file.path}
+            {file.previousPath ? `${file.previousPath} -> ${file.path}` : file.path}
           </span>
-          {file.action !== 'Update' && (
+          {badgeLabel ? (
             <span className="text-[10px] uppercase font-bold text-loop-300 ml-1 bg-loop-700 px-1.5 rounded">
-              {file.action}
+              {badgeLabel}
             </span>
-          )}
+          ) : null}
         </div>
         <div className="flex items-center gap-3 shrink-0 text-[12px] font-mono">
           <span className="text-green-400">+{file.added}</span>
@@ -195,8 +87,12 @@ function FilePatchView({ file }: { file: PatchFile }) {
             transition={{ duration: 0.2, ease: 'easeInOut' }}
             className="border-t border-loop-600/60 bg-loop-800 overflow-x-auto text-[12px] font-mono whitespace-pre flex flex-col"
           >
+            {file.hunks.length === 0 ? (
+              <div className="px-3 py-2 text-[11px] text-loop-400">{emptyStateText}</div>
+            ) : (
+            <div className="flex flex-col min-w-max w-full">
           {file.hunks.map((hunk, idx) => (
-            <div key={idx} className="flex flex-col min-w-max">
+            <div key={idx} className="flex flex-col">
               <div className="px-3 py-1 bg-blue-500/10 text-blue-200 text-[11px] border-b border-loop-600/60 w-full">
                 {hunk.header}
               </div>
@@ -212,17 +108,11 @@ function FilePatchView({ file }: { file: PatchFile }) {
                       }`}
                   >
                     <div
-                      className={`flex shrink-0 items-center select-none border-r border-loop-600/50 text-[10px] text-loop-300 sticky left-0 z-10 ${
-                        line.type === 'add'
-                          ? 'bg-loop-700'
-                          : line.type === 'remove'
-                            ? 'bg-loop-700/90'
-                            : 'bg-loop-800'
-                      }`}
+                      className="flex shrink-0 items-center select-none border-r border-loop-600/50 text-[10px] text-loop-400 sticky left-0 z-10 bg-loop-800"
                     >
                       <div className="w-8 text-right pr-1.5">{line.oldLn ?? ' '}</div>
                       <div className="w-8 text-right pr-1.5">{line.newLn ?? ' '}</div>
-                      <div className={`w-5 text-center text-[12px] font-bold ${line.type === 'add' ? 'text-green-400' : line.type === 'remove' ? 'text-red-400' : 'text-loop-300'}`}>
+                      <div className={`w-5 text-center text-[12px] font-bold ${line.type === 'add' ? 'text-green-400' : line.type === 'remove' ? 'text-red-400' : 'text-loop-400'}`}>
                         {line.type === 'add' ? '+' : line.type === 'remove' ? '-' : ' '}
                       </div>
                     </div>
@@ -234,6 +124,8 @@ function FilePatchView({ file }: { file: PatchFile }) {
               </div>
             </div>
           ))}
+            </div>
+            )}
           </motion.div>
         )}
       </AnimatePresence>
