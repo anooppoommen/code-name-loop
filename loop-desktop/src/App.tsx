@@ -223,6 +223,7 @@ export default function App() {
                 expandedWorkspaceIds={expandedWorkspaceIds}
                 onToggleWorkspace={toggleWorkspace}
                 conversationsByWorkspace={app.conversationsByWorkspace}
+                hasMoreConversationsByWorkspace={app.hasMoreConversationsByWorkspace}
                 selectedConversationId={app.selectedConversationId}
                 sendingConversations={app.sendingConversations}
                 onSelectConversation={app.selectConversation}
@@ -232,6 +233,9 @@ export default function App() {
                 }}
                 onRenameConversation={(conversationId, title) => {
                   void app.renameConversation(conversationId, title);
+                }}
+                onLoadMoreConversations={(workspaceId) => {
+                  void app.loadMoreConversations(workspaceId);
                 }}
               />
             </motion.div>

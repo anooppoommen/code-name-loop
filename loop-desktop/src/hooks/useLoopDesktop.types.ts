@@ -86,6 +86,7 @@ export interface LoopDesktopController {
 
   conversations: ConversationSummary[];
   conversationsByWorkspace: Record<string, ConversationSummary[]>;
+  hasMoreConversationsByWorkspace: Record<string, boolean>;
   selectedConversationId: string;
   selectedConversation: ConversationSummary | null;
   checkpoints: CheckpointSummary[];
@@ -133,6 +134,7 @@ export interface LoopDesktopController {
   deleteWorkspace: (workspaceId: string) => Promise<void>;
   selectWorkspace: (workspaceId: string) => void;
   selectConversation: (conversationId: string) => void;
+  loadMoreConversations: (workspaceId: string) => Promise<void>;
   newConversation: () => Promise<void>;
   deleteConversation: (conversationId: string) => Promise<void>;
   renameConversation: (conversationId: string, title: string) => Promise<void>;

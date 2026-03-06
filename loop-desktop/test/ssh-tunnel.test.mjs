@@ -132,8 +132,8 @@ test('SSH Tunnel E2E Flow', async (t) => {
 
         const body = await listRes.json();
         console.dir(body, { depth: null });
-        assert.ok(Array.isArray(body), 'Should return array of conversations');
-        assert.ok(body.find((c) => c.id === convId || c.ID === convId), 'Should find the conversation we created before disconnect');
+        assert.ok(Array.isArray(body.conversations), 'Should return conversations array');
+        assert.ok(body.conversations.find((c) => c.id === convId || c.ID === convId), 'Should find the conversation we created before disconnect');
     });
 
 });

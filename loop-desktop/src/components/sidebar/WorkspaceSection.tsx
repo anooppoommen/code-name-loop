@@ -6,6 +6,7 @@ interface WorkspaceSectionProps {
   selectedWorkspaceId: string;
   expandedWorkspaceIds: Record<string, boolean>;
   conversationsByWorkspace: Record<string, ConversationSummary[]>;
+  hasMoreConversationsByWorkspace: Record<string, boolean>;
   selectedConversationId: string;
   sendingConversations: Record<string, boolean>;
   onToggleWorkspace: (workspaceId: string) => void;
@@ -13,6 +14,7 @@ interface WorkspaceSectionProps {
   onSelectConversation: (conversationId: string) => void;
   onDeleteConversation: (conversationId: string) => void;
   onRenameConversation: (conversationId: string, title: string) => void;
+  onLoadMoreConversations: (workspaceId: string) => void;
 }
 
 export function WorkspaceSection({
@@ -20,6 +22,7 @@ export function WorkspaceSection({
   selectedWorkspaceId,
   expandedWorkspaceIds,
   conversationsByWorkspace,
+  hasMoreConversationsByWorkspace,
   selectedConversationId,
   sendingConversations,
   onToggleWorkspace,
@@ -27,6 +30,7 @@ export function WorkspaceSection({
   onSelectConversation,
   onDeleteConversation,
   onRenameConversation,
+  onLoadMoreConversations,
 }: WorkspaceSectionProps) {
   return (
     <section className="flex min-h-0 flex-1 flex-col gap-1">
@@ -45,6 +49,7 @@ export function WorkspaceSection({
             isSelected={workspace.id === selectedWorkspaceId}
             isExpanded={!!expandedWorkspaceIds[workspace.id]}
             conversations={conversationsByWorkspace[workspace.id] ?? []}
+            hasMore={!!hasMoreConversationsByWorkspace[workspace.id]}
             selectedConversationId={selectedConversationId}
             sendingConversations={sendingConversations}
             onToggle={onToggleWorkspace}
@@ -52,6 +57,7 @@ export function WorkspaceSection({
             onSelectConversation={onSelectConversation}
             onDeleteConversation={onDeleteConversation}
             onRenameConversation={onRenameConversation}
+            onLoadMore={() => onLoadMoreConversations(workspace.id)}
           />
         ))}
       </div>

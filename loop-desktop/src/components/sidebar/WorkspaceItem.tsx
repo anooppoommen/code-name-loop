@@ -1,4 +1,5 @@
 import { AnimatePresence, motion } from 'framer-motion';
+import { useState } from 'react';
 import { Folder, FolderOpen, Trash2 } from 'lucide-react';
 import type { ConversationSummary, WorkspaceSummary } from '../../types/ui';
 import { ThreadItem } from './ThreadItem';
@@ -8,6 +9,7 @@ interface WorkspaceItemProps {
   isSelected: boolean;
   isExpanded: boolean;
   conversations: ConversationSummary[];
+  hasMore: boolean;
   selectedConversationId: string;
   sendingConversations: Record<string, boolean>;
   onToggle: (workspaceId: string) => void;
@@ -15,6 +17,7 @@ interface WorkspaceItemProps {
   onSelectConversation: (conversationId: string) => void;
   onDeleteConversation: (conversationId: string) => void;
   onRenameConversation: (conversationId: string, title: string) => void;
+  onLoadMore: () => void;
 }
 
 export function WorkspaceItem({
@@ -22,6 +25,7 @@ export function WorkspaceItem({
   isSelected,
   isExpanded,
   conversations,
+  hasMore,
   selectedConversationId,
   sendingConversations,
   onToggle,
@@ -29,7 +33,13 @@ export function WorkspaceItem({
   onSelectConversation,
   onDeleteConversation,
   onRenameConversation,
+  onLoadMore,
 }: WorkspaceItemProps) {
+  const [showAll, setShowAll] = useState(false);
+  const CONVERSATION_LIMIT = 15;
+  const hasMoreLocally = conversations.length > CONVERSATION_LIMIT;
+  const visibleConversations = showAll ? conversations : conversations.slice(0, CONVERSATION_LIMIT);
+
   return (
     <div className="flex flex-col gap-0.5">
       <div className="group/ws relative">
@@ -73,7 +83,7 @@ export function WorkspaceItem({
               {conversations.length === 0 ? (
                 <p className="py-1 pl-8 text-[12px] text-loop-500">No threads</p>
               ) : (
-                conversations.map((conversation) => {
+                visibleConversations.map((conversation) => {
                   const isActive = conversation.id === selectedConversationId;
                   return (
                     <ThreadItem
@@ -87,6 +97,36 @@ export function WorkspaceItem({
                     />
                   );
                 })
+              )}
+              {(hasMoreLocally || hasMore) && (
+                !showAll ? (
+                  <div className="relative mt-1 px-2">
+                    <div className="absolute bottom-full left-0 right-0 h-10 bg-gradient-to-t from-loop-800 to-transparent pointer-events-none" />
+                    <button
+                      className="w-full text-center text-[11px] font-medium text-loop-400 hover:text-loop-200 hover:bg-loop-700 py-1.5 rounded-md transition-colors"
+                      onClick={() => setShowAll(true)}
+                    >
+                      {hasMore ? "Show more" : `Show ${conversations.length - CONVERSATION_LIMIT} more`}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="mt-1 px-2">
+                    {hasMore && (
+                      <button
+                        className="w-full text-center text-[11px] font-medium text-loop-400 hover:text-loop-200 hover:bg-loop-700 py-1.5 rounded-md transition-colors"
+                        onClick={() => onLoadMore()}
+                      >
+                        Load older...
+                      </button>
+                    )}
+                    <button
+                      className="w-full text-center text-[11px] font-medium text-loop-400 hover:text-loop-200 hover:bg-loop-700 py-1.5 rounded-md transition-colors"
+                      onClick={() => setShowAll(false)}
+                    >
+                      Show less
+                    </button>
+                  </div>
+                )
               )}
             </div>
           </motion.div>

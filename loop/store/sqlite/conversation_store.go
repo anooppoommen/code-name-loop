@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"loop/models"
+	"loop/store"
 )
 
 type sqliteConversationStore struct {
@@ -80,6 +81,30 @@ func (s *sqliteConversationStore) ListByWorkspace(ctx context.Context, wsID mode
 		 ORDER BY created_at ASC`, string(wsID))
 	if err != nil {
 		return nil, fmt.Errorf("list conversations: %w", err)
+	}
+	defer rows.Close()
+	return scanConversations(rows)
+}
+
+func (s *sqliteConversationStore) ListByWorkspacePaged(ctx context.Context, wsID models.WorkspaceID, limit int, before *store.ConversationListCursor) ([]*models.Conversation, error) {
+	query := `SELECT id, workspace_id, title, parent_conversation_id, anchor_message_id,
+		        root_message_id, head_message_id,
+		        thread_mode, thread_status, context_strategy, result_message,
+		        created_at, updated_at
+		 FROM conversations
+		 WHERE workspace_id = ? AND parent_conversation_id = ''`
+
+	args := []any{string(wsID)}
+	if before != nil {
+		query += ` AND (updated_at < ? OR (updated_at = ? AND id < ?))`
+		args = append(args, before.UpdatedAt, before.UpdatedAt, string(before.ID))
+	}
+	query += ` ORDER BY updated_at DESC, id DESC LIMIT ?`
+	args = append(args, limit)
+
+	rows, err := s.readDB.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list conversations paged: %w", err)
 	}
 	defer rows.Close()
 	return scanConversations(rows)

@@ -4,6 +4,7 @@ package store
 
 import (
 	"context"
+	"time"
 
 	"loop/models"
 )
@@ -32,11 +33,17 @@ type WorkspaceStore interface {
 	List(ctx context.Context) ([]*models.Workspace, error)
 }
 
+type ConversationListCursor struct {
+	UpdatedAt time.Time
+	ID        models.ConversationID
+}
+
 // ConversationStore manages conversations (both root and threads).
 type ConversationStore interface {
 	Create(ctx context.Context, conv *models.Conversation) error
 	Get(ctx context.Context, id models.ConversationID) (*models.Conversation, error)
 	ListByWorkspace(ctx context.Context, wsID models.WorkspaceID) ([]*models.Conversation, error)
+	ListByWorkspacePaged(ctx context.Context, wsID models.WorkspaceID, limit int, before *ConversationListCursor) ([]*models.Conversation, error)
 	ListThreads(ctx context.Context, parentConvID models.ConversationID) ([]*models.Conversation, error)
 	Update(ctx context.Context, conv *models.Conversation) error
 	Delete(ctx context.Context, id models.ConversationID) error

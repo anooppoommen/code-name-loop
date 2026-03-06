@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"loop/models"
 	"loop/store/sqlite"
@@ -273,5 +275,112 @@ func TestCommandPaletteSearchReturnsThreadMatchesAndActiveTasks(t *testing.T) {
 	}
 	if !hasRunningThread {
 		t.Fatalf("expected thread conversation in active tasks")
+	}
+}
+
+func TestListByWorkspaceCursorPagination(t *testing.T) {
+	dir := t.TempDir()
+	s, err := sqlite.New(filepath.Join(dir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	ctx := context.Background()
+	ws := &models.Workspace{ID: "ws-page", Name: "Paged", RootPath: "/tmp/page", CanonicalRootPath: "/tmp/page"}
+	if err := s.Workspaces().Create(ctx, ws); err != nil {
+		t.Fatal(err)
+	}
+
+	createConversation := func(id string) {
+		t.Helper()
+		if err := s.Conversations().Create(ctx, &models.Conversation{
+			ID:          models.ConversationID(id),
+			WorkspaceID: ws.ID,
+			Title:       id,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	createConversation("conv-1")
+	createConversation("conv-2")
+	createConversation("conv-3")
+
+	if err := s.Conversations().Create(ctx, &models.Conversation{
+		ID:                   "thread-1",
+		WorkspaceID:          ws.ID,
+		Title:                "Thread",
+		ParentConversationID: "conv-3",
+		AnchorMessageID:      "msg-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	h := NewConversationHandler(s, nil, nil)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux)
+
+	firstReq := httptest.NewRequest(http.MethodGet, "/workspaces/ws-page/conversations?limit=2", nil)
+	firstRec := httptest.NewRecorder()
+	mux.ServeHTTP(firstRec, firstReq)
+	if firstRec.Code != http.StatusOK {
+		t.Fatalf("first page status=%d body=%s", firstRec.Code, firstRec.Body.String())
+	}
+
+	var firstPage struct {
+		Conversations []struct {
+			ID string `json:"ID"`
+		} `json:"conversations"`
+		HasMore    bool `json:"has_more"`
+		NextCursor struct {
+			ID        string `json:"id"`
+			UpdatedAt string `json:"updated_at"`
+		} `json:"next_cursor"`
+	}
+	if err := json.Unmarshal(firstRec.Body.Bytes(), &firstPage); err != nil {
+		t.Fatalf("decode first page: %v", err)
+	}
+
+	if len(firstPage.Conversations) != 2 {
+		t.Fatalf("first page conversations=%d want=2", len(firstPage.Conversations))
+	}
+	if firstPage.Conversations[0].ID != "conv-3" || firstPage.Conversations[1].ID != "conv-2" {
+		t.Fatalf("first page ids=%v want [conv-3 conv-2]", []string{firstPage.Conversations[0].ID, firstPage.Conversations[1].ID})
+	}
+	if !firstPage.HasMore {
+		t.Fatalf("first page should report has_more=true")
+	}
+	if firstPage.NextCursor.ID != "conv-2" || firstPage.NextCursor.UpdatedAt == "" {
+		t.Fatalf("unexpected next cursor: %+v", firstPage.NextCursor)
+	}
+
+	secondReq := httptest.NewRequest(
+		http.MethodGet,
+		"/workspaces/ws-page/conversations?limit=2&before_updated_at="+url.QueryEscape(firstPage.NextCursor.UpdatedAt)+"&before_id="+url.QueryEscape(firstPage.NextCursor.ID),
+		nil,
+	)
+	secondRec := httptest.NewRecorder()
+	mux.ServeHTTP(secondRec, secondReq)
+	if secondRec.Code != http.StatusOK {
+		t.Fatalf("second page status=%d body=%s", secondRec.Code, secondRec.Body.String())
+	}
+
+	var secondPage struct {
+		Conversations []struct {
+			ID string `json:"ID"`
+		} `json:"conversations"`
+		HasMore bool `json:"has_more"`
+	}
+	if err := json.Unmarshal(secondRec.Body.Bytes(), &secondPage); err != nil {
+		t.Fatalf("decode second page: %v", err)
+	}
+
+	if len(secondPage.Conversations) != 1 || secondPage.Conversations[0].ID != "conv-1" {
+		t.Fatalf("second page ids=%v want [conv-1]", secondPage.Conversations)
+	}
+	if secondPage.HasMore {
+		t.Fatalf("second page should report has_more=false")
 	}
 }

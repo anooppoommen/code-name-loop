@@ -1,5 +1,4 @@
 import { ArrowDown } from 'lucide-react';
-import { AnimatePresence, motion } from 'framer-motion';
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { RefObject } from 'react';
 import { ActivityFrame, ActivityItem } from './activity-feed/ActivityItem';
@@ -98,27 +97,6 @@ export const ActivityFeed = memo(function ActivityFeed({
     pendingInitialSnapRef.current = true;
   }, [conversationId, scrollToBottom]);
 
-  const shouldSkipTimelineAnimation = useMemo(() => {
-    const didConversationChange = previousConversationIdRef.current !== conversationId;
-    if (didConversationChange) {
-      return true;
-    }
-
-    const prevIDs = previousEventIDsRef.current;
-    if (prevIDs.size === 0 || events.length === 0) {
-      return false;
-    }
-
-    let overlap = 0;
-    for (const event of events) {
-      if (prevIDs.has(event.id)) {
-        overlap++;
-        break;
-      }
-    }
-    return overlap === 0;
-  }, [conversationId, events]);
-
   useEffect(() => {
     previousConversationIdRef.current = conversationId;
     previousEventIDsRef.current = new Set(events.map((event) => event.id));
@@ -182,9 +160,18 @@ export const ActivityFeed = memo(function ActivityFeed({
         for (const event of streaming) {
           const fullText = textTargetForEvent(event);
           const current = next[event.id] ?? 0;
-          const step = event.kind === 'assistant' ? 3 : 5;
           const target = fullText.length;
-          const advanced = Math.min(target, current + step);
+          
+          let advanced = current;
+          if (current < target) {
+            const match = fullText.slice(current).match(/\s+/);
+            if (match && match.index !== undefined) {
+              advanced = current + match.index + match[0].length;
+            } else {
+              advanced = target;
+            }
+          }
+
           if (advanced !== current) {
             next[event.id] = advanced;
             changed = true;
@@ -249,23 +236,8 @@ export const ActivityFeed = memo(function ActivityFeed({
         <div className="mx-auto w-full max-w-[720px]">
           {events.length === 0 ? (
             <p className="m-0 px-4 py-3 text-sm text-loop-500">No run activity yet. Send a task to start streaming events.</p>
-          ) : shouldSkipTimelineAnimation ? (
-            events.map((event) => renderEventItem(event))
           ) : (
-            <AnimatePresence initial={false} mode="popLayout">
-              {events.map((event) => (
-                <motion.div
-                  key={event.id}
-                  layout
-                  initial={{ opacity: 0, y: 8, scale: 0.995 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: -8, scale: 0.995 }}
-                  transition={{ duration: 0.18, ease: 'easeOut' }}
-                >
-                  {renderEventItem(event)}
-                </motion.div>
-              ))}
-            </AnimatePresence>
+            events.map((event) => renderEventItem(event))
           )}
           {isSending ? (
             <ActivityFrame className="group px-2 py-2">

@@ -18,12 +18,14 @@ interface SidebarProps {
   expandedWorkspaceIds: Record<string, boolean>;
   onToggleWorkspace: (workspaceId: string) => void;
   conversationsByWorkspace: Record<string, ConversationSummary[]>;
+  hasMoreConversationsByWorkspace: Record<string, boolean>;
   selectedConversationId: string;
   sendingConversations: Record<string, boolean>;
   onSelectConversation: (conversationId: string) => void;
   onNewConversation: () => void;
   onDeleteConversation: (conversationId: string) => void;
   onRenameConversation: (conversationId: string, title: string) => void;
+  onLoadMoreConversations: (workspaceId: string) => void;
 }
 
 export function Sidebar({
@@ -41,12 +43,14 @@ export function Sidebar({
   expandedWorkspaceIds,
   onToggleWorkspace,
   conversationsByWorkspace,
+  hasMoreConversationsByWorkspace,
   selectedConversationId,
   sendingConversations,
   onSelectConversation,
   onNewConversation,
   onDeleteConversation,
   onRenameConversation,
+  onLoadMoreConversations,
 }: SidebarProps) {
   return (
     <aside className="no-drag select-none flex h-full min-h-0 w-[260px] flex-col gap-1.5 border-r border-loop-700 bg-loop-800 px-2.5 pb-2.5 pt-3 text-sm text-loop-300">
@@ -62,6 +66,7 @@ export function Sidebar({
         selectedWorkspaceId={selectedWorkspaceId}
         expandedWorkspaceIds={expandedWorkspaceIds}
         conversationsByWorkspace={conversationsByWorkspace}
+        hasMoreConversationsByWorkspace={hasMoreConversationsByWorkspace}
         selectedConversationId={selectedConversationId}
         sendingConversations={sendingConversations}
         onToggleWorkspace={onToggleWorkspace}
@@ -69,6 +74,7 @@ export function Sidebar({
         onSelectConversation={onSelectConversation}
         onDeleteConversation={onDeleteConversation}
         onRenameConversation={onRenameConversation}
+        onLoadMoreConversations={onLoadMoreConversations}
       />
 
       <SidebarSettings

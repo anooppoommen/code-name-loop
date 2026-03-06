@@ -243,12 +243,60 @@ func (h *ConversationHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 func (h *ConversationHandler) ListByWorkspace(w http.ResponseWriter, r *http.Request) {
 	wsID := models.WorkspaceID(r.PathValue("wsID"))
-	convs, err := h.store.Conversations().ListByWorkspace(r.Context(), wsID)
+	limitStr := r.URL.Query().Get("limit")
+	beforeUpdatedAtStr := strings.TrimSpace(r.URL.Query().Get("before_updated_at"))
+	beforeIDStr := strings.TrimSpace(r.URL.Query().Get("before_id"))
+
+	limit := 100 // default limit
+
+	if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+		limit = l
+	}
+
+	if (beforeUpdatedAtStr == "") != (beforeIDStr == "") {
+		utils.WriteError(w, http.StatusBadRequest, "before_updated_at and before_id must be provided together")
+		return
+	}
+
+	var before *store.ConversationListCursor
+	if beforeUpdatedAtStr != "" {
+		beforeUpdatedAt, err := time.Parse(time.RFC3339Nano, beforeUpdatedAtStr)
+		if err != nil {
+			utils.WriteError(w, http.StatusBadRequest, "invalid before_updated_at")
+			return
+		}
+		before = &store.ConversationListCursor{
+			UpdatedAt: beforeUpdatedAt,
+			ID:        models.ConversationID(beforeIDStr),
+		}
+	}
+
+	convs, err := h.store.Conversations().ListByWorkspacePaged(r.Context(), wsID, limit+1, before)
 	if err != nil {
 		utils.WriteError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	utils.WriteJSON(w, http.StatusOK, convs)
+
+	hasMore := false
+	if len(convs) > limit {
+		hasMore = true
+		convs = convs[:limit]
+	}
+
+	var nextCursor map[string]any
+	if hasMore && len(convs) > 0 {
+		last := convs[len(convs)-1]
+		nextCursor = map[string]any{
+			"id":         last.ID,
+			"updated_at": last.UpdatedAt,
+		}
+	}
+
+	utils.WriteJSON(w, http.StatusOK, map[string]any{
+		"conversations": convs,
+		"has_more":      hasMore,
+		"next_cursor":   nextCursor,
+	})
 }
 
 func (h *ConversationHandler) ListThreads(w http.ResponseWriter, r *http.Request) {

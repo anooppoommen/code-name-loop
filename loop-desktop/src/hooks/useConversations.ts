@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { LoopStreamPacket } from '../electron';
 import { attachReplyStream, getActiveReplyStream, requestJson } from '../lib/loopClient';
 import type { ActivityEvent, CheckpointSummary, ConversationSummary } from '../types/ui';
@@ -6,6 +6,8 @@ import { type ActivityInput, historyRowsToActivities } from '../utils/activityTi
 import {
     asRecord,
     buildConversationTitle,
+    getField,
+    getBoolean,
     getString,
     parseCheckpoint,
     parseConversation,
@@ -14,6 +16,50 @@ import {
 } from '../utils/parsers';
 import { annotateActivitiesWithPendingApprovals, rowsFromUnknown } from './useLoopDesktop.helpers';
 import type { NoticeTone, PendingCommandApproval, StreamHandle } from './useLoopDesktop.types';
+
+interface ConversationPageCursor {
+    id: string;
+    updatedAt: string;
+}
+
+function compareConversationSummaries(a: ConversationSummary, b: ConversationSummary): number {
+    const timeA = new Date(a.updatedAt).getTime();
+    const timeB = new Date(b.updatedAt).getTime();
+    if (timeA !== timeB) {
+        return timeB - timeA;
+    }
+    return b.id.localeCompare(a.id);
+}
+
+function mergeConversationSummaries(
+    existing: ConversationSummary[],
+    incoming: ConversationSummary[],
+): ConversationSummary[] {
+    const merged = new Map<string, ConversationSummary>();
+    for (const conversation of existing) {
+        merged.set(conversation.id, conversation);
+    }
+    for (const conversation of incoming) {
+        merged.set(conversation.id, conversation);
+    }
+    return Array.from(merged.values()).sort(compareConversationSummaries);
+}
+
+function parseConversationPageCursor(payload: unknown): ConversationPageCursor | null {
+    const record = asRecord(payload);
+    const cursorRecord = asRecord(getField(record, ['next_cursor', 'nextCursor']));
+    if (!cursorRecord) {
+        return null;
+    }
+
+    const id = getString(cursorRecord, ['id', 'ID']);
+    const updatedAt = getString(cursorRecord, ['updated_at', 'updatedAt']);
+    if (!id || !updatedAt) {
+        return null;
+    }
+
+    return { id, updatedAt };
+}
 
 export interface UseConversationsReturn {
     conversationsByWorkspace: Record<string, ConversationSummary[]>;
@@ -24,6 +70,8 @@ export interface UseConversationsReturn {
     setCheckpointsByConversation: React.Dispatch<React.SetStateAction<Record<string, CheckpointSummary[]>>>;
     checkpoints: CheckpointSummary[];
     refreshConversationsByWorkspace: (workspaceId: string, preserveEmpty?: boolean) => Promise<void>;
+    loadMoreConversations: (workspaceId: string) => Promise<void>;
+    hasMoreConversationsByWorkspace: Record<string, boolean>;
     refreshCheckpointsForConversation: (conversationId: string) => Promise<CheckpointSummary[]>;
     loadConversationHistory: (conversationId: string) => Promise<void>;
     createConversation: (seedText: string) => Promise<string | null>;
@@ -65,6 +113,9 @@ export function useConversations(
     const [conversationsByWorkspace, setConversationsByWorkspace] = useState<Record<string, ConversationSummary[]>>({});
     const [checkpointsByConversation, setCheckpointsByConversation] = useState<Record<string, CheckpointSummary[]>>({});
     const [isRestoringCheckpoint, setIsRestoringCheckpoint] = useState(false);
+    const [hasMoreConversationsByWorkspace, setHasMoreConversationsByWorkspace] = useState<Record<string, boolean>>({});
+    const [conversationCursorByWorkspace, setConversationCursorByWorkspace] = useState<Record<string, ConversationPageCursor | null>>({});
+    const loadingMoreConversationsRef = useRef<Record<string, boolean>>({});
 
     const conversations = useMemo(
         () => conversationsByWorkspace[selectedWorkspaceId] ?? [],
@@ -82,10 +133,15 @@ export function useConversations(
     );
 
     const refreshConversationsByWorkspace = useCallback(
-        async (workspaceId: string, preserveEmpty = false): Promise<void> => {
+        async (workspaceId: string, preserveEmpty = false, limit = 50, cursor: ConversationPageCursor | null = null): Promise<void> => {
+            const query = new URLSearchParams({ limit: String(limit) });
+            if (cursor) {
+                query.set('before_updated_at', cursor.updatedAt);
+                query.set('before_id', cursor.id);
+            }
             const response = await requestJson<unknown>({
                 baseUrl: backendUrl,
-                endpointPath: `/workspaces/${workspaceId}/conversations`,
+                endpointPath: `/workspaces/${workspaceId}/conversations?${query.toString()}`,
                 method: 'GET',
             });
 
@@ -102,13 +158,32 @@ export function useConversations(
             const parsed = rows
                 .map((item) => parseConversation(item))
                 .filter((item): item is ConversationSummary => item !== null);
-            const rootsOnly = parsed.filter((conversation) => !conversation.isThread).sort((a, b) => {
-                const timeA = new Date(a.updatedAt).getTime();
-                const timeB = new Date(b.updatedAt).getTime();
-                return timeB - timeA;
-            });
+            const rootsOnly = parsed.filter((conversation) => !conversation.isThread).sort(compareConversationSummaries);
 
-            setConversationsByWorkspace((prev) => ({ ...prev, [workspaceId]: rootsOnly }));
+            const payload = asRecord(response.data);
+            const hasMore = getBoolean(payload, ['has_more', 'hasMore']);
+            const nextCursor = parseConversationPageCursor(response.data);
+            setHasMoreConversationsByWorkspace((prev) => ({ ...prev, [workspaceId]: hasMore }));
+            setConversationCursorByWorkspace((prev) => ({ ...prev, [workspaceId]: nextCursor }));
+
+            const currentSelectedId = selectedConversationIdRef.current;
+            let mergedConversations = rootsOnly;
+            setConversationsByWorkspace((prev) => {
+                const existing = prev[workspaceId] ?? [];
+                if (cursor) {
+                    mergedConversations = mergeConversationSummaries(existing, rootsOnly);
+                    return { ...prev, [workspaceId]: mergedConversations };
+                }
+
+                mergedConversations = rootsOnly;
+                if (currentSelectedId && !mergedConversations.some((conversation) => conversation.id === currentSelectedId)) {
+                    const selectedExisting = existing.find((conversation) => conversation.id === currentSelectedId);
+                    if (selectedExisting) {
+                        mergedConversations = mergeConversationSummaries(mergedConversations, [selectedExisting]);
+                    }
+                }
+                return { ...prev, [workspaceId]: mergedConversations };
+            });
 
             // Restore active streams for any root conversation that is currently running
             for (const conv of rootsOnly) {
@@ -129,15 +204,40 @@ export function useConversations(
                 }
             }
 
-            const currentSelectedId = selectedConversationIdRef.current;
-
             if (preserveEmpty && currentSelectedId === '') {
                 // Do nothing, keep it empty
-            } else if (!rootsOnly.some((conversation) => conversation.id === currentSelectedId)) {
-                setSelectedConversationId(rootsOnly[0]?.id ?? '');
+            } else if (currentSelectedId && mergedConversations.some((conversation) => conversation.id === currentSelectedId)) {
+                // Preserve the current selection when it is still present in the merged list.
+            } else {
+                setSelectedConversationId(mergedConversations[0]?.id ?? '');
             }
         },
         [backendUrl, pushActivity, activeStreamsRef, handleStreamPacketRef, setSendingConversations, selectedConversationIdRef, setSelectedConversationId],
+    );
+
+    const loadMoreConversations = useCallback(
+        async (workspaceId: string) => {
+            if (loadingMoreConversationsRef.current[workspaceId]) {
+                return;
+            }
+
+            if (!hasMoreConversationsByWorkspace[workspaceId]) {
+                return;
+            }
+
+            const cursor = conversationCursorByWorkspace[workspaceId];
+            if (!cursor) {
+                return;
+            }
+
+            loadingMoreConversationsRef.current[workspaceId] = true;
+            try {
+                await refreshConversationsByWorkspace(workspaceId, true, 50, cursor);
+            } finally {
+                loadingMoreConversationsRef.current[workspaceId] = false;
+            }
+        },
+        [conversationCursorByWorkspace, hasMoreConversationsByWorkspace, refreshConversationsByWorkspace]
     );
 
     const refreshCheckpointsForConversation = useCallback(
@@ -504,6 +604,8 @@ export function useConversations(
         conversationsByWorkspace,
         setConversationsByWorkspace,
         selectedConversation,
+        hasMoreConversationsByWorkspace,
+        loadMoreConversations,
         conversations,
         checkpointsByConversation,
         setCheckpointsByConversation,

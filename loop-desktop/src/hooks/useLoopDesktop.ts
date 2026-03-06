@@ -520,6 +520,7 @@ export function useLoopDesktop(): LoopDesktopController {
 
     conversations: conversationsHook.conversations,
     conversationsByWorkspace: conversationsHook.conversationsByWorkspace,
+    hasMoreConversationsByWorkspace: conversationsHook.hasMoreConversationsByWorkspace,
     selectedConversationId,
     selectedConversation: conversationsHook.selectedConversation,
     checkpoints: conversationsHook.checkpoints,
@@ -569,6 +570,7 @@ export function useLoopDesktop(): LoopDesktopController {
       setSelectedConversationId('');
     },
     selectConversation: conversationsHook.selectConversation,
+    loadMoreConversations: conversationsHook.loadMoreConversations,
     newConversation: conversationsHook.newConversation,
     deleteConversation: conversationsHook.deleteConversation,
     renameConversation: conversationsHook.renameConversation,
