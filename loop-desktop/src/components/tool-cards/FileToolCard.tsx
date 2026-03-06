@@ -1,30 +1,75 @@
 import { AlertTriangle, Check, ChevronDown, Loader2, Copy } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { memo, useMemo, useState } from 'react';
+import { memo, useState } from 'react';
 import type { FileToolPayload } from './types';
 
 const GEIST_MONO_STACK = '"Geist Mono","Geist",ui-monospace,SFMono-Regular,Menlo,monospace';
 
-function formatArgs(toolName: string, args: Record<string, unknown>): string {
+function truncatePath(path: string): string {
+  if (!path) return '';
+  const parts = path.split(/[/\\]/);
+  if (parts.length > 3) {
+    return `${parts[0]}/.../${parts[parts.length - 2]}/${parts[parts.length - 1]}`;
+  }
+  return path;
+}
+
+interface ToolInfo {
+  action: string;
+  path: string;
+  fullPath: string;
+  extras: string;
+}
+
+function getToolInfo(toolName: string, args: Record<string, unknown>): ToolInfo {
   if (toolName.includes('list_dir')) {
-    return `path: ${args.dir_path || '.'}`;
+    const dirPath = (args.dir_path as string) || '.';
+    return {
+      action: 'list dir',
+      path: truncatePath(dirPath),
+      fullPath: dirPath,
+      extras: args.depth ? `depth ${args.depth}` : ''
+    };
   }
   if (toolName.includes('grep_files')) {
-    const pattern = args.pattern ? `"${args.pattern}"` : '';
-    const path = args.path ? ` in ${args.path}` : '';
-    return `pattern: ${pattern}${path}`;
+    const targetPath = (args.path as string) || '.';
+    return {
+      action: 'grep files',
+      path: truncatePath(targetPath),
+      fullPath: targetPath,
+      extras: args.pattern ? `pattern: "${args.pattern}"` : ''
+    };
   }
   if (toolName.includes('read_file')) {
-    const offset = args.offset ? `, offset: ${args.offset}` : '';
-    const limit = args.limit ? `, limit: ${args.limit}` : '';
-    return `file: ${args.file_path || 'unknown'}${offset}${limit}`;
+    const filePath = (args.file_path as string) || 'unknown';
+    let extras = '';
+    if (args.offset && args.limit) {
+      const from = Number(args.offset);
+      const to = from + Number(args.limit) - 1;
+      extras = `lines ${from} to ${to}`;
+    } else if (args.offset) {
+      extras = `line ${args.offset}+`;
+    }
+    return {
+      action: 'read file',
+      path: truncatePath(filePath),
+      fullPath: filePath,
+      extras
+    };
   }
-  return JSON.stringify(args);
+  
+  return {
+    action: toolName.split(':').pop() || toolName,
+    path: '',
+    fullPath: '',
+    extras: JSON.stringify(args)
+  };
 }
 
 export const FileToolCard = memo(function FileToolCard({ payload }: { payload: FileToolPayload }) {
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useState(false);
   const [copiedOutput, setCopiedOutput] = useState(false);
+  const [copiedPath, setCopiedPath] = useState(false);
 
   const handleCopyOutput = () => {
     navigator.clipboard.writeText(payload.output || payload.error);
@@ -32,56 +77,62 @@ export const FileToolCard = memo(function FileToolCard({ payload }: { payload: F
     setTimeout(() => setCopiedOutput(false), 2000);
   };
 
+  const handleCopyPath = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const fullPath = getToolInfo(payload.toolName, payload.args).fullPath;
+    if (!fullPath) return;
+    navigator.clipboard.writeText(fullPath);
+    setCopiedPath(true);
+    setTimeout(() => setCopiedPath(false), 2000);
+  };
+
   const hasOutput = payload.output.trim().length > 0;
   const hasErrorDetail = payload.status === 'error' && payload.error.trim().length > 0;
   const hasDetails = hasOutput || hasErrorDetail;
-  const statusLabel = useMemo(() => {
-    if (payload.status === 'success') return 'Success';
-    if (payload.status === 'error') return 'Error';
-    return 'Running';
-  }, [payload.status]);
-  const executedAtLabel = useMemo(() => {
-    if (!payload.executedAt) return '';
-    const timestamp = new Date(payload.executedAt);
-    if (Number.isNaN(timestamp.getTime())) return '';
-    return timestamp.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-  }, [payload.executedAt]);
 
-  const argsDisplay = formatArgs(payload.toolName, payload.args);
+  const info = getToolInfo(payload.toolName, payload.args);
 
   return (
-    <div className="mt-2 overflow-hidden rounded-xl bg-loop-700/85">
-      <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-loop-600/50">
-        <div className="group relative flex min-w-0 flex-1 items-center gap-2">
-          <div className="flex shrink-0 items-center gap-2">
-            <span
-              className="text-[12px] font-semibold tracking-wide text-loop-100"
-              style={{ fontFamily: GEIST_MONO_STACK }}
-            >
-              {payload.toolName.split(':').pop() || payload.toolName}
+    <div className="mt-1">
+      <div 
+        className="group relative flex items-center justify-between gap-3 py-1.5 cursor-pointer select-none transition-opacity duration-200 hover:opacity-80"
+        onClick={() => setExpanded((prev) => !prev)}
+      >
+        <div className="flex min-w-0 flex-1 items-center gap-3">
+          <span className="text-[13px] font-semibold tracking-wide text-blue-400 whitespace-nowrap" style={{ fontFamily: GEIST_MONO_STACK }}>
+            {info.action}
+          </span>
+          
+          {info.path && (
+            <div className="flex items-center gap-1 min-w-0">
+              <span className="text-[12px] text-loop-200 truncate font-mono" title={info.fullPath}>
+                {info.path}
+              </span>
+              <button
+                onClick={handleCopyPath}
+                className="shrink-0 p-1 text-loop-400 hover:text-loop-100 hover:bg-loop-600/50 rounded transition-colors ml-1"
+                title="Copy path"
+              >
+                {copiedPath ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
+              </button>
+            </div>
+          )}
+          
+          {info.extras && (
+            <span className="text-[11px] text-loop-400 whitespace-nowrap ml-auto pr-2" style={{ fontFamily: GEIST_MONO_STACK }}>
+              {info.extras}
             </span>
-          </div>
-          <div className="h-4 w-px bg-loop-600 mx-1"></div>
-          <div className="relative min-w-0 flex-1">
-            <pre
-              className="m-0 overflow-x-hidden text-ellipsis whitespace-nowrap pb-0.5 text-[12px] text-loop-300 scrollbar-hidden group-hover:overflow-x-auto group-hover:text-clip"
-              style={{ fontFamily: GEIST_MONO_STACK }}
-            >
-              <span className="pr-6">{argsDisplay}</span>
-            </pre>
-            <div className="pointer-events-none absolute bottom-0 right-0 top-0 w-8 bg-gradient-to-l from-loop-700/85 to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
-          </div>
+          )}
         </div>
-        <div className="flex shrink-0 items-center gap-1">
-          {hasDetails ? (
-            <button
-              type="button"
-              className="inline-flex shrink-0 items-center justify-center rounded-md p-1.5 text-loop-300 transition-colors hover:bg-loop-600/50 hover:text-loop-100"
-              onClick={() => setExpanded((prev) => !prev)}
-            >
-              <ChevronDown size={14} className={`transition-transform ${expanded ? 'rotate-180' : ''}`} />
-            </button>
-          ) : null}
+        
+        <div className="flex shrink-0 items-center gap-2 pl-2">
+          {payload.status === 'success' && <div title="Success"><Check size={14} className="text-emerald-400/80" /></div>}
+          {payload.status === 'error' && <div title="Error"><AlertTriangle size={14} className="text-red-400/80" /></div>}
+          {payload.status === 'running' && <div title="Running"><Loader2 size={14} className="animate-spin text-blue-400/80" /></div>}
+          
+          {hasDetails && (
+            <ChevronDown size={14} className={`text-loop-400 transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`} />
+          )}
         </div>
       </div>
 
@@ -93,7 +144,7 @@ export const FileToolCard = memo(function FileToolCard({ payload }: { payload: F
             animate={{ height: 'auto', opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
             transition={{ duration: 0.2, ease: 'easeInOut' }}
-            className="group/output relative overflow-hidden bg-loop-800/55"
+            className="group/output relative overflow-hidden rounded-lg border border-loop-800/90 bg-loop-900/35 mt-2"
           >
             <button
               type="button"
@@ -121,30 +172,6 @@ export const FileToolCard = memo(function FileToolCard({ payload }: { payload: F
           </motion.div>
         ) : null}
       </AnimatePresence>
-
-      <div className="flex items-center justify-between gap-2 border-t border-loop-600/50 bg-loop-700/55 px-4 py-2 text-xs">
-        <span className="text-[11px] text-loop-300">
-          {executedAtLabel ? `Executed ${executedAtLabel}` : ''}
-        </span>
-        {payload.status === 'success' ? (
-          <div className="inline-flex items-center gap-1.5 text-[12px] text-loop-200">
-            <Check size={12} className="text-emerald-400/80" />
-            <span>{statusLabel}</span>
-          </div>
-        ) : null}
-        {payload.status === 'error' ? (
-          <div className="inline-flex items-center gap-1.5 text-[12px] text-loop-200">
-            <AlertTriangle size={12} className="text-red-400/80" />
-            <span>{statusLabel}</span>
-          </div>
-        ) : null}
-        {payload.status === 'running' ? (
-          <div className="inline-flex items-center gap-1.5 text-[12px] text-loop-200">
-            <Loader2 size={12} className="animate-spin text-blue-400/80" />
-            <span>{statusLabel}</span>
-          </div>
-        ) : null}
-      </div>
     </div>
   );
 });
