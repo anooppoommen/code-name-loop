@@ -31,19 +31,12 @@ func MessagesToContents(messages []*models.Message) []*genai.Content {
 	})
 }
 
-// MessagesToModelContents converts persisted history into model request
-// contents with token-efficient pruning:
-//   - Thought parts are omitted from upstream payload.
-//   - Inline blobs are included only on the tail message.
-//
-// This keeps required protocol data while avoiding repeated large payloads.
 func MessagesToModelContents(messages []*models.Message) []*genai.Content {
-	lastIdx := len(messages) - 1
-	return messagesToContentsWithOptions(messages, func(idx int, _ *models.Message) partEncodeOptions {
+	return messagesToContentsWithOptions(messages, func(_ int, _ *models.Message) partEncodeOptions {
 		return partEncodeOptions{
 			includeThoughtPart: false,
 			includeThoughtText: false,
-			includeInlineBlob:  idx == lastIdx,
+			includeInlineBlob:  true,
 		}
 	})
 }

@@ -398,44 +398,7 @@ func TestMessagesToModelContents_PrunesHistoryPayloads(t *testing.T) {
 		t.Fatalf("contents count = %d, want 3", len(contents))
 	}
 
-	for _, c := range contents {
-		for _, p := range c.Parts {
-			if p.InlineData != nil {
-				t.Fatalf("historical inline blob should be omitted from model history")
-			}
-		}
-	}
-
-	for _, p := range contents[1].Parts {
-		if p.Thought {
-			t.Fatalf("thought parts should be omitted from model history payload")
-		}
-	}
-}
-
-func TestMessagesToModelContents_KeepTailInlineBlob(t *testing.T) {
-	blobData := base64.StdEncoding.EncodeToString([]byte("image-bytes"))
-	history := []*models.Message{
-		{
-			SentBy: models.SentByUser,
-			Parts: []models.MessagePart{
-				{Kind: models.PartText, Text: &models.TextPart{Text: "latest screenshot"}},
-				{
-					Kind: models.PartInlineBlob,
-					InlineBlob: &models.InlineBlobPart{
-						MIMEType: "image/png",
-						Data:     blobData,
-					},
-				},
-			},
-		},
-	}
-
-	contents := agent.MessagesToModelContents(history)
-	if len(contents) != 1 {
-		t.Fatalf("contents count = %d, want 1", len(contents))
-	}
-
+	// Verify that the inline blob from the first message is preserved
 	foundInline := false
 	for _, p := range contents[0].Parts {
 		if p.InlineData != nil {
@@ -446,6 +409,12 @@ func TestMessagesToModelContents_KeepTailInlineBlob(t *testing.T) {
 		}
 	}
 	if !foundInline {
-		t.Fatalf("tail inline blob should be preserved")
+		t.Fatalf("historical inline blob should be preserved in model history")
+	}
+
+	for _, p := range contents[1].Parts {
+		if p.Thought {
+			t.Fatalf("thought parts should be omitted from model history payload")
+		}
 	}
 }
