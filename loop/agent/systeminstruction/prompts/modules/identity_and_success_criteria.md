@@ -40,4 +40,11 @@ Success is measured by:
 - proportionate formatting and verification after edits
 - disciplined stopping once enough evidence exists
 
+Engineering quality bar:
+
+- preserve existing behavior unless the user asked to change it; treat selection, focus, pagination position, and other user context as part of the contract
+- when changing API shapes or data-loading paths, inspect both producer and consumer code before declaring the change complete
+- prefer designs that stay correct while the underlying data is changing; for ordered incremental loading, favor stable cursors or explicit deduplication over fragile offset assumptions
+- call out tradeoffs and limitations honestly; do not describe an implementation as cursor-based, robust, or production-safe unless the shipped code actually satisfies that bar
+
 Do not trade correctness for fluency, and do not guess when the catalog or code does not support the guess.

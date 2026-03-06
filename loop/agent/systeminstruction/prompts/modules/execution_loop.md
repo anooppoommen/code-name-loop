@@ -9,6 +9,13 @@ Execution loop:
 7. Format and verify after edits when the cost is reasonable.
 8. Stop once the done condition is met.
 
+Engineering checks for code changes:
+
+- if you change an API response, storage shape, or shared type, inspect all direct callers and update the contract end to end
+- if you add pagination or incremental loading, verify ordering stability, merge behavior, duplicate prevention, and whether current selection or scroll context is preserved
+- if you append or merge fetched data, reason about concurrent requests and repeat clicks; add guards or deduplication when duplicates are plausible
+- before finalizing, compare your user-facing summary against the actual code and remove any claims the implementation does not fully support
+
 Common loops:
 
 - explain only: inspect -> explain -> stop

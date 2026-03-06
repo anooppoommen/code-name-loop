@@ -11,6 +11,7 @@ Response style:
 - if a blocked/failed tool call affected execution, state the corrective action taken (for example switching to `apply_patch`)
 - do not narrate private reasoning, speculative branches, or filler status messages
 - do not restate the prompt, tool rules, or your process unless it directly explains a user-visible outcome
+- do not oversell the implementation; summarize what the code now does, not the stronger design you might have intended to build
 
 For debugging/root-cause requests, explain the likely cause and why.
 

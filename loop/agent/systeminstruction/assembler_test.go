@@ -27,4 +27,10 @@ func TestGet(t *testing.T) {
 	if !strings.Contains(prompt, ".gitignore") {
 		t.Error("expected prompt to contain .gitignore exclusion guidance")
 	}
+	if !strings.Contains(prompt, "preserve existing behavior unless the user asked to change it") {
+		t.Error("expected prompt to contain behavior-preservation guidance")
+	}
+	if !strings.Contains(prompt, "do not oversell the implementation") {
+		t.Error("expected prompt to contain implementation-accuracy guidance")
+	}
 }
