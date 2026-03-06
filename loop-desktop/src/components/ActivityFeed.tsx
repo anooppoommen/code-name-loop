@@ -31,7 +31,6 @@ export const ActivityFeed = memo(function ActivityFeed({
   onEditMessage,
 }: ActivityFeedProps) {
   const [visibleChars, setVisibleChars] = useState<Record<string, number>>({});
-  const [copiedToolID, setCopiedToolID] = useState('');
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [hasUserScrolled, setHasUserScrolled] = useState(false);
 
@@ -198,10 +197,6 @@ export const ActivityFeed = memo(function ActivityFeed({
     return () => window.cancelAnimationFrame(frame);
   }, [events, scrollToBottom, visibleChars]);
 
-  const handleCopyToolCommand = useCallback((command: string, eventId: string) => {
-    void copyToolCommand(command, eventId, setCopiedToolID);
-  }, []);
-
   const finalAgentEventId = useMemo(() => {
     for (let i = events.length - 1; i >= 0; i--) {
       if (events[i].kind === 'assistant') {
@@ -244,9 +239,7 @@ export const ActivityFeed = memo(function ActivityFeed({
         <ActivityItem
           event={event}
           visibleChars={visibleChars[event.id]}
-          isCopied={copiedToolID === event.id}
           isFinalAgent={isFinalAgent}
-          onCopyToolCommand={handleCopyToolCommand}
           canCompose={canCompose}
           isSending={isSending}
           onUseToolReply={onUseToolReply}
@@ -266,8 +259,6 @@ export const ActivityFeed = memo(function ActivityFeed({
       </div>
   )}, [
     canCompose,
-    copiedToolID,
-    handleCopyToolCommand,
     isSending,
     onEditMessage,
     onRetryMessage,
@@ -314,19 +305,3 @@ export const ActivityFeed = memo(function ActivityFeed({
     </section>
   );
 });
-
-async function copyToolCommand(
-  command: string,
-  eventID: string,
-  setCopiedToolID: (value: string) => void,
-): Promise<void> {
-  try {
-    await navigator.clipboard.writeText(command);
-    setCopiedToolID(eventID);
-    window.setTimeout(() => {
-      setCopiedToolID('');
-    }, 1200);
-  } catch {
-    // Clipboard support can vary by runtime.
-  }
-}
