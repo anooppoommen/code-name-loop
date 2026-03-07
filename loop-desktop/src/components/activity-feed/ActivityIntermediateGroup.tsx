@@ -9,6 +9,7 @@ interface ActivityIntermediateGroupProps {
   events: ActivityEvent[];
   defaultExpanded: boolean;
   disableInitialMotion: boolean;
+  animate: boolean;
   scrollAnchorId: string;
   renderEventItem: (event: ActivityEvent) => ReactElement | null;
 }
@@ -18,6 +19,7 @@ export const ActivityIntermediateGroup = memo(
     events,
     defaultExpanded,
     disableInitialMotion,
+    animate,
     scrollAnchorId,
     renderEventItem,
   }: ActivityIntermediateGroupProps) {
@@ -97,11 +99,7 @@ export const ActivityIntermediateGroup = memo(
       : `Show ${summaryText}`;
 
     return (
-      <motion.div
-        ref={groupRef}
-        transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-        className="group/intermediate relative my-1"
-      >
+      <div ref={groupRef} className="group/intermediate relative my-1">
         <div className="pointer-events-none absolute inset-y-0 left-0 right-0 z-20 px-2">
           <div className="grid h-full grid-cols-[48px_minmax(0,1fr)_48px] gap-0">
             <div className="flex justify-end pr-3">
@@ -126,47 +124,67 @@ export const ActivityIntermediateGroup = memo(
           </div>
         </div>
 
-        <AnimatePresence
-          initial={false}
-          onExitComplete={() => {
-            if (pendingCollapseScrollRef.current) {
-              pendingCollapseScrollRef.current = false;
-              scrollGroupToTop();
-            }
-          }}
-        >
-          {!isExpanded ? (
-            <motion.div
-              key="summary"
-              initial={disableInitialMotion ? false : { opacity: 0, y: 8 }}
-              animate={disableInitialMotion ? undefined : { opacity: 1, y: 0 }}
-              exit={disableInitialMotion ? undefined : { opacity: 0, y: -6 }}
-              transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
-            >
+        {!animate ? (
+          !isExpanded ? (
+            <div>
               <ActivityFrame className="px-2 py-1" contentClassName="min-w-0">
                 <div className="rounded-xl border border-loop-800 bg-loop-900/45 px-3 py-2 text-[11px] font-medium text-loop-400 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
                   {summaryText}
                 </div>
               </ActivityFrame>
-            </motion.div>
+            </div>
           ) : (
-            <motion.div
-              key="content"
-              initial={disableInitialMotion ? false : { opacity: 0, y: 8, gridTemplateRows: "0fr" }}
-              animate={disableInitialMotion ? undefined : { opacity: 1, y: 0, gridTemplateRows: "1fr" }}
-              exit={disableInitialMotion ? undefined : { opacity: 0, y: -6, gridTemplateRows: "0fr" }}
-              transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
-              className="grid overflow-hidden"
-            >
+            <div className="grid overflow-hidden">
               <div className="min-h-0">
                 <div className="flex flex-col gap-0 pb-1">
                   {events.map((event) => renderEventItem(event))}
                 </div>
               </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </motion.div>
+            </div>
+          )
+        ) : (
+          <AnimatePresence
+            initial={false}
+            onExitComplete={() => {
+              if (pendingCollapseScrollRef.current) {
+                pendingCollapseScrollRef.current = false;
+                scrollGroupToTop();
+              }
+            }}
+          >
+            {!isExpanded ? (
+              <motion.div
+                key="summary"
+                initial={disableInitialMotion ? false : { opacity: 0, y: 8 }}
+                animate={disableInitialMotion ? undefined : { opacity: 1, y: 0 }}
+                exit={disableInitialMotion ? undefined : { opacity: 0, y: -6 }}
+                transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+              >
+                <ActivityFrame className="px-2 py-1" contentClassName="min-w-0">
+                  <div className="rounded-xl border border-loop-800 bg-loop-900/45 px-3 py-2 text-[11px] font-medium text-loop-400 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
+                    {summaryText}
+                  </div>
+                </ActivityFrame>
+              </motion.div>
+            ) : (
+              <motion.div
+                key="content"
+                initial={disableInitialMotion ? false : { opacity: 0, y: 8, gridTemplateRows: "0fr" }}
+                animate={disableInitialMotion ? undefined : { opacity: 1, y: 0, gridTemplateRows: "1fr" }}
+                exit={disableInitialMotion ? undefined : { opacity: 0, y: -6, gridTemplateRows: "0fr" }}
+                transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
+                className="grid overflow-hidden"
+              >
+                <div className="min-h-0">
+                  <div className="flex flex-col gap-0 pb-1">
+                    {events.map((event) => renderEventItem(event))}
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        )}
+      </div>
     );
   },
 );

@@ -85,6 +85,14 @@ function sortEvents(events: ActivityEvent[]): ActivityEvent[] {
   });
 }
 
+function eventAffectsConversationStructure(current: ActivityEvent, next: ActivityEvent): boolean {
+  return current.id !== next.id
+    || current.conversationId !== next.conversationId
+    || current.sequenceNo !== next.sequenceNo
+    || current.timestamp !== next.timestamp
+    || current.kind !== next.kind;
+}
+
 export function buildActivityGroups(events: ActivityEvent[]): ActivityGroup[] {
   if (events.length === 0) {
     return EMPTY_GROUPS;
@@ -381,6 +389,12 @@ export const useActivityStore = create<ActivityStoreState>((set, get) => ({
         ...state.events,
         [id]: nextEvent,
       };
+
+      if (!eventAffectsConversationStructure(current, nextEvent)) {
+        return {
+          events: nextEvents,
+        };
+      }
 
       if (nextEvent.conversationId !== current.conversationId) {
         const oldConversationEvents = getConversationEventsFromState(

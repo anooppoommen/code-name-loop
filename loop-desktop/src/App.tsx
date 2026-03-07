@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, Profiler } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { AppHeader } from './components/AppHeader';
 import { ActivityFeed } from './components/ActivityFeed';
@@ -20,6 +20,13 @@ const COMMAND_APPROVAL_OPTIONS: Array<{ decision: CommandApprovalDecision; label
   { decision: 'allow_session', label: 'Allow in session', keyHint: '3' },
 ];
 
+interface MemoryAwarePerformance extends Performance {
+  memory?: {
+    jsHeapSizeLimit: number;
+    usedJSHeapSize: number;
+  };
+}
+
 export default function App() {
   const app = useLoopDesktop();
 
@@ -37,6 +44,9 @@ export default function App() {
   const isNavigatingRef = useRef(false);
 
   const [isConnectionSettingsOpen, setIsConnectionSettingsOpen] = useState(false);
+
+  const [isProfiling, setIsProfiling] = useState(false);
+  const profilingLogsRef = useRef<string[]>([]);
 
   // Track selected conversation history
   useEffect(() => {
@@ -174,6 +184,70 @@ export default function App() {
     return () => mediaQuery.removeEventListener('change', onChange);
   }, []);
 
+  // Setup PerformanceObserver for long tasks when profiling
+  useEffect(() => {
+    if (!isProfiling) return;
+    let observer: PerformanceObserver | null = null;
+    try {
+      observer = new PerformanceObserver((list) => {
+        for (const entry of list.getEntries()) {
+          profilingLogsRef.current.push(
+            `[${new Date().toISOString()}] ⚠️ LONG TASK DETECTED\n` +
+            `  ├─ Duration:   ${entry.duration.toFixed(2)}ms\n` +
+            `  ├─ Name:       ${entry.name}\n` +
+            `  └─ Start Time: ${entry.startTime.toFixed(2)}ms`
+          );
+        }
+      });
+      observer.observe({ entryTypes: ['longtask'] });
+    } catch {
+      // Fallback if longtask is not supported
+    }
+    return () => observer?.disconnect();
+  }, [isProfiling]);
+
+  const onRenderCallback = useCallback(
+    (
+      id: string,
+      phase: 'mount' | 'update' | 'nested-update',
+      actualDuration: number,
+      baseDuration: number,
+      startTime: number,
+      commitTime: number
+    ) => {
+      if (!isProfiling) return;
+      const mem = (performance as MemoryAwarePerformance).memory;
+      const memoryStr = mem ? `\n  ├─ Heap Limit:   ${Math.round(mem.jsHeapSizeLimit / 1048576)}MB (Used: ${Math.round(mem.usedJSHeapSize / 1048576)}MB)` : '';
+      const log = `[${new Date().toISOString()}] ⚛️ ${id} [${phase.toUpperCase()}]\n` +
+        `  ├─ Actual Time:  ${actualDuration.toFixed(2)}ms\n` +
+        `  ├─ Base Time:    ${baseDuration.toFixed(2)}ms\n` +
+        `  ├─ Commit Time:  ${(commitTime - startTime).toFixed(2)}ms (Start: ${startTime.toFixed(1)}, Commit: ${commitTime.toFixed(1)})${memoryStr}\n` +
+        `  └─ App Context:  conversationId=${app.selectedConversationId || 'none'}, isSending=${app.isSending}, status=${app.currentStatus}`;
+      profilingLogsRef.current.push(log);
+    },
+    [isProfiling, app.selectedConversationId, app.isSending, app.currentStatus]
+  );
+
+  const toggleProfiling = useCallback(() => {
+    if (isProfiling) {
+      setIsProfiling(false);
+      let content = profilingLogsRef.current.join('\n');
+      if (!content) content = "No render events captured during profiling session.\n";
+      
+      const blob = new Blob([content], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `activity-feed-profile-${Date.now()}.txt`;
+      a.click();
+      URL.revokeObjectURL(url);
+      profilingLogsRef.current = [];
+    } else {
+      profilingLogsRef.current = [`--- Profiling Started at ${new Date().toISOString()} ---`];
+      setIsProfiling(true);
+    }
+  }, [isProfiling]);
+
   return (
     <KeyboardShortcut priority={0} enabled onKeyDown={appShortcutHandler}>
       <div className="flex h-full w-full overflow-hidden bg-loop-900 text-loop-200 selection:bg-blue-500/30">
@@ -260,6 +334,8 @@ export default function App() {
             onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
             sshTunnelStatus={app.sshTunnelStatus}
             onOpenConnectionSettings={() => setIsConnectionSettingsOpen(true)}
+            isProfiling={isProfiling}
+            onToggleProfiling={toggleProfiling}
           />
           <AnimatePresence initial={false}>
             {app.isSending && app.showMascot ? (
@@ -282,20 +358,22 @@ export default function App() {
           <div className="min-h-0 flex-1 overflow-hidden">
             <div className="flex h-full w-full min-h-0 flex-col">
               <div className="min-h-0 flex-1 overflow-hidden">
-                <ActivityFeed
-                  conversationId={app.selectedConversationId}
-                  containerRef={app.feedScrollRef}
-                  currentStatus={app.currentStatus}
-                  hideLifecycle={app.hideLifecycle}
-                  isLoadingHistory={app.isLoadingSelectedConversation}
-                  applyPatchToWorkspace={app.applyPatchToWorkspace}
-                  canCompose={app.canCompose}
-                  isSending={app.isSending}
-                  onUseToolReply={app.applyToolResponseSuggestion}
-                  onSendToolReply={app.sendToolResponseSuggestion}
-                  onRetryMessage={app.retryFromMessage}
-                  onEditMessage={app.editMessageInComposer}
-                />
+                <Profiler id="ActivityFeed" onRender={onRenderCallback}>
+                  <ActivityFeed
+                    conversationId={app.selectedConversationId}
+                    containerRef={app.feedScrollRef}
+                    currentStatus={app.currentStatus}
+                    hideLifecycle={app.hideLifecycle}
+                    isLoadingHistory={app.isLoadingSelectedConversation}
+                    applyPatchToWorkspace={app.applyPatchToWorkspace}
+                    canCompose={app.canCompose}
+                    isSending={app.isSending}
+                    onUseToolReply={app.applyToolResponseSuggestion}
+                    onSendToolReply={app.sendToolResponseSuggestion}
+                    onRetryMessage={app.retryFromMessage}
+                    onEditMessage={app.editMessageInComposer}
+                  />
+                </Profiler>
               </div>
 
               <div className="relative mx-auto w-full max-w-[720px] shrink-0">

@@ -23,7 +23,14 @@ type scriptedModelClient struct {
 	histories [][]string
 }
 
-func (m *scriptedModelClient) StreamMessage(ctx context.Context, history []*models.Message, _ *agent.GenerateContentConfig) <-chan agent.TurnEvent {
+func (m *scriptedModelClient) StreamMessage(ctx context.Context, history []*models.Message, cfg *agent.GenerateContentConfig) <-chan agent.TurnEvent {
+	if cfg != nil && cfg.Model == "gemini-3-flash-preview" {
+		ch := make(chan agent.TurnEvent, 1)
+		ch <- agent.TurnEvent{Kind: agent.EventMessageDone, Message: &models.Message{Parts: []models.MessagePart{{Kind: models.PartText, Text: &models.TextPart{Text: "Generated Title"}}}}}
+		close(ch)
+		return ch
+	}
+
 	m.mu.Lock()
 	captured := make([]string, 0, len(history))
 	for _, msg := range history {

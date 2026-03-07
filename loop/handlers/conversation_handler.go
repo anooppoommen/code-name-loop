@@ -948,6 +948,9 @@ func (h *ConversationHandler) Reply(w http.ResponseWriter, r *http.Request) {
 	}
 	userMetadata["thinking_level"] = strings.ToLower(string(thinkingLevel))
 
+	msgsCount, errCheck := h.store.Messages().GetRange(r.Context(), convID, 1, 1)
+	isFirstMessage := errCheck == nil && len(msgsCount) == 0
+
 	if isBranch {
 		type messageBrancher interface {
 			BranchFromMessage(
@@ -1002,6 +1005,10 @@ func (h *ConversationHandler) Reply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer cancel()
+
+	if isFirstMessage && !isBranch && req.Message != "" {
+		go h.generateTitleAsync(convID, req.Message)
+	}
 
 	// Set SSE headers.
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -1658,4 +1665,60 @@ func stripPatchLinePrefix(text string) string {
 	default:
 		return text
 	}
+}
+
+func (h *ConversationHandler) generateTitleAsync(convID models.ConversationID, text string) {
+	if text == "" {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	flashClient := &modelOverrideClient{
+		base:  h.client,
+		model: agent.ModelGemini3FlashPreview,
+	}
+
+	includeThoughts := false
+	sysPrompt := "You are a title generator. Generate a 2-3 word title. Reply ONLY with the title. No quotes, no markdown, no punctuation."
+	config := &agent.GenerateContentConfig{
+		SystemInstruction: sysPrompt,
+		IncludeThoughts:   &includeThoughts,
+	}
+
+	history := []*models.Message{
+		{
+			SentBy: models.SentByUser,
+			Parts: []models.MessagePart{
+				{Kind: models.PartText, Text: &models.TextPart{Text: text}},
+			},
+		},
+	}
+
+	var title string
+	for ev := range flashClient.StreamMessage(ctx, history, config) {
+		if ev.Kind == agent.EventMessageDone && ev.Message != nil {
+			if msg, ok := ev.Message.(*models.Message); ok {
+				for _, p := range msg.Parts {
+					if p.Kind == models.PartText && p.Text != nil {
+						title += p.Text.Text
+					}
+				}
+			}
+		}
+	}
+
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return
+	}
+
+	conv, err := h.store.Conversations().Get(ctx, convID)
+	if err != nil {
+		return
+	}
+
+	conv.Title = title
+	_ = h.store.Conversations().Update(ctx, conv)
 }

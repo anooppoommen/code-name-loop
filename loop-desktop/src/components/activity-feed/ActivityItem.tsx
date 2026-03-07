@@ -1,4 +1,5 @@
-import { memo, useEffect, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
+import { useReducedMotion } from 'framer-motion';
 import { parseParallelToolPayload } from '../tool-cards';
 import type { ToolReplyActions } from '../tool-cards';
 import type { ActivityEvent } from '../../types/ui';
@@ -13,7 +14,6 @@ import { ActivityUserItem } from './ActivityUserItem';
 
 export interface ActivityItemProps extends ToolReplyActions {
   event: ActivityEvent;
-  visibleChars?: number;
   isFinalAgent?: boolean;
   onRetryMessage: (messageId: string) => Promise<void>;
   onEditMessage: (messageId: string, text: string, images: { mimeType: string; dataUrl: string }[]) => void;
@@ -21,9 +21,68 @@ export interface ActivityItemProps extends ToolReplyActions {
 
 export { ActivityFrame } from './ActivityItemShared';
 
+const CHARS_PER_MS = 0.28;
+
+function useRenderedText(event: ActivityEvent): string {
+  const prefersReducedMotion = useReducedMotion();
+  const fullText = textTargetForEvent(event);
+  const shouldAnimate = event.streaming && (event.kind === 'assistant' || event.kind === 'thought') && !prefersReducedMotion;
+  const [visibleChars, setVisibleChars] = useState(() => (shouldAnimate ? 0 : fullText.length));
+  const previousEventIdRef = useRef(event.id);
+
+  useEffect(() => {
+    if (previousEventIdRef.current !== event.id) {
+      previousEventIdRef.current = event.id;
+      setVisibleChars(shouldAnimate ? 0 : fullText.length);
+      return;
+    }
+
+    if (!shouldAnimate) {
+      setVisibleChars((current) => (current === fullText.length ? current : fullText.length));
+      return;
+    }
+
+    setVisibleChars((current) => Math.min(current, fullText.length));
+  }, [event.id, fullText.length, shouldAnimate]);
+
+  useEffect(() => {
+    if (!shouldAnimate || visibleChars >= fullText.length) {
+      return;
+    }
+
+    let rafId = 0;
+    let lastTime: number | null = null;
+
+    const tick = (timestamp: number): void => {
+      if (lastTime === null) {
+        lastTime = timestamp;
+        rafId = window.requestAnimationFrame(tick);
+        return;
+      }
+
+      const elapsed = timestamp - lastTime;
+      lastTime = timestamp;
+      const charsToAdvance = Math.max(1, Math.round(elapsed * CHARS_PER_MS));
+
+      setVisibleChars((current) => {
+        if (current >= fullText.length) {
+          return current;
+        }
+        return Math.min(fullText.length, current + charsToAdvance);
+      });
+
+      rafId = window.requestAnimationFrame(tick);
+    };
+
+    rafId = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(rafId);
+  }, [fullText.length, shouldAnimate, visibleChars]);
+
+  return fullText.slice(0, visibleChars);
+}
+
 export const ActivityItem = memo(function ActivityItem({
   event,
-  visibleChars,
   isFinalAgent,
   canCompose,
   isSending,
@@ -37,6 +96,7 @@ export const ActivityItem = memo(function ActivityItem({
   const userModel = event.userTurn?.model?.trim() || '';
   const userThinkingLevel = event.userTurn?.thinkingLevel?.trim() || '';
   const thinkingToneClass = userThinkingToneClass(userThinkingLevel);
+  const renderedText = useRenderedText(event);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -56,8 +116,6 @@ export const ActivityItem = memo(function ActivityItem({
   const isUser = event.kind === 'user';
   const isAsst = event.kind === 'assistant';
   const isSystemEvent = !isUser && !isAsst;
-  const bodyText = textTargetForEvent(event);
-  const renderedText = bodyText.slice(0, visibleChars ?? bodyText.length);
   const parallelToolPayload = parseParallelToolPayload(event);
   const leftGutterIcon =
     event.kind === 'tool' || event.kind === 'thought'

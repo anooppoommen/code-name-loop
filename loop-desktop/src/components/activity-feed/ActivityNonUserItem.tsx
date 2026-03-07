@@ -4,7 +4,7 @@ import type { ActivityEvent } from '../../types/ui';
 import { shortID } from '../../utils/parsers';
 import type { ActivityVisualStyle } from './ActivityItemHelpers';
 import { formatActivityTime, labelFor, toolPhaseLabel } from './ActivityItemHelpers';
-import { ActivityFrame, ActivityImageStrip, CopyDropdown, MarkdownBlock } from './ActivityItemShared';
+import { ActivityFrame, ActivityImageStrip, CopyDropdown, MarkdownBlock, PlainTextBlock } from './ActivityItemShared';
 import { parseFileToolPayload } from '../tool-cards';
 import { ActivityToolEventDetails } from './ActivityToolEventDetails';
 import type { ActivityImageSelectHandler, ActivityToolReplyProps } from './ActivityItemTypes';
@@ -90,7 +90,7 @@ export const ActivityNonUserItem = memo(function ActivityNonUserItem({
 
         <div ref={markdownContainerRef} className={`text-[15px] leading-relaxed ${visual.copy}`}>
           <ActivityImageStrip images={event.images || []} onSelect={onSelectImage} />
-          {!isSystemEvent ? <MarkdownBlock text={renderedText} /> : null}
+          {!isSystemEvent ? (event.streaming ? <PlainTextBlock text={renderedText} /> : <MarkdownBlock text={renderedText} />) : null}
           <ActivityToolEventDetails
             event={event}
             fallbackText={isSystemEvent ? event.body : undefined}

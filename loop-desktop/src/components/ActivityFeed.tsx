@@ -1,10 +1,9 @@
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { ArrowDown } from 'lucide-react';
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { RefObject } from 'react';
+import type { ReactElement, RefObject } from 'react';
 import { ActivityIntermediateGroup } from './activity-feed/ActivityIntermediateGroup';
 import { ActivityFrame, ActivityItem } from './activity-feed/ActivityItem';
-import { textTargetForEvent } from './activity-feed/textTarget';
 import type { ToolReplyActions } from './tool-cards';
 import { CombinedPatchViewer } from './CombinedPatchViewer';
 import type { ApplyPatchResult } from '../hooks/useConversations';
@@ -16,6 +15,7 @@ import { usePatchRevertStore } from '../stores/patchRevertStore';
 import { buildRenderGroups, visibleEventsForGroup } from '../utils/activityRenderGroups';
 import { buildAssistantPatchContext } from '../utils/patchActivityState';
 import { buildPatchRevertKey } from '../utils/patchRevertKey';
+import { useShallow } from 'zustand/react/shallow';
 
 interface ActivityFeedProps extends ToolReplyActions {
   conversationId: string;
@@ -36,10 +36,101 @@ interface ActivityFeedProps extends ToolReplyActions {
 
 const BOTTOM_THRESHOLD_PX = 24;
 const EMPTY_GROUPS: ReturnType<typeof useGroupStore.getState>['groupsByConversation'][string] = [];
+const EMPTY_EVENTS: ActivityEvent[] = [];
 const FEED_ENTRY_EASE = [0.22, 1, 0.36, 1] as const;
 const FEED_ENTRY_TRANSITION = { duration: 0.25, ease: FEED_ENTRY_EASE } as const;
 const FEED_REVEAL_TRANSITION = { duration: 0.2, ease: 'easeInOut' } as const;
-const CHARS_PER_MS = 0.28;
+const MOTION_EVENT_COUNT_LIMIT = 24;
+
+interface ActivityFeedEventsProps {
+  animateEntries: boolean;
+  eventsLength: number;
+  groupedEvents: ReturnType<typeof buildRenderGroups>;
+  isSending: boolean;
+  renderEventItem: (event: ActivityEvent) => ReactElement | null;
+}
+
+const ActivityFeedEvents = memo(function ActivityFeedEvents({
+  animateEntries,
+  eventsLength,
+  groupedEvents,
+  isSending,
+  renderEventItem,
+}: ActivityFeedEventsProps) {
+  const content = (
+    <>
+      {eventsLength === 0 && !isSending ? (
+        <p className="m-0 px-4 py-3 text-sm text-loop-500">
+          No run activity yet. Send a task to start streaming events.
+        </p>
+      ) : null}
+      {groupedEvents.map((group) => {
+        if (group.type === 'single') {
+          return renderEventItem(group.events[0]);
+        }
+
+        const intermediate = (
+          <ActivityIntermediateGroup
+            events={group.events}
+            defaultExpanded={group.defaultExpanded ?? false}
+            disableInitialMotion={!animateEntries}
+            animate={animateEntries}
+            scrollAnchorId={group.scrollAnchorId ?? group.events[0]?.id ?? ''}
+            renderEventItem={renderEventItem}
+          />
+        );
+
+        if (!animateEntries) {
+          return <div key={group.id}>{intermediate}</div>;
+        }
+
+        return (
+          <motion.div
+            key={group.id}
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            transition={FEED_ENTRY_TRANSITION}
+          >
+            {intermediate}
+          </motion.div>
+        );
+      })}
+    </>
+  );
+
+  if (!animateEntries) {
+    return content;
+  }
+
+  return <AnimatePresence initial={false}>{content}</AnimatePresence>;
+});
+
+const ActivitySendingStatus = memo(function ActivitySendingStatus({
+  currentStatus,
+  entryAnimationsEnabled,
+  prefersReducedMotion,
+}: {
+  currentStatus: string;
+  entryAnimationsEnabled: boolean;
+  prefersReducedMotion: boolean;
+}) {
+  return (
+    <motion.div
+      key="activity-status"
+      initial={prefersReducedMotion || !entryAnimationsEnabled ? false : { opacity: 0, y: 12 }}
+      animate={prefersReducedMotion || !entryAnimationsEnabled ? undefined : { opacity: 1, y: 0 }}
+      exit={prefersReducedMotion || !entryAnimationsEnabled ? undefined : { opacity: 0 }}
+      transition={FEED_ENTRY_TRANSITION}
+    >
+      <ActivityFrame className="group px-2 py-2">
+        <span className="animate-googleStatus pb-1 text-left text-[11px] font-medium bg-[linear-gradient(110deg,transparent_25%,rgba(255,255,255,0.7)_50%,transparent_75%)] bg-[length:200%_auto] bg-clip-text text-transparent drop-shadow-sm">
+          {currentStatus || 'Thinking...'}
+        </span>
+      </ActivityFrame>
+    </motion.div>
+  );
+});
 
 export const ActivityFeed = memo(function ActivityFeed({
   conversationId,
@@ -55,11 +146,32 @@ export const ActivityFeed = memo(function ActivityFeed({
   onRetryMessage,
   onEditMessage,
 }: ActivityFeedProps) {
-  const prefersReducedMotion = useReducedMotion();
+  const prefersReducedMotion = Boolean(useReducedMotion());
   const groups = useGroupStore(
     useCallback((state) => state.groupsByConversation[conversationId] ?? EMPTY_GROUPS, [conversationId]),
   );
-  const eventsById = useEventStore((state) => state.events);
+  const conversationEvents = useEventStore(
+    useShallow(useCallback((state) => {
+      const orderedEventIds = state.conversations[conversationId]?.orderedEventIds ?? [];
+      if (orderedEventIds.length === 0) {
+        return EMPTY_EVENTS;
+      }
+      return orderedEventIds
+        .map((eventId) => state.events[eventId])
+        .filter((event): event is ActivityEvent => !!event);
+    }, [conversationId])),
+  );
+  const eventsById = useMemo(() => {
+    if (conversationEvents.length === 0) {
+      return {} as Record<string, ActivityEvent>;
+    }
+
+    const next: Record<string, ActivityEvent> = {};
+    for (const event of conversationEvents) {
+      next[event.id] = event;
+    }
+    return next;
+  }, [conversationEvents]);
 
   const timelineEvents = useMemo(() => {
     const next: ActivityEvent[] = [];
@@ -84,9 +196,11 @@ export const ActivityFeed = memo(function ActivityFeed({
   );
   const showHistoryLoadingState = isLoadingHistory && !isSending && events.length === 0;
 
-  const [visibleChars, setVisibleChars] = useState<Record<string, number>>({});
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [entryAnimationsEnabled, setEntryAnimationsEnabled] = useState(false);
+  const animateEntries = !prefersReducedMotion
+    && entryAnimationsEnabled
+    && groupedEvents.length <= MOTION_EVENT_COUNT_LIMIT;
 
   const programmaticScrollRef = useRef(false);
   const stickyBottomRef = useRef(true);
@@ -245,106 +359,6 @@ export const ActivityFeed = memo(function ActivityFeed({
   }, [isSending, scrollToBottom]);
 
   useEffect(() => {
-    setVisibleChars((prev) => {
-      const next: Record<string, number> = {};
-      let changed = false;
-
-      for (const event of events) {
-        const fullText = textTargetForEvent(event);
-        const prior = prev[event.id] ?? 0;
-
-        if (!event.streaming || (event.kind !== 'assistant' && event.kind !== 'thought')) {
-          next[event.id] = fullText.length;
-        } else {
-          next[event.id] = Math.min(prior, fullText.length);
-        }
-      }
-
-      if (Object.keys(prev).length !== Object.keys(next).length) {
-        changed = true;
-      } else {
-        for (const key of Object.keys(next)) {
-          if (next[key] !== prev[key]) {
-            changed = true;
-            break;
-          }
-        }
-      }
-
-      return changed ? next : prev;
-    });
-  }, [events]);
-
-  useEffect(() => {
-    const streaming = events.filter(
-      (event) => event.streaming && (event.kind === 'assistant' || event.kind === 'thought'),
-    );
-    if (streaming.length === 0) {
-      return;
-    }
-
-    if (prefersReducedMotion) {
-      setVisibleChars((prev) => {
-        let changed = false;
-        const next = { ...prev };
-
-        for (const event of streaming) {
-          const fullText = textTargetForEvent(event);
-          const current = next[event.id] ?? 0;
-          const target = fullText.length;
-
-          if (current !== target) {
-            next[event.id] = target;
-            changed = true;
-          }
-        }
-
-        return changed ? next : prev;
-      });
-      return;
-    }
-
-    let rafId: number;
-    let lastTime: number | null = null;
-
-    const tick = (timestamp: number): void => {
-      if (lastTime === null) {
-        lastTime = timestamp;
-        rafId = window.requestAnimationFrame(tick);
-        return;
-      }
-
-      const elapsed = timestamp - lastTime;
-      lastTime = timestamp;
-      const charsToAdvance = Math.max(1, Math.round(elapsed * CHARS_PER_MS));
-
-      setVisibleChars((prev) => {
-        let changed = false;
-        const next = { ...prev };
-
-        for (const event of streaming) {
-          const fullText = textTargetForEvent(event);
-          const current = next[event.id] ?? 0;
-          const target = fullText.length;
-          if (current >= target) {
-            continue;
-          }
-
-          next[event.id] = Math.min(target, current + charsToAdvance);
-          changed = true;
-        }
-
-        return changed ? next : prev;
-      });
-
-      rafId = window.requestAnimationFrame(tick);
-    };
-
-    rafId = window.requestAnimationFrame(tick);
-    return () => window.cancelAnimationFrame(rafId);
-  }, [events, prefersReducedMotion]);
-
-  useEffect(() => {
     const scrollNode = containerRef.current;
     const contentNode = feedContentRef.current;
     if (!scrollNode || !contentNode) {
@@ -403,19 +417,55 @@ export const ActivityFeed = memo(function ActivityFeed({
 
   const renderEventItem = useCallback((event: ActivityEvent) => {
     const isFinalAgent = event.id === finalAgentEventId;
-    const skipAnimation = prefersReducedMotion || !entryAnimationsEnabled;
+    if (!animateEntries) {
+      return (
+        <div key={event.id} data-activity-event-id={event.id}>
+          <ActivityItem
+            event={event}
+            isFinalAgent={isFinalAgent}
+            canCompose={canCompose}
+            isSending={isSending}
+            onUseToolReply={onUseToolReply}
+            onSendToolReply={onSendToolReply}
+            onRetryMessage={onRetryMessage}
+            onEditMessage={onEditMessage}
+          />
+          {event.kind === 'assistant' && assistantPatchContext.has(event.id) ? (
+            <ActivityFrame
+              className="px-2 pb-3 pt-1"
+              left={<div className="flex h-8 w-8 shrink-0 items-center justify-center" />}
+              contentClassName="min-w-0"
+            >
+              <CombinedPatchViewer
+                patchKey={buildPatchRevertKey(
+                  conversationId,
+                  assistantPatchContext.get(event.id)?.patchId,
+                  assistantPatchContext.get(event.id)?.patches || [],
+                )}
+                patchId={assistantPatchContext.get(event.id)?.patchId}
+                patches={assistantPatchContext.get(event.id)?.patches || []}
+                checkpointId={assistantPatchContext.get(event.id)?.checkpointId}
+                revertedPaths={assistantPatchContext.get(event.id)?.revertedPaths}
+                conversationId={conversationId}
+                applyPatchToWorkspace={applyPatchToWorkspace}
+              />
+            </ActivityFrame>
+          ) : null}
+        </div>
+      );
+    }
+
     return (
       <motion.div
         key={event.id}
         data-activity-event-id={event.id}
-        initial={skipAnimation ? false : { opacity: 0, y: 12 }}
-        animate={skipAnimation ? undefined : { opacity: 1, y: 0 }}
-        exit={skipAnimation ? undefined : { opacity: 0 }}
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0 }}
         transition={FEED_ENTRY_TRANSITION}
       >
         <ActivityItem
           event={event}
-          visibleChars={visibleChars[event.id]}
           isFinalAgent={isFinalAgent}
           canCompose={canCompose}
           isSending={isSending}
@@ -458,9 +508,7 @@ export const ActivityFeed = memo(function ActivityFeed({
     onRetryMessage,
     onSendToolReply,
     onUseToolReply,
-    entryAnimationsEnabled,
-    prefersReducedMotion,
-    visibleChars,
+    animateEntries,
   ]);
 
   return (
@@ -493,54 +541,20 @@ export const ActivityFeed = memo(function ActivityFeed({
             >
               <div ref={feedContentRef} className="mx-auto flex min-h-full w-full max-w-[720px] flex-col justify-end">
                 <div className="flex flex-col justify-end">
+                  <ActivityFeedEvents
+                    animateEntries={animateEntries}
+                    eventsLength={events.length}
+                    groupedEvents={groupedEvents}
+                    isSending={isSending}
+                    renderEventItem={renderEventItem}
+                  />
                   <AnimatePresence initial={false}>
-                    {events.length === 0 && !isSending ? (
-                      <motion.p
-                        key="empty-state"
-                        initial={prefersReducedMotion || !entryAnimationsEnabled ? false : { opacity: 0 }}
-                        animate={prefersReducedMotion || !entryAnimationsEnabled ? undefined : { opacity: 1 }}
-                        exit={prefersReducedMotion || !entryAnimationsEnabled ? undefined : { opacity: 0 }}
-                        className="m-0 px-4 py-3 text-sm text-loop-500"
-                      >
-                        No run activity yet. Send a task to start streaming events.
-                      </motion.p>
-                    ) : null}
-                    {groupedEvents.map((group) => {
-                      if (group.type === 'single') {
-                        return renderEventItem(group.events[0]);
-                      }
-                      return (
-                        <motion.div
-                          key={group.id}
-                          initial={prefersReducedMotion || !entryAnimationsEnabled ? false : { opacity: 0, y: 12 }}
-                          animate={prefersReducedMotion || !entryAnimationsEnabled ? undefined : { opacity: 1, y: 0 }}
-                          exit={prefersReducedMotion || !entryAnimationsEnabled ? undefined : { opacity: 0 }}
-                          transition={FEED_ENTRY_TRANSITION}
-                        >
-                          <ActivityIntermediateGroup
-                            events={group.events}
-                            defaultExpanded={group.defaultExpanded ?? false}
-                            disableInitialMotion={prefersReducedMotion || !entryAnimationsEnabled}
-                            scrollAnchorId={group.scrollAnchorId ?? group.events[0]?.id ?? ''}
-                            renderEventItem={renderEventItem}
-                          />
-                        </motion.div>
-                      );
-                    })}
                     {isSending ? (
-                      <motion.div
-                        key="activity-status"
-                        initial={prefersReducedMotion || !entryAnimationsEnabled ? false : { opacity: 0, y: 12 }}
-                        animate={prefersReducedMotion || !entryAnimationsEnabled ? undefined : { opacity: 1, y: 0 }}
-                        exit={prefersReducedMotion || !entryAnimationsEnabled ? undefined : { opacity: 0 }}
-                        transition={FEED_ENTRY_TRANSITION}
-                      >
-                        <ActivityFrame className="group px-2 py-2">
-                          <span className="animate-googleStatus pb-1 text-left text-[11px] font-medium bg-[linear-gradient(110deg,transparent_25%,rgba(255,255,255,0.7)_50%,transparent_75%)] bg-[length:200%_auto] bg-clip-text text-transparent drop-shadow-sm">
-                            {currentStatus || 'Thinking...'}
-                          </span>
-                        </ActivityFrame>
-                      </motion.div>
+                      <ActivitySendingStatus
+                        currentStatus={currentStatus}
+                        entryAnimationsEnabled={entryAnimationsEnabled}
+                        prefersReducedMotion={prefersReducedMotion}
+                      />
                     ) : null}
                   </AnimatePresence>
                 </div>

@@ -1,4 +1,4 @@
-import { PanelLeftClose, PanelLeftOpen, Server } from 'lucide-react';
+import { PanelLeftClose, PanelLeftOpen, Server, Activity } from 'lucide-react';
 import type { SshTunnelStatus } from '../hooks/useLoopDesktop.types';
 
 interface AppHeaderProps {
@@ -8,6 +8,8 @@ interface AppHeaderProps {
   onToggleSidebar: () => void;
   sshTunnelStatus: SshTunnelStatus;
   onOpenConnectionSettings: () => void;
+  isProfiling?: boolean;
+  onToggleProfiling?: () => void;
 }
 
 export function AppHeader({
@@ -17,6 +19,8 @@ export function AppHeader({
   onToggleSidebar,
   sshTunnelStatus,
   onOpenConnectionSettings,
+  isProfiling,
+  onToggleProfiling,
 }: AppHeaderProps) {
   return (
     <header className={`drag-region flex items-center justify-between h-[40px] bg-transparent shrink-0 transition-spacing duration-200 pr-4 ${isSidebarOpen ? 'pl-4' : 'pl-[72px]'}`}>
@@ -37,10 +41,22 @@ export function AppHeader({
         </div>
       </div>
 
-      <div className="flex items-center pointer-events-auto">
+      <div className="flex items-center gap-2 pointer-events-auto">
+        {onToggleProfiling && (
+          <button
+            onClick={onToggleProfiling}
+            className={`no-drag flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-medium transition-colors ${
+              isProfiling ? 'bg-emerald-500/20 text-emerald-500' : 'text-loop-400 hover:bg-loop-700/50'
+            }`}
+            title={isProfiling ? "Stop Profiling & Download" : "Start Profiling"}
+          >
+            <Activity className="h-3.5 w-3.5" />
+            {isProfiling ? 'Recording...' : 'Profile'}
+          </button>
+        )}
         <button
           onClick={onOpenConnectionSettings}
-          className="flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-medium transition-colors hover:bg-loop-700/50"
+          className="no-drag flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-medium transition-colors hover:bg-loop-700/50"
           title="Connection Settings"
         >
           <Server className="h-3.5 w-3.5 opacity-70" />

@@ -91,6 +91,31 @@ test('conversation store keeps ordering and groups in sync when events are inser
   );
 });
 
+test('conversation store skips regrouping for content-only event updates', () => {
+  useConversationStore.setState({ events: {}, conversations: {}, groupsByConversation: {} });
+  const store = useConversationStore.getState();
+
+  store.replaceConversationEvents('conv-1', [
+    event({ id: 'user-1', conversationId: 'conv-1', sequenceNo: 1, kind: 'user', title: 'user', timestamp: 1 }),
+    event({ id: 'assistant-1', conversationId: 'conv-1', sequenceNo: 2, kind: 'assistant', title: 'assistant', timestamp: 2, body: 'hello' }),
+  ]);
+
+  const previousConversationState = useConversationStore.getState().conversations['conv-1'];
+  const previousGroups = useConversationStore.getState().groupsByConversation['conv-1'];
+
+  store.updateEvent('assistant-1', (current) => ({
+    ...current,
+    body: `${current.body} world`,
+    streaming: true,
+  }));
+
+  const nextState = useConversationStore.getState();
+  assert.equal(nextState.events['assistant-1']?.body, 'hello world');
+  assert.equal(nextState.events['assistant-1']?.streaming, true);
+  assert.strictEqual(nextState.conversations['conv-1'], previousConversationState);
+  assert.strictEqual(nextState.groupsByConversation['conv-1'], previousGroups);
+});
+
 test('patch revert store clears optimistic state per conversation', () => {
   usePatchRevertStore.setState({
     byPatchKey: {

@@ -213,7 +213,7 @@ export const ThoughtMessage = memo(function ThoughtMessage({
         className="relative overflow-hidden"
       >
         <div ref={contentRef}>
-          <MarkdownBlock text={renderedText} compact />
+          {isStreaming ? <PlainTextBlock text={renderedText} compact /> : <MarkdownBlock text={renderedText} compact />}
           {isStreaming ? <span className="animate-pulse text-loop-500">▍</span> : null}
         </div>
         {!isExpanded && isOverflowing ? (
@@ -255,5 +255,28 @@ export const MarkdownBlock = memo(function MarkdownBlock(props: MarkdownBlockPro
     >
       <LazyMarkdownBlock {...props} />
     </Suspense>
+  );
+});
+
+export const PlainTextBlock = memo(function PlainTextBlock({
+  text,
+  compact = false,
+  dense = false,
+}: MarkdownBlockProps) {
+  const rootTextClass = dense
+    ? 'm-0 break-words whitespace-pre-wrap text-[14px] font-normal leading-user-message text-loop-200'
+    : compact
+      ? 'm-0 break-words whitespace-pre-wrap text-[13px] font-normal leading-relaxed text-loop-300'
+      : 'm-0 break-words whitespace-pre-wrap text-[15px] leading-relaxed';
+  const paragraphClass = dense
+    ? 'm-0 mb-1.5 leading-user-message last:mb-0'
+    : compact
+      ? 'm-0 mb-2 leading-6 last:mb-0'
+      : 'm-0 mb-3 leading-7 last:mb-0';
+
+  return (
+    <div className={rootTextClass}>
+      <p className={paragraphClass}>{text}</p>
+    </div>
   );
 });
