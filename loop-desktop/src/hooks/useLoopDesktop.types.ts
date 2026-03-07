@@ -112,6 +112,7 @@ export interface LoopDesktopController {
   pendingCommandApprovalCount: number;
   isResolvingCommandApproval: boolean;
   isRestoringCheckpoint: boolean;
+  isLoadingSelectedConversation: boolean;
   hideLifecycle: boolean;
   setHideLifecycle: (value: boolean) => void;
   showMascot: boolean;

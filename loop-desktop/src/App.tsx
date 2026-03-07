@@ -278,6 +278,7 @@ export default function App() {
                   containerRef={app.feedScrollRef}
                   currentStatus={app.currentStatus}
                   hideLifecycle={app.hideLifecycle}
+                  isLoadingHistory={app.isLoadingSelectedConversation}
                   canCompose={app.canCompose}
                   isSending={app.isSending}
                   onUseToolReply={app.applyToolResponseSuggestion}

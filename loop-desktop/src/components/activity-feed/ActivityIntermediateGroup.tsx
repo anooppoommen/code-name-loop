@@ -8,6 +8,7 @@ import type { ActivityEvent } from "../../types/ui";
 interface ActivityIntermediateGroupProps {
   events: ActivityEvent[];
   defaultExpanded: boolean;
+  disableInitialMotion: boolean;
   scrollAnchorId: string;
   renderEventItem: (event: ActivityEvent) => ReactElement | null;
 }
@@ -16,6 +17,7 @@ export const ActivityIntermediateGroup = memo(
   function ActivityIntermediateGroup({
     events,
     defaultExpanded,
+    disableInitialMotion,
     scrollAnchorId,
     renderEventItem,
   }: ActivityIntermediateGroupProps) {
@@ -136,9 +138,9 @@ export const ActivityIntermediateGroup = memo(
           {!isExpanded ? (
             <motion.div
               key="summary"
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -6 }}
+              initial={disableInitialMotion ? false : { opacity: 0, y: 8 }}
+              animate={disableInitialMotion ? undefined : { opacity: 1, y: 0 }}
+              exit={disableInitialMotion ? undefined : { opacity: 0, y: -6 }}
               transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
             >
               <ActivityFrame className="px-2 py-1" contentClassName="min-w-0">
@@ -150,9 +152,9 @@ export const ActivityIntermediateGroup = memo(
           ) : (
             <motion.div
               key="content"
-              initial={{ opacity: 0, y: 8, gridTemplateRows: "0fr" }}
-              animate={{ opacity: 1, y: 0, gridTemplateRows: "1fr" }}
-              exit={{ opacity: 0, y: -6, gridTemplateRows: "0fr" }}
+              initial={disableInitialMotion ? false : { opacity: 0, y: 8, gridTemplateRows: "0fr" }}
+              animate={disableInitialMotion ? undefined : { opacity: 1, y: 0, gridTemplateRows: "1fr" }}
+              exit={disableInitialMotion ? undefined : { opacity: 0, y: -6, gridTemplateRows: "0fr" }}
               transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
               className="grid overflow-hidden"
             >

@@ -555,6 +555,7 @@ export function useLoopDesktop(): LoopDesktopController {
     pendingCommandApprovalCount: commandApprovals.pendingApprovalsForSelectedConversation.length,
     isResolvingCommandApproval: commandApprovals.isResolvingCommandApproval,
     isRestoringCheckpoint: conversationsHook.isRestoringCheckpoint,
+    isLoadingSelectedConversation: conversationsHook.isLoadingSelectedConversation,
     dismissNotice: notices.dismissNotice,
     resolveCommandApproval: commandApprovals.resolveCommandApproval,
     hideLifecycle: activitiesHook.hideLifecycle,

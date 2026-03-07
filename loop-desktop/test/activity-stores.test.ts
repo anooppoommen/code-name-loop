@@ -135,7 +135,7 @@ test('buildRenderGroups keeps the active group expanded while sending', () => {
   );
 });
 
-test('buildRenderGroups shows the latest event when no assistant reply exists', () => {
+test('buildRenderGroups keeps all non-terminal events in the intermediate group', () => {
   const events = [
     event({ id: 'user-1', conversationId: 'conv-1', sequenceNo: 1, kind: 'user', title: 'user', timestamp: 1 }),
     event({ id: 'thought-1', conversationId: 'conv-1', sequenceNo: 2, kind: 'thought', title: 'thought', timestamp: 2 }),
@@ -154,8 +154,7 @@ test('buildRenderGroups shows the latest event when no assistant reply exists', 
     })),
     [
       { type: 'single', ids: ['user-1'], defaultExpanded: false },
-      { type: 'intermediate', ids: ['thought-1', 'tool-1'], defaultExpanded: true },
-      { type: 'single', ids: ['status-1'], defaultExpanded: false },
+      { type: 'intermediate', ids: ['thought-1', 'tool-1', 'status-1'], defaultExpanded: true },
     ],
   );
 });

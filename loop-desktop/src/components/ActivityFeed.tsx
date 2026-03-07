@@ -17,6 +17,7 @@ interface ActivityFeedProps extends ToolReplyActions {
   containerRef: RefObject<HTMLDivElement | null>;
   currentStatus: string;
   hideLifecycle: boolean;
+  isLoadingHistory: boolean;
   onRetryMessage: (messageId: string) => Promise<void>;
   onEditMessage: (messageId: string, text: string, images: { mimeType: string; dataUrl: string }[]) => void;
 }
@@ -25,6 +26,7 @@ const BOTTOM_THRESHOLD_PX = 24;
 const EMPTY_GROUPS: ReturnType<typeof useGroupStore.getState>['groupsByConversation'][string] = [];
 const FEED_ENTRY_EASE = [0.22, 1, 0.36, 1] as const;
 const FEED_ENTRY_TRANSITION = { duration: 0.25, ease: FEED_ENTRY_EASE } as const;
+const FEED_REVEAL_TRANSITION = { duration: 0.2, ease: 'easeInOut' } as const;
 const CHARS_PER_MS = 0.28;
 
 export const ActivityFeed = memo(function ActivityFeed({
@@ -32,6 +34,7 @@ export const ActivityFeed = memo(function ActivityFeed({
   containerRef,
   currentStatus,
   hideLifecycle,
+  isLoadingHistory,
   canCompose,
   isSending,
   onUseToolReply,
@@ -59,18 +62,20 @@ export const ActivityFeed = memo(function ActivityFeed({
     () => buildRenderGroups(groups, eventsById, hideLifecycle, isSending),
     [eventsById, groups, hideLifecycle, isSending],
   );
+  const showHistoryLoadingState = isLoadingHistory && !isSending && events.length === 0;
 
   const [visibleChars, setVisibleChars] = useState<Record<string, number>>({});
   const [isAtBottom, setIsAtBottom] = useState(true);
-  const [hasUserScrolled, setHasUserScrolled] = useState(false);
+  const [entryAnimationsEnabled, setEntryAnimationsEnabled] = useState(false);
 
   const programmaticScrollRef = useRef(false);
   const stickyBottomRef = useRef(true);
   const pendingInitialSnapRef = useRef(false);
-  const bottomAnchorRef = useRef<HTMLDivElement>(null);
   const feedContentRef = useRef<HTMLDivElement>(null);
 
   const scrollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const settleScrollFrameRef = useRef<number | null>(null);
+  const settleScrollPassesRef = useRef(0);
   const scrollToBottom = useCallback(
     (behavior: ScrollBehavior = 'auto'): void => {
       const node = containerRef.current;
@@ -78,27 +83,51 @@ export const ActivityFeed = memo(function ActivityFeed({
         return;
       }
 
+      if (scrollTimeoutRef.current) {
+        clearTimeout(scrollTimeoutRef.current);
+        scrollTimeoutRef.current = null;
+      }
+      if (settleScrollFrameRef.current !== null) {
+        window.cancelAnimationFrame(settleScrollFrameRef.current);
+        settleScrollFrameRef.current = null;
+      }
+
+      const performScroll = (nextBehavior: ScrollBehavior): void => {
+        node.scrollTo({
+          top: Math.max(0, node.scrollHeight - node.clientHeight),
+          behavior: nextBehavior,
+        });
+      };
+
       programmaticScrollRef.current = true;
+      stickyBottomRef.current = true;
+      setIsAtBottom((current) => (current ? current : true));
 
       if (behavior === 'smooth') {
-        if (scrollTimeoutRef.current) {
-          clearTimeout(scrollTimeoutRef.current);
-        }
-        node.scrollTo({ top: node.scrollHeight, behavior });
+        performScroll('smooth');
+
+        settleScrollPassesRef.current = 2;
+        const settleAfterAnimation = (): void => {
+          performScroll('auto');
+          settleScrollPassesRef.current -= 1;
+          if (settleScrollPassesRef.current > 0) {
+            settleScrollFrameRef.current = window.requestAnimationFrame(settleAfterAnimation);
+            return;
+          }
+          settleScrollFrameRef.current = null;
+        };
+        settleScrollFrameRef.current = window.requestAnimationFrame(settleAfterAnimation);
+
         scrollTimeoutRef.current = setTimeout(() => {
           programmaticScrollRef.current = false;
           scrollTimeoutRef.current = null;
-        }, 500); // Give smooth scrolling time to complete
+        }, 700); // Let the smooth follow finish before user scroll events take over again.
       } else {
-        node.scrollTop = node.scrollHeight;
-        if (!scrollTimeoutRef.current) {
-          window.requestAnimationFrame(() => {
-            programmaticScrollRef.current = false;
-          });
-        }
+        performScroll('auto');
+        window.requestAnimationFrame(() => {
+          programmaticScrollRef.current = false;
+        });
       }
-      setIsAtBottom((current) => (current ? current : true));
-      stickyBottomRef.current = true;
     },
     [containerRef],
   );
@@ -117,7 +146,6 @@ export const ActivityFeed = memo(function ActivityFeed({
         return;
       }
 
-      setHasUserScrolled(true);
       const nearBottom = getIsNearBottom();
       setIsAtBottom(nearBottom);
       stickyBottomRef.current = nearBottom;
@@ -132,14 +160,30 @@ export const ActivityFeed = memo(function ActivityFeed({
   }, [containerRef]);
 
   useEffect(() => {
-    setHasUserScrolled(false);
     setIsAtBottom(true);
+    setEntryAnimationsEnabled(false);
     stickyBottomRef.current = true;
     pendingInitialSnapRef.current = true;
   }, [conversationId]);
 
+  useEffect(() => {
+    if (entryAnimationsEnabled || events.length > 0 || isSending) {
+      return;
+    }
+
+    const frameId = window.requestAnimationFrame(() => {
+      setEntryAnimationsEnabled(true);
+    });
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, [conversationId, entryAnimationsEnabled, events.length, isSending]);
+
   useLayoutEffect(() => {
     if (!pendingInitialSnapRef.current) {
+      return;
+    }
+
+    if (showHistoryLoadingState) {
       return;
     }
 
@@ -150,11 +194,25 @@ export const ActivityFeed = memo(function ActivityFeed({
       return;
     }
 
-    scrollToBottom('auto');
-    if (events.length > 0) {
+    const frameId = window.requestAnimationFrame(() => {
+      scrollToBottom('auto');
       pendingInitialSnapRef.current = false;
+    });
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, [events.length, isSending, scrollToBottom, showHistoryLoadingState]);
+
+  useLayoutEffect(() => {
+    if (entryAnimationsEnabled || events.length === 0) {
+      return;
     }
-  }, [events.length, isSending, scrollToBottom]);
+
+    const frameId = window.requestAnimationFrame(() => {
+      setEntryAnimationsEnabled(true);
+    });
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, [entryAnimationsEnabled, events.length]);
 
   const previousIsSendingRef = useRef(isSending);
   useEffect(() => {
@@ -285,6 +343,25 @@ export const ActivityFeed = memo(function ActivityFeed({
     return () => ro.disconnect();
   }, [containerRef, scrollToBottom]);
 
+  useLayoutEffect(() => {
+    if (!stickyBottomRef.current || events.length === 0) {
+      return;
+    }
+
+    scrollToBottom('auto');
+  }, [events.length, groupedEvents, scrollToBottom]);
+
+  useEffect(() => {
+    return () => {
+      if (scrollTimeoutRef.current) {
+        clearTimeout(scrollTimeoutRef.current);
+      }
+      if (settleScrollFrameRef.current !== null) {
+        window.cancelAnimationFrame(settleScrollFrameRef.current);
+      }
+    };
+  }, []);
+
   const finalAgentEventId = useMemo(() => {
     for (let index = events.length - 1; index >= 0; index -= 1) {
       if (events[index].kind === 'assistant') {
@@ -328,7 +405,7 @@ export const ActivityFeed = memo(function ActivityFeed({
 
   const renderEventItem = useCallback((event: ActivityEvent) => {
     const isFinalAgent = event.id === finalAgentEventId;
-    const skipAnimation = prefersReducedMotion;
+    const skipAnimation = prefersReducedMotion || !entryAnimationsEnabled;
     return (
       <motion.div
         key={event.id}
@@ -369,6 +446,7 @@ export const ActivityFeed = memo(function ActivityFeed({
     onRetryMessage,
     onSendToolReply,
     onUseToolReply,
+    entryAnimationsEnabled,
     prefersReducedMotion,
     visibleChars,
   ]);
@@ -378,62 +456,86 @@ export const ActivityFeed = memo(function ActivityFeed({
       <motion.div
         ref={containerRef}
         data-activity-scroll-container="true"
-        className={`flex-1 overflow-y-auto px-4 py-3 ${hasUserScrolled ? '' : 'scrollbar-hidden'}`}
+        className="flex-1 overflow-y-auto px-4 py-3"
+        style={{ scrollbarGutter: 'stable both-edges' }}
       >
-        <div ref={feedContentRef} className="mx-auto flex min-h-full w-full max-w-[720px] flex-col justify-end">
-          <div className="flex flex-col justify-end">
-            <AnimatePresence initial={false}>
-              {events.length === 0 && !isSending ? (
-                <motion.p
-                  key="empty-state"
-                  initial={prefersReducedMotion ? false : { opacity: 0 }}
-                  animate={prefersReducedMotion ? undefined : { opacity: 1 }}
-                  exit={prefersReducedMotion ? undefined : { opacity: 0 }}
-                  className="m-0 px-4 py-3 text-sm text-loop-500"
-                >
-                  No run activity yet. Send a task to start streaming events.
-                </motion.p>
-              ) : null}
-              {groupedEvents.map((group) => {
-                if (group.type === 'single') {
-                  return renderEventItem(group.events[0]);
-                }
-                return (
-                  <motion.div
-                    key={group.id}
-                    initial={prefersReducedMotion ? false : { opacity: 0, y: 12 }}
-                    animate={prefersReducedMotion ? undefined : { opacity: 1, y: 0 }}
-                    exit={prefersReducedMotion ? undefined : { opacity: 0 }}
-                    transition={FEED_ENTRY_TRANSITION}
-                  >
-                    <ActivityIntermediateGroup
-                      events={group.events}
-                      defaultExpanded={group.defaultExpanded ?? false}
-                      scrollAnchorId={group.scrollAnchorId ?? group.events[0]?.id ?? ''}
-                      renderEventItem={renderEventItem}
-                    />
-                  </motion.div>
-                );
-              })}
-              {isSending ? (
-                <motion.div
-                  key="activity-status"
-                  initial={prefersReducedMotion ? false : { opacity: 0, y: 12 }}
-                  animate={prefersReducedMotion ? undefined : { opacity: 1, y: 0 }}
-                  exit={prefersReducedMotion ? undefined : { opacity: 0 }}
-                  transition={FEED_ENTRY_TRANSITION}
-                >
-                  <ActivityFrame className="group px-2 py-2">
-                    <span className="animate-googleStatus pb-1 text-left text-[11px] font-medium bg-[linear-gradient(110deg,transparent_25%,rgba(255,255,255,0.7)_50%,transparent_75%)] bg-[length:200%_auto] bg-clip-text text-transparent drop-shadow-sm">
-                      {currentStatus || 'Thinking...'}
-                    </span>
-                  </ActivityFrame>
-                </motion.div>
-              ) : null}
-            </AnimatePresence>
-          </div>
-          <div ref={bottomAnchorRef} aria-hidden="true" className="h-px w-full shrink-0" />
-        </div>
+        <AnimatePresence initial={false}>
+          {showHistoryLoadingState ? (
+            <motion.div
+              key="history-loading"
+              initial={prefersReducedMotion ? false : { opacity: 0 }}
+              animate={prefersReducedMotion ? undefined : { opacity: 1 }}
+              exit={prefersReducedMotion ? undefined : { opacity: 0 }}
+              transition={FEED_REVEAL_TRANSITION}
+              className="mx-auto flex h-full w-full max-w-[720px] items-start px-4 py-3"
+            >
+              <p className="m-0 text-sm text-loop-500">Loading activity…</p>
+            </motion.div>
+          ) : (
+            <motion.div
+              key={`history-content:${conversationId}`}
+              initial={prefersReducedMotion ? false : { opacity: 0 }}
+              animate={prefersReducedMotion ? undefined : { opacity: 1 }}
+              exit={prefersReducedMotion ? undefined : { opacity: 0 }}
+              transition={FEED_REVEAL_TRANSITION}
+            >
+              <div ref={feedContentRef} className="mx-auto flex min-h-full w-full max-w-[720px] flex-col justify-end">
+                <div className="flex flex-col justify-end">
+                  <AnimatePresence initial={false}>
+                    {events.length === 0 && !isSending ? (
+                      <motion.p
+                        key="empty-state"
+                        initial={prefersReducedMotion || !entryAnimationsEnabled ? false : { opacity: 0 }}
+                        animate={prefersReducedMotion || !entryAnimationsEnabled ? undefined : { opacity: 1 }}
+                        exit={prefersReducedMotion || !entryAnimationsEnabled ? undefined : { opacity: 0 }}
+                        className="m-0 px-4 py-3 text-sm text-loop-500"
+                      >
+                        No run activity yet. Send a task to start streaming events.
+                      </motion.p>
+                    ) : null}
+                    {groupedEvents.map((group) => {
+                      if (group.type === 'single') {
+                        return renderEventItem(group.events[0]);
+                      }
+                      return (
+                        <motion.div
+                          key={group.id}
+                          initial={prefersReducedMotion || !entryAnimationsEnabled ? false : { opacity: 0, y: 12 }}
+                          animate={prefersReducedMotion || !entryAnimationsEnabled ? undefined : { opacity: 1, y: 0 }}
+                          exit={prefersReducedMotion || !entryAnimationsEnabled ? undefined : { opacity: 0 }}
+                          transition={FEED_ENTRY_TRANSITION}
+                        >
+                          <ActivityIntermediateGroup
+                            events={group.events}
+                            defaultExpanded={group.defaultExpanded ?? false}
+                            disableInitialMotion={prefersReducedMotion || !entryAnimationsEnabled}
+                            scrollAnchorId={group.scrollAnchorId ?? group.events[0]?.id ?? ''}
+                            renderEventItem={renderEventItem}
+                          />
+                        </motion.div>
+                      );
+                    })}
+                    {isSending ? (
+                      <motion.div
+                        key="activity-status"
+                        initial={prefersReducedMotion || !entryAnimationsEnabled ? false : { opacity: 0, y: 12 }}
+                        animate={prefersReducedMotion || !entryAnimationsEnabled ? undefined : { opacity: 1, y: 0 }}
+                        exit={prefersReducedMotion || !entryAnimationsEnabled ? undefined : { opacity: 0 }}
+                        transition={FEED_ENTRY_TRANSITION}
+                      >
+                        <ActivityFrame className="group px-2 py-2">
+                          <span className="animate-googleStatus pb-1 text-left text-[11px] font-medium bg-[linear-gradient(110deg,transparent_25%,rgba(255,255,255,0.7)_50%,transparent_75%)] bg-[length:200%_auto] bg-clip-text text-transparent drop-shadow-sm">
+                            {currentStatus || 'Thinking...'}
+                          </span>
+                        </ActivityFrame>
+                      </motion.div>
+                    ) : null}
+                  </AnimatePresence>
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </motion.div>
       {!isAtBottom && events.length > 0 ? (
         <button

@@ -86,6 +86,7 @@ export interface UseConversationsReturn {
     restoreCheckpoint: (checkpointId: string) => Promise<void>;
     undoLatestCheckpoint: () => Promise<void>;
     isRestoringCheckpoint: boolean;
+    isLoadingSelectedConversation: boolean;
 }
 
 export function useConversations(
@@ -113,6 +114,7 @@ export function useConversations(
     const [conversationsByWorkspace, setConversationsByWorkspace] = useState<Record<string, ConversationSummary[]>>({});
     const [checkpointsByConversation, setCheckpointsByConversation] = useState<Record<string, CheckpointSummary[]>>({});
     const [isRestoringCheckpoint, setIsRestoringCheckpoint] = useState(false);
+    const [isLoadingSelectedConversation, setIsLoadingSelectedConversation] = useState(false);
     const [hasMoreConversationsByWorkspace, setHasMoreConversationsByWorkspace] = useState<Record<string, boolean>>({});
     const [conversationCursorByWorkspace, setConversationCursorByWorkspace] = useState<Record<string, ConversationPageCursor | null>>({});
     const loadingMoreConversationsRef = useRef<Record<string, boolean>>({});
@@ -596,10 +598,16 @@ export function useConversations(
     // Load conversation history when selected conversation changes
     useEffect(() => {
         if (!selectedConversationId) {
+            setIsLoadingSelectedConversation(false);
             clearConversationView();
             return;
         }
-        void loadConversationHistory(selectedConversationId);
+        setIsLoadingSelectedConversation(true);
+        void loadConversationHistory(selectedConversationId).finally(() => {
+            if (selectedConversationIdRef.current === selectedConversationId) {
+                setIsLoadingSelectedConversation(false);
+            }
+        });
     }, [clearConversationView, loadConversationHistory, selectedConversationId]);
 
     return {
@@ -627,5 +635,6 @@ export function useConversations(
         restoreCheckpoint,
         undoLatestCheckpoint,
         isRestoringCheckpoint,
+        isLoadingSelectedConversation,
     };
 }

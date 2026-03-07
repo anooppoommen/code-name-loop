@@ -46,19 +46,16 @@ export function buildRenderGroups(
       continue;
     }
 
-    const groupHead = events[0];
-    let terminalIndex = groupHead.kind === 'user' ? -1 : events.length - 1;
-    if (groupHead.kind === 'user') {
-      for (let index = events.length - 1; index >= 1; index -= 1) {
-        if (events[index].kind === 'assistant') {
-          terminalIndex = index;
-          break;
-        }
+    let terminalIndex = -1;
+    for (let index = events.length - 1; index >= 1; index -= 1) {
+      if (events[index].kind === 'assistant') {
+        terminalIndex = index;
+        break;
       }
     }
 
     if (terminalIndex === -1) {
-      const intermediate = events.slice(1, -1);
+      const intermediate = events.slice(1);
       if (intermediate.length > 0) {
         next.push({
           type: 'intermediate',
@@ -68,13 +65,6 @@ export function buildRenderGroups(
           scrollAnchorId: group.headId,
         });
       }
-
-      next.push({
-        type: 'single',
-        id: `${group.id}:tail`,
-        events: [events[events.length - 1]],
-        scrollAnchorId: group.headId,
-      });
       continue;
     }
 
