@@ -9,6 +9,7 @@ interface PatchRevertStoreState {
   byPatchKey: Record<string, PatchRevertEntry>;
   markOptimistic: (patchKey: string, paths: string[]) => void;
   syncAuthoritative: (patchKey: string, paths?: string[]) => void;
+  clearConversation: (conversationId: string) => void;
 }
 
 function samePaths(left: string[] | undefined, right: string[] | undefined): boolean {
@@ -24,6 +25,14 @@ function samePaths(left: string[] | undefined, right: string[] | undefined): boo
     }
   }
   return true;
+}
+
+function matchesConversationPatchKey(patchKey: string, conversationId: string): boolean {
+  return (
+    patchKey.startsWith(`patch:${conversationId}:`) ||
+    patchKey.startsWith(`patch-id:tool-calls:${conversationId}:`) ||
+    patchKey.startsWith(`patch-id:tool-fallback:${conversationId}:`)
+  );
 }
 
 export const usePatchRevertStore = create<PatchRevertStoreState>((set) => ({
@@ -74,5 +83,21 @@ export const usePatchRevertStore = create<PatchRevertStoreState>((set) => ({
       const next = { ...state.byPatchKey };
       delete next[patchKey];
       return { byPatchKey: next };
+    }),
+  clearConversation: (conversationId) =>
+    set((state) => {
+      if (!conversationId) {
+        return state;
+      }
+      let changed = false;
+      const next: Record<string, PatchRevertEntry> = {};
+      for (const [patchKey, entry] of Object.entries(state.byPatchKey)) {
+        if (matchesConversationPatchKey(patchKey, conversationId)) {
+          changed = true;
+          continue;
+        }
+        next[patchKey] = entry;
+      }
+      return changed ? { byPatchKey: next } : state;
     }),
 }));

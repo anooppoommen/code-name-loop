@@ -68,6 +68,23 @@ function buildAbsoluteUrl(baseUrl, endpointPath) {
   return new URL(endpointPath.replace(/^\//, ''), base).toString();
 }
 
+function isValidBaseUrl(baseUrl) {
+  try {
+    const parsed = new URL(baseUrl);
+    return (parsed.protocol === 'http:' || parsed.protocol === 'https:') && parsed.hostname.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+function isValidEndpointPath(endpointPath) {
+  return (
+    typeof endpointPath === 'string' &&
+    endpointPath.startsWith('/') &&
+    !endpointPath.startsWith('//')
+  );
+}
+
 async function parseResponseBody(response) {
   const contentType = response.headers.get('content-type') || '';
   if (contentType.includes('application/json')) {
@@ -266,12 +283,12 @@ ipcMain.handle('dialog:choose-folder', async () => {
 ipcMain.handle('loop-api:request', async (_event, request) => {
   const { baseUrl, endpointPath, method = 'GET', body } = request || {};
 
-  if (!baseUrl || !endpointPath) {
+  if (!isValidBaseUrl(baseUrl) || !isValidEndpointPath(endpointPath)) {
     return {
       ok: false,
       status: 0,
       data: null,
-      error: 'Missing baseUrl or endpointPath.',
+      error: 'Invalid baseUrl or endpointPath.',
     };
   }
 
@@ -321,11 +338,11 @@ ipcMain.handle('loop-api:start-stream', async (event, payload) => {
   const hasBranchInstruction =
     (typeof retryMessageId === 'string' && retryMessageId.trim().length > 0) ||
     (typeof editMessageId === 'string' && editMessageId.trim().length > 0);
-  if (!baseUrl || !conversationId || (!hasMessage && !hasImages && !hasBranchInstruction)) {
+  if (!isValidBaseUrl(baseUrl) || !conversationId || (!hasMessage && !hasImages && !hasBranchInstruction)) {
     return {
       ok: false,
       streamId: null,
-      error: 'Missing baseUrl, conversationId, and message/images/branch operation.',
+      error: 'Invalid baseUrl, conversationId, or message/images/branch operation.',
     };
   }
 
@@ -362,8 +379,8 @@ ipcMain.handle('loop-api:start-stream', async (event, payload) => {
 
 ipcMain.handle('loop-api:get-active-stream', async (_event, payload) => {
   const { baseUrl, conversationId } = payload || {};
-  if (!baseUrl || !conversationId) {
-    return { ok: false, streamId: null, error: 'Missing baseUrl or conversationId.' };
+  if (!isValidBaseUrl(baseUrl) || !conversationId) {
+    return { ok: false, streamId: null, error: 'Invalid baseUrl or conversationId.' };
   }
 
   const convKey = conversationKey(baseUrl, conversationId);

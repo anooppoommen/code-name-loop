@@ -4,6 +4,7 @@ import test from 'node:test';
 import type { ActivityEvent } from '../src/types/ui.ts';
 import { useConversationStore } from '../src/stores/conversationStore.ts';
 import { buildActivityGroups } from '../src/stores/groupStore.ts';
+import { usePatchRevertStore } from '../src/stores/patchRevertStore.ts';
 import { buildRenderGroups } from '../src/utils/activityRenderGroups.ts';
 import { buildAssistantPatchContext } from '../src/utils/patchActivityState.ts';
 import { historyRowsToActivities } from '../src/utils/activityTimeline.ts';
@@ -55,7 +56,7 @@ test('buildActivityGroups keeps pre-user events in the prior sequence bucket whe
 });
 
 test('conversation store advances next sequence from replaced events and explicit reservations', () => {
-  useConversationStore.setState({ conversations: {} });
+  useConversationStore.setState({ events: {}, conversations: {}, groupsByConversation: {} });
   const store = useConversationStore.getState();
 
   store.replaceConversationEvents('conv-1', [
@@ -67,6 +68,43 @@ test('conversation store advances next sequence from replaced events and explici
   assert.equal(useConversationStore.getState().reserveSequenceNo('conv-1', 10), 10);
   assert.equal(useConversationStore.getState().getConversationState('conv-1').nextSequenceNo, 11);
   assert.equal(useConversationStore.getState().reserveSequenceNo('conv-1'), 11);
+});
+
+test('conversation store keeps ordering and groups in sync when events are inserted incrementally', () => {
+  useConversationStore.setState({ events: {}, conversations: {}, groupsByConversation: {} });
+  const store = useConversationStore.getState();
+
+  store.upsertConversationEvent(
+    event({ id: 'assistant-1', conversationId: 'conv-1', sequenceNo: 3, kind: 'assistant', title: 'assistant', timestamp: 3 }),
+  );
+  store.upsertConversationEvent(
+    event({ id: 'user-1', conversationId: 'conv-1', sequenceNo: 1, kind: 'user', title: 'user', timestamp: 1 }),
+  );
+  store.upsertConversationEvent(
+    event({ id: 'tool-1', conversationId: 'conv-1', sequenceNo: 4, kind: 'tool', title: 'tool', timestamp: 4 }),
+  );
+
+  assert.deepEqual(store.getConversationState('conv-1').orderedEventIds, ['user-1', 'assistant-1', 'tool-1']);
+  assert.deepEqual(
+    useConversationStore.getState().groupsByConversation['conv-1']?.map((group) => group.eventIds),
+    [['user-1', 'assistant-1', 'tool-1']],
+  );
+});
+
+test('patch revert store clears optimistic state per conversation', () => {
+  usePatchRevertStore.setState({
+    byPatchKey: {
+      'patch:conv-1:abc': { paths: ['a.ts'], authoritativeSeen: false },
+      'patch-id:tool-calls:conv-1:call-a': { paths: ['b.ts'], authoritativeSeen: true },
+      'patch:conv-2:def': { paths: ['c.ts'], authoritativeSeen: false },
+    },
+  });
+
+  usePatchRevertStore.getState().clearConversation('conv-1');
+
+  assert.deepEqual(usePatchRevertStore.getState().byPatchKey, {
+    'patch:conv-2:def': { paths: ['c.ts'], authoritativeSeen: false },
+  });
 });
 
 test('historyRowsToActivities preserves conversation and sequence metadata from timeline rows', () => {

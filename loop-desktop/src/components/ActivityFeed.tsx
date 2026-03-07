@@ -273,7 +273,7 @@ export const ActivityFeed = memo(function ActivityFeed({
 
       return changed ? next : prev;
     });
-  }, [timelineEvents]);
+  }, [events]);
 
   useEffect(() => {
     const streaming = events.filter(

@@ -94,6 +94,8 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 	var agentMsgID models.MessageID // set after the current iteration's agent message is persisted
 	currentState := TurnState("")
 	modelName := resolveModelName(s.Client)
+	var partialAgentText strings.Builder
+	pendingCompleteAgentMsg := false
 
 	statusMeta := func(iteration int) map[string]any {
 		if iteration <= 0 {
@@ -229,7 +231,54 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 		s.emitUIEvent(ctx, models.UIEventKindError, err.Error(), agentMsgID, statusMeta(iteration))
 	}
 
+	persistCanceledPartialAgentMessage := func(reason string) {
+		if agentMsgID != "" || pendingCompleteAgentMsg {
+			return
+		}
+		text := partialAgentText.String()
+		if strings.TrimSpace(text) == "" {
+			return
+		}
+
+		metadata := map[string]any{
+			"partial":      true,
+			"abort_reason": reason,
+		}
+		if modelName != "" {
+			metadata["model"] = modelName
+		}
+		if thinking, err := ParseThinkingLevel(strings.TrimSpace(s.ThinkingLevel)); err == nil {
+			metadata["thinking_level"] = strings.ToLower(string(thinking))
+		}
+
+		msg := &models.Message{
+			ID:             models.MessageID(uuid.New().String()),
+			ConversationID: s.Conversation.ID,
+			SentBy:         models.SentByAgent,
+			State:          models.MessageStateCanceled,
+			Parts: []models.MessagePart{{
+				Kind: models.PartText,
+				Text: &models.TextPart{Text: text},
+			}},
+			Metadata: metadata,
+		}
+
+		persistCtx := ctx
+		if persistCtx == nil || persistCtx.Err() != nil {
+			detachedCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			persistCtx = detachedCtx
+		}
+		if err := s.Store.Messages().Append(persistCtx, msg); err != nil {
+			log.Printf("[session] persist canceled partial agent message conv=%s: %v", s.Conversation.ID, err)
+			return
+		}
+
+		agentMsgID = msg.ID
+	}
+
 	emitAbort := func(text string, iteration, attempt int) {
+		persistCanceledPartialAgentMessage(text)
 		transition(StateTurnAborted, text, iteration, attempt)
 		ch <- TurnEvent{Kind: EventTurnAborted, ErrorText: text}
 		s.emitUIEvent(ctx, models.UIEventKindAbort, text, agentMsgID, statusMeta(iteration))
@@ -246,6 +295,8 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 	for {
 		iteration++
 		agentMsgID = ""
+		partialAgentText.Reset()
+		pendingCompleteAgentMsg = false
 
 		// Guard against runaway tool call loops.
 		if iteration > maxIterations {
@@ -287,6 +338,8 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 		retryTick := s.modelRetryTick(retryDelay)
 
 		for attempt := 0; attempt <= maxRetries; attempt++ {
+			partialAgentText.Reset()
+			pendingCompleteAgentMsg = false
 			attemptNumber := attempt + 1
 			thoughtChunkCount := 0
 			thoughtCharsSinceStatus := 0
@@ -355,6 +408,9 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 				case EventDelta:
 					recordFirstToken()
 					ch <- event
+					if event.Delta != nil && !event.Delta.IsThought && event.Delta.Text != "" {
+						partialAgentText.WriteString(event.Delta.Text)
+					}
 					if event.Delta != nil && event.Delta.IsThought {
 						thoughtChunkCount++
 						if strings.TrimSpace(event.Delta.Text) != "" {
@@ -385,6 +441,7 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 					}
 					agentMsg = msg
 					attemptTokens = extractTokenUsage(msg)
+					pendingCompleteAgentMsg = true
 
 				case EventError:
 					// Check if this was a cancellation that manifested as a stream error.
@@ -486,6 +543,8 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 		transition(StateMessagePersisted, "agent message persisted", iteration, 0)
 		// Record the persisted message ID so subsequent UIEvents reference it.
 		agentMsgID = agentMsg.ID
+		partialAgentText.Reset()
+		pendingCompleteAgentMsg = false
 
 		ch <- TurnEvent{Kind: EventMessageDone, Message: agentMsg}
 

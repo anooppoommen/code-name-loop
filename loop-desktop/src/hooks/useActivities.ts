@@ -7,7 +7,7 @@ import { createHandleStreamPacket, createHandleTurnEvent } from './useLoopDeskto
 import type { ConversationLiveState, NoticeTone, PendingCommandApproval, StreamHandle } from './useLoopDesktop.types';
 import { useConversationStore } from '../stores/conversationStore';
 import { useEventStore } from '../stores/eventStore';
-import { useGroupStore } from '../stores/groupStore';
+import { usePatchRevertStore } from '../stores/patchRevertStore';
 
 const EMPTY_ACTIVITY_IDS: string[] = [];
 
@@ -21,20 +21,6 @@ function sortEvents(events: ActivityEvent[]): ActivityEvent[] {
     }
     return left.id.localeCompare(right.id);
   });
-}
-
-function insertEventId(
-  orderedEventIds: string[],
-  event: ActivityEvent,
-  eventsById: Record<string, ActivityEvent>,
-): string[] {
-  const nextEvents = orderedEventIds
-    .filter((id) => id !== event.id)
-    .map((id) => eventsById[id])
-    .filter((candidate): candidate is ActivityEvent => !!candidate);
-
-  nextEvents.push(event);
-  return sortEvents(nextEvents).map((candidate) => candidate.id);
 }
 
 export interface UseActivitiesReturn {
@@ -144,16 +130,16 @@ export function useActivities(
     useConversationStore.getState().resetLiveState(conversationId);
   }, []);
 
-  const rebuildConversationGroups = useCallback((conversationId: string): void => {
+  const updateConversationLiveState = useCallback((
+    conversationId: string,
+    stateOrUpdater:
+      | Partial<ConversationLiveState>
+      | ((prev: ConversationLiveState) => Partial<ConversationLiveState>),
+  ): void => {
     if (!conversationId) {
       return;
     }
-    const conversationState = useConversationStore.getState().getConversationState(conversationId);
-    const latestEvents = useEventStore.getState().events;
-    const orderedEvents = conversationState.orderedEventIds
-      .map((id) => latestEvents[id])
-      .filter((event): event is ActivityEvent => !!event);
-    useGroupStore.getState().rebuildConversationGroups(conversationId, orderedEvents);
+    useConversationStore.getState().updateLiveState(conversationId, stateOrUpdater);
   }, []);
 
   const replaceConversationActivities = useCallback((conversationId: string, events: ActivityEvent[]): void => {
@@ -168,11 +154,7 @@ export function useActivities(
         sequenceNo: Number.isFinite(event.sequenceNo) ? event.sequenceNo : index + 1,
       })),
     );
-    const previousIds = useConversationStore.getState().getConversationState(conversationId).orderedEventIds;
-
-    useEventStore.getState().replaceConversationEvents(previousIds, normalizedEvents);
     useConversationStore.getState().replaceConversationEvents(conversationId, normalizedEvents);
-    useGroupStore.getState().rebuildConversationGroups(conversationId, normalizedEvents);
   }, []);
 
   const updateConversationActivities = useCallback(
@@ -180,11 +162,7 @@ export function useActivities(
       if (!conversationId) {
         return;
       }
-      const conversationState = useConversationStore.getState().getConversationState(conversationId);
-      const latestEvents = useEventStore.getState().events;
-      const currentEvents = conversationState.orderedEventIds
-        .map((id) => latestEvents[id])
-        .filter((event): event is ActivityEvent => !!event);
+      const currentEvents = useConversationStore.getState().getConversationEvents(conversationId);
       replaceConversationActivities(conversationId, updater(currentEvents));
     },
     [replaceConversationActivities],
@@ -216,20 +194,10 @@ export function useActivities(
       streaming: input.streaming,
     };
 
-    const eventStore = useEventStore.getState();
-    eventStore.upsertEvent(event);
-
-    const conversationStore = useConversationStore.getState();
-    const conversationState = conversationStore.getConversationState(targetConversationId);
-    const orderedEventIds = insertEventId(conversationState.orderedEventIds, event, {
-      ...eventStore.events,
-      [event.id]: event,
-    });
-    conversationStore.setOrderedEventIds(targetConversationId, orderedEventIds);
-    rebuildConversationGroups(targetConversationId);
+    useConversationStore.getState().upsertConversationEvent(event);
 
     return event.id;
-  }, [rebuildConversationGroups, selectedConversationIdRef]);
+  }, [selectedConversationIdRef]);
 
   const mutateActivity = useCallback((id: string, transform: (event: ActivityEvent) => ActivityEvent): void => {
     const currentEvent = useEventStore.getState().events[id];
@@ -237,17 +205,8 @@ export function useActivities(
       return;
     }
 
-    const nextEvent = useEventStore.getState().updateEvent(id, transform);
-    if (!nextEvent) {
-      return;
-    }
-
-    const conversationStore = useConversationStore.getState();
-    const conversationState = conversationStore.getConversationState(nextEvent.conversationId);
-    const orderedEventIds = insertEventId(conversationState.orderedEventIds, nextEvent, useEventStore.getState().events);
-    conversationStore.setOrderedEventIds(nextEvent.conversationId, orderedEventIds);
-    rebuildConversationGroups(nextEvent.conversationId);
-  }, [rebuildConversationGroups]);
+    useEventStore.getState().updateEvent(id, transform);
+  }, []);
 
   const appendStreamingText = useCallback(
     (conversationId: string, kind: 'assistant' | 'thought', text: string): void => {
@@ -267,7 +226,7 @@ export function useActivities(
           },
           conversationId,
         );
-        useConversationStore.getState().updateLiveState(conversationId, {
+        updateConversationLiveState(conversationId, {
           draftAssistantId: kind === 'assistant' ? draftId : liveState.draftAssistantId,
           draftThoughtId: kind === 'thought' ? draftId : liveState.draftThoughtId,
         });
@@ -280,7 +239,7 @@ export function useActivities(
         streaming: true,
       }));
     },
-    [getConversationLiveState, mutateActivity, pushActivity],
+    [getConversationLiveState, mutateActivity, pushActivity, updateConversationLiveState],
   );
 
   const settleDrafts = useCallback((conversationId: string): void => {
@@ -297,11 +256,11 @@ export function useActivities(
       mutateActivity(draftId, (event) => ({ ...event, streaming: false }));
     }
 
-    useConversationStore.getState().updateLiveState(conversationId, {
+    updateConversationLiveState(conversationId, {
       draftAssistantId: null,
       draftThoughtId: null,
     });
-  }, [getConversationLiveState, mutateActivity]);
+  }, [getConversationLiveState, mutateActivity, updateConversationLiveState]);
 
   const settleThoughtDraft = useCallback((conversationId: string): void => {
     if (!conversationId) {
@@ -314,8 +273,8 @@ export function useActivities(
     }
 
     mutateActivity(liveState.draftThoughtId, (event) => ({ ...event, streaming: false }));
-    useConversationStore.getState().updateLiveState(conversationId, { draftThoughtId: null });
-  }, [getConversationLiveState, mutateActivity]);
+    updateConversationLiveState(conversationId, { draftThoughtId: null });
+  }, [getConversationLiveState, mutateActivity, updateConversationLiveState]);
 
   const finalizeTurn = useCallback(
     (closeStream: boolean, conversationId?: string): void => {
@@ -325,7 +284,7 @@ export function useActivities(
       }
 
       if (targetConversationId) {
-        useConversationStore.getState().updateLiveState(targetConversationId, {
+        updateConversationLiveState(targetConversationId, {
           lastStatus: '',
           openToolEventIDs: {},
           retryStatusEventID: null,
@@ -352,7 +311,7 @@ export function useActivities(
         }
       }
     },
-    [selectedConversationIdRef, settleDrafts],
+    [selectedConversationIdRef, settleDrafts, updateConversationLiveState],
   );
 
   const clearConversationView = useCallback((): void => {
@@ -361,10 +320,8 @@ export function useActivities(
       setCurrentStatus('');
       return;
     }
-    const previousIds = useConversationStore.getState().getConversationState(conversationId).orderedEventIds;
-    useEventStore.getState().removeEvents(previousIds);
     useConversationStore.getState().clearConversation(conversationId);
-    useGroupStore.getState().clearConversation(conversationId);
+    usePatchRevertStore.getState().clearConversation(conversationId);
     setCurrentStatus('');
   }, [selectedConversationIdRef]);
 
@@ -386,6 +343,7 @@ export function useActivities(
       pushActivity,
       settleThoughtDraft,
       setCurrentStatus,
+      updateConversationLiveState,
     });
   }, [
     appendStreamingText,
@@ -394,6 +352,8 @@ export function useActivities(
     mutateActivity,
     pushActivity,
     settleThoughtDraft,
+    setCurrentStatus,
+    updateConversationLiveState,
   ]);
 
   const handleTurnEvent = useCallback((eventName: string, data: unknown, conversationId: string): void => {
@@ -405,20 +365,20 @@ export function useActivities(
       enqueueCommandApproval,
       finalizeTurn,
       getActiveStreamId: (conversationId: string) => activeStreamsRef.current[conversationId]?.streamId,
-      getConversationLiveState,
       handleTurnEvent,
       pushActivity,
       pushNotice,
       getSelectedConversationId: () => selectedConversationIdRef.current,
+      updateConversationLiveState,
     });
   }, [
     enqueueCommandApproval,
     finalizeTurn,
-    getConversationLiveState,
     handleTurnEvent,
     pushActivity,
     pushNotice,
     selectedConversationIdRef,
+    updateConversationLiveState,
   ]);
 
   const handleStreamPacket = useCallback((packet: LoopStreamPacket, conversationId: string): void => {

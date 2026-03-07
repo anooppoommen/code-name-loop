@@ -27,6 +27,12 @@ export interface TurnEventHandlerDeps {
   pushActivity: (input: ActivityInput) => string;
   settleThoughtDraft: (conversationId: string) => void;
   setCurrentStatus: (value: string) => void;
+  updateConversationLiveState: (
+    conversationId: string,
+    stateOrUpdater:
+      | Partial<ConversationLiveState>
+      | ((prev: ConversationLiveState) => Partial<ConversationLiveState>),
+  ) => void;
 }
 
 export function createHandleTurnEvent(deps: TurnEventHandlerDeps) {
@@ -38,6 +44,7 @@ export function createHandleTurnEvent(deps: TurnEventHandlerDeps) {
     pushActivity,
     settleThoughtDraft,
     setCurrentStatus,
+    updateConversationLiveState,
   } = deps;
 
   return (eventName: string, data: unknown, conversationId: string): void => {
@@ -55,12 +62,15 @@ export function createHandleTurnEvent(deps: TurnEventHandlerDeps) {
         return;
       }
       if (to === 'turn_completed') {
-        liveState.openToolEventIDs = {};
+        updateConversationLiveState(conversationId, { openToolEventIDs: {} });
         finalizeTurn(false, conversationId);
         return;
       }
       if (to === 'turn_aborted' || to === 'turn_failed') {
-        liveState.openToolEventIDs = {};
+        updateConversationLiveState(conversationId, {
+          openToolEventIDs: {},
+          skipNextHistoryReload: to === 'turn_aborted',
+        });
         finalizeTurn(false, conversationId);
       }
       pushActivity({
@@ -138,7 +148,7 @@ export function createHandleTurnEvent(deps: TurnEventHandlerDeps) {
       const body = hasAttempt ? `Server retry ${attempt}/${maxAttempts}` : undefined;
 
       if (message && message !== liveState.lastStatus) {
-        liveState.lastStatus = message;
+        updateConversationLiveState(conversationId, { lastStatus: message });
         setCurrentStatus(message);
       }
 
@@ -150,15 +160,17 @@ export function createHandleTurnEvent(deps: TurnEventHandlerDeps) {
           timestamp: Date.now(),
         }));
       } else {
-        liveState.retryStatusEventID = pushActivity({
-          kind: 'status',
-          title: message,
-          body,
+        updateConversationLiveState(conversationId, {
+          retryStatusEventID: pushActivity({
+            kind: 'status',
+            title: message,
+            body,
+          }),
         });
       }
 
       if (Number.isFinite(secondsRemaining) && secondsRemaining <= 0) {
-        liveState.retryStatusEventID = null;
+        updateConversationLiveState(conversationId, { retryStatusEventID: null });
       }
       return;
     }
@@ -171,7 +183,7 @@ export function createHandleTurnEvent(deps: TurnEventHandlerDeps) {
       if (statusText === liveState.lastStatus) {
         return;
       }
-      liveState.lastStatus = statusText;
+      updateConversationLiveState(conversationId, { lastStatus: statusText });
       setCurrentStatus(statusText);
 
       if (statusText.startsWith('Service unavailable (503). Retrying in ')) {
@@ -182,11 +194,13 @@ export function createHandleTurnEvent(deps: TurnEventHandlerDeps) {
             timestamp: Date.now(),
           }));
         } else {
-          liveState.retryStatusEventID = pushActivity({ kind: 'status', title: statusText });
+          updateConversationLiveState(conversationId, {
+            retryStatusEventID: pushActivity({ kind: 'status', title: statusText }),
+          });
         }
         return;
       }
-      liveState.retryStatusEventID = null;
+      updateConversationLiveState(conversationId, { retryStatusEventID: null });
 
       const parsed = parseStatusLine(statusText);
       if (parsed?.kind === 'lifecycle' && parsed.title.startsWith('Executing ')) {
@@ -234,7 +248,12 @@ export function createHandleTurnEvent(deps: TurnEventHandlerDeps) {
         },
       });
       if (callID) {
-        liveState.openToolEventIDs[callID] = eventID;
+        updateConversationLiveState(conversationId, (prev) => ({
+          openToolEventIDs: {
+            ...prev.openToolEventIDs,
+            [callID]: eventID,
+          },
+        }));
       }
       return;
     }
@@ -275,7 +294,11 @@ export function createHandleTurnEvent(deps: TurnEventHandlerDeps) {
           },
           streaming: false,
         }));
-        delete liveState.openToolEventIDs[callID];
+        updateConversationLiveState(conversationId, (prev) => {
+          const nextOpenToolEventIDs = { ...prev.openToolEventIDs };
+          delete nextOpenToolEventIDs[callID];
+          return { openToolEventIDs: nextOpenToolEventIDs };
+        });
       } else {
         pushActivity({
           kind: 'tool',
@@ -333,11 +356,13 @@ export function createHandleTurnEvent(deps: TurnEventHandlerDeps) {
 
       const draftID = liveState.draftAssistantId;
       if (!draftID) {
-        liveState.draftAssistantId = pushActivity({
-          kind: 'assistant',
-          title: 'Assistant response',
-          body: messageText,
-          streaming: true,
+        updateConversationLiveState(conversationId, {
+          draftAssistantId: pushActivity({
+            kind: 'assistant',
+            title: 'Assistant response',
+            body: messageText,
+            streaming: true,
+          }),
         });
         return;
       }
@@ -349,7 +374,7 @@ export function createHandleTurnEvent(deps: TurnEventHandlerDeps) {
     if (kind === 'error') {
       const errorText = getString(eventRecord, ['error']) || 'Agent returned an error event.';
       pushActivity({ kind: 'error', title: 'Model execution error', body: errorText });
-      liveState.openToolEventIDs = {};
+      updateConversationLiveState(conversationId, { openToolEventIDs: {} });
       finalizeTurn(false, conversationId);
       return;
     }
@@ -364,13 +389,16 @@ export function createHandleTurnEvent(deps: TurnEventHandlerDeps) {
         title: 'Turn aborted',
         body: getString(eventRecord, ['error']) || undefined,
       });
-      liveState.openToolEventIDs = {};
+      updateConversationLiveState(conversationId, {
+        openToolEventIDs: {},
+        skipNextHistoryReload: true,
+      });
       finalizeTurn(false, conversationId);
       return;
     }
 
     if (kind === 'turn_complete') {
-      liveState.openToolEventIDs = {};
+      updateConversationLiveState(conversationId, { openToolEventIDs: {} });
       finalizeTurn(false, conversationId);
       return;
     }
@@ -383,11 +411,16 @@ export interface StreamPacketHandlerDeps {
   enqueueCommandApproval: (approval: PendingCommandApproval) => void;
   finalizeTurn: (closeStream: boolean, conversationId?: string) => void;
   getActiveStreamId: (conversationId: string) => string | undefined;
-  getConversationLiveState: (conversationId: string) => ConversationLiveState;
   handleTurnEvent: (eventName: string, data: unknown, conversationId: string) => void;
   pushActivity: (input: ActivityInput) => string;
   pushNotice: (tone: NoticeTone, message: string) => void;
   getSelectedConversationId: () => string;
+  updateConversationLiveState: (
+    conversationId: string,
+    stateOrUpdater:
+      | Partial<ConversationLiveState>
+      | ((prev: ConversationLiveState) => Partial<ConversationLiveState>),
+  ) => void;
 }
 
 export function createHandleStreamPacket(deps: StreamPacketHandlerDeps) {
@@ -395,11 +428,11 @@ export function createHandleStreamPacket(deps: StreamPacketHandlerDeps) {
     enqueueCommandApproval,
     finalizeTurn,
     getActiveStreamId,
-    getConversationLiveState,
     handleTurnEvent,
     pushActivity,
     pushNotice,
     getSelectedConversationId,
+    updateConversationLiveState,
   } = deps;
 
   return (packet: LoopStreamPacket, conversationId: string): void => {
@@ -434,8 +467,7 @@ export function createHandleStreamPacket(deps: StreamPacketHandlerDeps) {
         // timeline rows across conversations, but terminal events must still
         // close background stream state.
         if (TERMINAL_TURN_KINDS.has(kind)) {
-          const liveState = getConversationLiveState(conversationId);
-          liveState.openToolEventIDs = {};
+          updateConversationLiveState(conversationId, { openToolEventIDs: {} });
           finalizeTurn(true, conversationId);
           console.debug(
             `[loop-stream] finalized background conversation=${shortID(conversationId)} kind=${kind}`,
@@ -451,8 +483,7 @@ export function createHandleStreamPacket(deps: StreamPacketHandlerDeps) {
       if (isViewingStreamConversation) {
         pushActivity({ kind: 'error', title: 'Stream transport error', body: packet.error ?? '' });
       }
-      const liveState = getConversationLiveState(conversationId);
-      liveState.openToolEventIDs = {};
+      updateConversationLiveState(conversationId, { openToolEventIDs: {} });
       finalizeTurn(true, conversationId);
       return;
     }
@@ -461,15 +492,16 @@ export function createHandleStreamPacket(deps: StreamPacketHandlerDeps) {
       if (isViewingStreamConversation && packet.error) {
         pushActivity({ kind: 'lifecycle', title: 'Turn canceled', body: packet.error });
       }
-      const liveState = getConversationLiveState(conversationId);
-      liveState.openToolEventIDs = {};
+      updateConversationLiveState(conversationId, {
+        openToolEventIDs: {},
+        skipNextHistoryReload: true,
+      });
       finalizeTurn(true, conversationId);
       return;
     }
 
     if (packet.type === 'done') {
-      const liveState = getConversationLiveState(conversationId);
-      liveState.openToolEventIDs = {};
+      updateConversationLiveState(conversationId, { openToolEventIDs: {} });
       finalizeTurn(true, conversationId);
     }
   };

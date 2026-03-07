@@ -31,6 +31,7 @@ export interface ConversationLiveState {
   lastStatus: string;
   openToolEventIDs: Record<string, string>;
   retryStatusEventID: string | null;
+  skipNextHistoryReload: boolean;
 }
 
 export type CommandApprovalDecision = 'deny' | 'allow_once' | 'allow_session';

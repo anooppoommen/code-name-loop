@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { LoopStreamPacket } from '../electron';
 import { attachReplyStream, getActiveReplyStream, requestJson } from '../lib/loopClient';
+import { useConversationStore } from '../stores/conversationStore';
 import type { ActivityEvent, CheckpointSummary, ConversationSummary } from '../types/ui';
 import { type ActivityInput, historyRowsToActivities } from '../utils/activityTimeline';
 import type { PatchFile } from '../utils/patches';
@@ -706,11 +707,19 @@ export function useConversations(
                 setIsLoadingSelectedConversation(false);
             }
         });
-    }, [clearConversationView, loadConversationHistory, selectedConversationId]);
+    }, [clearConversationView, loadConversationHistory, selectedConversationId, selectedConversationIdRef]);
 
     const prevIsSending = useRef(isSending);
     useEffect(() => {
         if (prevIsSending.current && !isSending && selectedConversationId) {
+            const liveState = useConversationStore.getState().getLiveState(selectedConversationId);
+            if (liveState.skipNextHistoryReload) {
+                useConversationStore.getState().updateLiveState(selectedConversationId, {
+                    skipNextHistoryReload: false,
+                });
+                prevIsSending.current = isSending;
+                return;
+            }
             void loadConversationHistory(selectedConversationId);
         }
         prevIsSending.current = isSending;

@@ -827,6 +827,56 @@ func TestSessionCancellationEmitsAbortNotError(t *testing.T) {
 	}
 }
 
+func TestSessionCancellationPersistsPartialAgentMessage(t *testing.T) {
+	s := newTestStore(t)
+	ws, conv := seedConversation(t, s)
+	ctx := context.Background()
+
+	deltaSent := make(chan struct{})
+	mock := &partialStreamingModelClient{
+		deltaText: "Partial response",
+		deltaSent: deltaSent,
+	}
+
+	session := agent.NewSession(s, mock, ws, conv, nil, 0)
+	session.ThinkingLevel = "medium"
+
+	events, cancel, err := session.HandleUserMessage(ctx, textParts("Hello"))
+	if err != nil {
+		t.Fatalf("HandleUserMessage: %v", err)
+	}
+
+	<-deltaSent
+	cancel()
+
+	allEvents := collectEvents(events)
+	if findEvent(allEvents, agent.EventTurnAborted) == nil {
+		t.Fatalf("expected TurnAborted, events=%+v", allEvents)
+	}
+
+	msgs, err := s.Messages().GetRange(ctx, conv.ID, 1, 10)
+	if err != nil {
+		t.Fatalf("get messages: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(msgs))
+	}
+
+	partial := msgs[1]
+	if partial.SentBy != models.SentByAgent {
+		t.Fatalf("partial sent_by=%s, want agent", partial.SentBy)
+	}
+	if partial.State != models.MessageStateCanceled {
+		t.Fatalf("partial state=%s, want canceled", partial.State)
+	}
+	if len(partial.Parts) != 1 || partial.Parts[0].Text == nil || partial.Parts[0].Text.Text != "Partial response" {
+		t.Fatalf("partial parts=%+v", partial.Parts)
+	}
+	if got, _ := partial.Metadata["partial"].(bool); !got {
+		t.Fatalf("partial metadata partial=%v", partial.Metadata["partial"])
+	}
+}
+
 // slowModelClient introduces a delay before responding.
 type slowModelClient struct {
 	delay    time.Duration
@@ -852,6 +902,32 @@ func (m *slowModelClient) StreamMessage(ctx context.Context, history []*models.M
 		}
 	}()
 	return ch
+}
+
+type partialStreamingModelClient struct {
+	deltaText string
+	deltaSent chan struct{}
+}
+
+func (m *partialStreamingModelClient) StreamMessage(ctx context.Context, history []*models.Message, config *agent.GenerateContentConfig) <-chan agent.TurnEvent {
+	ch := make(chan agent.TurnEvent, 64)
+	go func() {
+		defer close(ch)
+		ch <- agent.TurnEvent{
+			Kind:  agent.EventDelta,
+			Delta: &agent.StreamDelta{Text: m.deltaText},
+		}
+		if m.deltaSent != nil {
+			close(m.deltaSent)
+		}
+		<-ctx.Done()
+		ch <- agent.TurnEvent{Kind: agent.EventError, Error: ctx.Err(), ErrorText: ctx.Err().Error()}
+	}()
+	return ch
+}
+
+func (m *partialStreamingModelClient) Model() string {
+	return "gemini-3.1-pro-preview"
 }
 
 func TestSessionAbortBeforeSpawn(t *testing.T) {
