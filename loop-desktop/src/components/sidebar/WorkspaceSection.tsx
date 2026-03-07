@@ -12,7 +12,7 @@ interface WorkspaceSectionProps {
   awaitingApprovalConversations: Record<string, boolean>;
   onToggleWorkspace: (workspaceId: string) => void;
   onDeleteWorkspace: (workspaceId: string) => void;
-  onSelectConversation: (conversationId: string) => void;
+  onSelectConversation: (conversationId: string, workspaceId: string) => void;
   onDeleteConversation: (conversationId: string) => void;
   onRenameConversation: (conversationId: string, title: string) => void;
   onLoadMoreConversations: (workspaceId: string) => void;
@@ -57,7 +57,7 @@ export function WorkspaceSection({
             awaitingApprovalConversations={awaitingApprovalConversations}
             onToggle={onToggleWorkspace}
             onDeleteWorkspace={onDeleteWorkspace}
-            onSelectConversation={onSelectConversation}
+            onSelectConversation={(conversationId) => onSelectConversation(conversationId, workspace.id)}
             onDeleteConversation={onDeleteConversation}
             onRenameConversation={onRenameConversation}
             onLoadMore={() => onLoadMoreConversations(workspace.id)}

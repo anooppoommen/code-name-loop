@@ -36,7 +36,7 @@ export function ActivityUserActions({
           animate={{ opacity: 1, x: 0, scale: 1 }}
           exit={{ opacity: 0, x: 6, scale: 0.96 }}
           transition={{ duration: 0.16, ease: 'easeOut' }}
-          className="flex flex-col items-center gap-1 pt-1"
+          className="absolute left-2 top-0 flex flex-col items-center gap-1 pt-1"
         >
           <CopyDropdown
             getMarkdown={() => renderedText}

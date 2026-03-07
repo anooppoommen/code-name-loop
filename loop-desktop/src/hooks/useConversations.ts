@@ -708,6 +708,14 @@ export function useConversations(
         });
     }, [clearConversationView, loadConversationHistory, selectedConversationId]);
 
+    const prevIsSending = useRef(isSending);
+    useEffect(() => {
+        if (prevIsSending.current && !isSending && selectedConversationId) {
+            void loadConversationHistory(selectedConversationId);
+        }
+        prevIsSending.current = isSending;
+    }, [isSending, selectedConversationId, loadConversationHistory]);
+
     const applyPatchToWorkspace = useCallback(async (
         conversationId: string,
         files: PatchFile[],

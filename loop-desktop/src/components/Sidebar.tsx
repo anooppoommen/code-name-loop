@@ -22,7 +22,7 @@ interface SidebarProps {
   selectedConversationId: string;
   sendingConversations: Record<string, boolean>;
   awaitingApprovalConversations: Record<string, boolean>;
-  onSelectConversation: (conversationId: string) => void;
+  onSelectConversation: (conversationId: string, workspaceId: string) => void;
   onNewConversation: () => void;
   onDeleteConversation: (conversationId: string) => void;
   onRenameConversation: (conversationId: string, title: string) => void;

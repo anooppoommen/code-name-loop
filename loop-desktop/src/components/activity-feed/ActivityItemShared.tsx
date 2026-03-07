@@ -31,7 +31,7 @@ export function ActivityFrame({
       <div className="grid grid-cols-[48px_minmax(0,1fr)_48px] items-start gap-0">
         <div className="flex min-h-0 items-start justify-end pr-3">{left}</div>
         <div className={contentClassName}>{children}</div>
-        <div className="flex min-h-0 items-start justify-start pl-2">{right}</div>
+        <div className="relative flex min-h-0 items-start justify-start pl-2">{right}</div>
       </div>
     </article>
   );

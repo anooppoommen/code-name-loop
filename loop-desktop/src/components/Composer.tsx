@@ -62,7 +62,6 @@ export function Composer({
   const [isThinkingMenuOpen, setIsThinkingMenuOpen] = useState(false);
   const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
   const hasContent = messageInput.trim().length > 0 || composerImages.length > 0;
-  const [isPopping, setIsPopping] = useState(false);
   // If isSending is true, we can still Queue, so only disable if we can't compose at all
   const actionDisabled = !canCompose || !hasContent;
   const thinkingOptionsForModel = useMemo(() => {
@@ -169,10 +168,6 @@ export function Composer({
     if (isSending && onQueue) {
       onQueue();
     } else {
-      setIsPopping(true);
-      setTimeout(() => {
-        setIsPopping(false);
-      }, 500);
       void onSubmit();
     }
     return true;
@@ -190,10 +185,6 @@ export function Composer({
             if (isSending && onQueue) {
               onQueue();
             } else {
-              setIsPopping(true);
-              setTimeout(() => {
-                setIsPopping(false);
-              }, 500);
               void onSubmit();
             }
           }}
@@ -203,11 +194,6 @@ export function Composer({
               : 'border-loop-700/50 bg-loop-800 focus-within:border-blue-500/50 focus-within:ring-1 focus-within:ring-blue-500/50'
           }`}
         >
-          {isPopping && (
-            <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden rounded-xl">
-              <div className="absolute left-1/2 top-1/2 h-64 w-64 -translate-x-1/2 -translate-y-1/2 rounded-full bubble-pop-animation mix-blend-screen" style={{ backgroundImage: 'radial-gradient(circle, transparent 10%, rgba(138, 180, 248, 0.4) 30%, rgba(242, 139, 130, 0.4) 60%, rgba(253, 226, 147, 0.4) 80%, rgba(129, 201, 149, 0.4) 100%)' }} />
-            </div>
-          )}
           {composerImages.length > 0 && (
             <div className="relative z-10 mb-2 flex flex-wrap gap-2 px-1">
               {composerImages.map((img) => (

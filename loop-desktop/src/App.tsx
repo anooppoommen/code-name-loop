@@ -158,12 +158,8 @@ export default function App() {
   }, [app]);
 
   const toggleWorkspace = useCallback((workspaceId: string) => {
-    const nextExpanded = !expandedWorkspaceIds[workspaceId];
-    setExpandedWorkspaceIds((prev) => ({ ...prev, [workspaceId]: nextExpanded }));
-    if (nextExpanded) {
-      app.selectWorkspace(workspaceId);
-    }
-  }, [app, expandedWorkspaceIds]);
+    setExpandedWorkspaceIds((prev) => ({ ...prev, [workspaceId]: !prev[workspaceId] }));
+  }, []);
 
   useEffect(() => {
     const mediaQuery = window.matchMedia(`(max-width: ${MOBILE_SIDEBAR_BREAKPOINT_PX}px)`);
@@ -235,7 +231,12 @@ export default function App() {
                 selectedConversationId={app.selectedConversationId}
                 sendingConversations={app.sendingConversations}
                 awaitingApprovalConversations={app.awaitingApprovalConversations}
-                onSelectConversation={app.selectConversation}
+                onSelectConversation={(conversationId, workspaceId) => {
+                  if (app.selectedWorkspaceId !== workspaceId) {
+                    app.selectWorkspace(workspaceId);
+                  }
+                  app.selectConversation(conversationId);
+                }}
                 onNewConversation={() => void app.newConversation()}
                 onDeleteConversation={(conversationId) => {
                   void app.deleteConversation(conversationId);
