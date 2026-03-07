@@ -550,7 +550,7 @@ function CommandApprovalSheet({
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0 flex-1">
                 <div className="mb-1 text-[12px] text-loop-300">
-                  <span className="font-mono text-loop-200">{approval.toolName}</span> wants to run:
+                  <span className="font-mono text-loop-200">{approval.toolName}</span> wants to {['read_file', 'list_dir', 'grep_files', 'apply_patch'].includes(approval.toolName) ? 'access a path outside of the workspace directory' : 'run'}:
                 </div>
                 <div className="group relative min-w-0">
                   <pre className="m-0 overflow-x-hidden text-ellipsis whitespace-nowrap pb-0.5 font-mono text-[13px] leading-relaxed text-loop-100 scrollbar-hidden group-hover:overflow-x-auto group-hover:text-clip">

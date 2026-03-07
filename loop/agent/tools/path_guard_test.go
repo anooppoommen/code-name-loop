@@ -14,7 +14,7 @@ func TestPathGuard_WorkdirDefaultsToWorkspaceRoot(t *testing.T) {
 	root := t.TempDir()
 	g := newPathGuard(testWorkspace(root))
 
-	got, err := g.requireAllowedWorkdir("")
+	got, err := g.requireAllowedWorkdir(context.Background(), "", nil, "test")
 	if err != nil {
 		t.Fatalf("requireAllowedWorkdir empty failed: %v", err)
 	}
@@ -31,7 +31,7 @@ func TestPathGuard_WorkdirRelativeToWorkspaceRoot(t *testing.T) {
 	root := t.TempDir()
 	g := newPathGuard(testWorkspace(root))
 
-	got, err := g.requireAllowedWorkdir("subdir")
+	got, err := g.requireAllowedWorkdir(context.Background(), "subdir", nil, "test")
 	if err != nil {
 		t.Fatalf("requireAllowedWorkdir relative failed: %v", err)
 	}

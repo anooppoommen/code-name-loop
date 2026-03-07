@@ -145,7 +145,11 @@ func handleExecCommand(
 	if err := validateWorkspaceEditPolicy(a.Cmd); err != nil {
 		return nil, err
 	}
-	workdir, err := guard.requireAllowedWorkdir(a.Workdir)
+	var approvalRequester CommandApprovalRequester
+	if len(approvalRequesters) > 0 {
+		approvalRequester = approvalRequesters[0]
+	}
+	workdir, err := guard.requireAllowedWorkdir(ctx, a.Workdir, approvalRequester, "exec_command")
 	if err != nil {
 		return nil, err
 	}

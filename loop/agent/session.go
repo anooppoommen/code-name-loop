@@ -23,7 +23,7 @@ const (
 	// DefaultMaxToolCallIterations is the default maximum number of tool call
 	// cycles per turn. This prevents runaway loops while allowing sustained
 	// debug/fix sessions for realistic coding tasks.
-	DefaultMaxToolCallIterations = 96
+	DefaultMaxToolCallIterations = 192
 	// MaxToolCallIterations is retained for backward compatibility in tests.
 	MaxToolCallIterations = DefaultMaxToolCallIterations
 

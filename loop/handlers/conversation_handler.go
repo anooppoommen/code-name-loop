@@ -926,10 +926,10 @@ func (h *ConversationHandler) Reply(w http.ResponseWriter, r *http.Request) {
 	baseTools := []*agent.ToolDef{
 		tools.NewExecCommandTool(h.pm, ws, commandApprovalRequester),
 		tools.NewWriteStdinTool(h.pm),
-		tools.NewApplyPatchTool(ws),
-		tools.NewReadFileTool(ws),
-		tools.NewListDirTool(ws),
-		tools.NewGrepFilesTool(ws),
+		tools.NewApplyPatchTool(ws, commandApprovalRequester),
+		tools.NewReadFileTool(ws, commandApprovalRequester),
+		tools.NewListDirTool(ws, commandApprovalRequester),
+		tools.NewGrepFilesTool(ws, commandApprovalRequester),
 		tools.NewUpdatePlanTool(),
 		tools.NewRequestUserInputTool(),
 	}
@@ -1463,7 +1463,7 @@ func (h *ConversationHandler) ApplyPatch(w http.ResponseWriter, r *http.Request)
 		if applyCheckpoint != nil {
 			log.Printf("[workspace] apply_patch checkpoint created conv=%s checkpoint=%s", convID, applyCheckpoint.ID)
 		}
-		if _, err := tools.ApplyPatchWorkspace(ws, req.Patch); err != nil {
+		if _, err := tools.ApplyPatchWorkspace(r.Context(), ws, req.Patch); err != nil {
 			log.Printf("[workspace] apply_patch raw patch apply failed conv=%s: %v", convID, err)
 			utils.WriteError(w, http.StatusInternalServerError, fmt.Sprintf("failed to apply patch: %v", err))
 			return
@@ -1601,7 +1601,7 @@ func (h *ConversationHandler) planRevertChanges(ctx context.Context, ws *models.
 				}
 				return nil, err
 			}
-			absPath, err := tools.ResolveWorkspacePath(ws, file.Path)
+			absPath, err := tools.ResolveWorkspacePath(ctx, ws, file.Path)
 			if err != nil {
 				return nil, err
 			}
@@ -1621,7 +1621,7 @@ func (h *ConversationHandler) planRevertChanges(ctx context.Context, ws *models.
 		if err != nil {
 			return nil, err
 		}
-		patchChanges, err := tools.PlanPatchWorkspace(ws, reversePatch)
+		patchChanges, err := tools.PlanPatchWorkspace(ctx, ws, reversePatch)
 		if err != nil {
 			return nil, err
 		}

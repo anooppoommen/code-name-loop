@@ -19,8 +19,12 @@ type applyPatchArgs struct {
 }
 
 // NewApplyPatchTool creates the apply_patch tool.
-func NewApplyPatchTool(ws *models.Workspace) *agent.ToolDef {
+func NewApplyPatchTool(ws *models.Workspace, approvalRequesters ...CommandApprovalRequester) *agent.ToolDef {
 	guard := newPathGuard(ws)
+	var approvalRequester CommandApprovalRequester
+	if len(approvalRequesters) > 0 {
+		approvalRequester = approvalRequesters[0]
+	}
 	return &agent.ToolDef{
 		Declaration: &genai.FunctionDeclaration{
 			Name: "apply_patch",
@@ -73,7 +77,7 @@ Important:
 			},
 		},
 		Handler: func(ctx context.Context, args json.RawMessage) (json.RawMessage, error) {
-			return handleApplyPatch(ctx, args, guard)
+			return handleApplyPatch(ctx, args, guard, approvalRequester)
 		},
 		Intents: []string{
 			"When creating, deleting or updating a file reach for this tool only",
@@ -84,7 +88,7 @@ Important:
 	}
 }
 
-func handleApplyPatch(_ context.Context, args json.RawMessage, guard *pathGuard) (json.RawMessage, error) {
+func handleApplyPatch(ctx context.Context, args json.RawMessage, guard *pathGuard, approvalRequester CommandApprovalRequester) (json.RawMessage, error) {
 	var a applyPatchArgs
 	if err := json.Unmarshal(args, &a); err != nil {
 		return nil, fmt.Errorf("failed to parse arguments: %w", err)
@@ -100,7 +104,7 @@ func handleApplyPatch(_ context.Context, args json.RawMessage, guard *pathGuard)
 		return nil, fmt.Errorf("workspace root path is required")
 	}
 
-	result, err := applyPatch(cwd, input, guard)
+	result, err := applyPatch(ctx, cwd, input, guard, approvalRequester)
 	if err != nil {
 		return json.Marshal(map[string]any{"error": err.Error()})
 	}
@@ -109,8 +113,8 @@ func handleApplyPatch(_ context.Context, args json.RawMessage, guard *pathGuard)
 }
 
 // ApplyPatchWorkspace exposes the patch engine directly for backend use.
-func ApplyPatchWorkspace(ws *models.Workspace, patch string) (string, error) {
-	return applyPatch(ws.RootPath, patch, newPathGuard(ws))
+func ApplyPatchWorkspace(ctx context.Context, ws *models.Workspace, patch string) (string, error) {
+	return applyPatch(ctx, ws.RootPath, patch, newPathGuard(ws), nil)
 }
 
 // PlannedFileWrite describes a file write that has been validated and is ready to apply.
@@ -133,19 +137,19 @@ type PlannedWorkspaceChange struct {
 }
 
 // ResolveWorkspacePath resolves a relative path inside the workspace using the patch guard rules.
-func ResolveWorkspacePath(ws *models.Workspace, path string) (string, error) {
+func ResolveWorkspacePath(ctx context.Context, ws *models.Workspace, path string) (string, error) {
 	if ws == nil {
 		return "", fmt.Errorf("workspace is required")
 	}
-	return resolvePath(ws.RootPath, path, newPathGuard(ws))
+	return resolvePath(ctx, ws.RootPath, path, newPathGuard(ws), nil)
 }
 
 // PlanPatchWorkspace validates a patch and returns the filesystem changes needed to apply it.
-func PlanPatchWorkspace(ws *models.Workspace, patch string) ([]PlannedWorkspaceChange, error) {
+func PlanPatchWorkspace(ctx context.Context, ws *models.Workspace, patch string) ([]PlannedWorkspaceChange, error) {
 	if ws == nil {
 		return nil, fmt.Errorf("workspace is required")
 	}
-	return planPatch(ws.RootPath, patch, newPathGuard(ws))
+	return planPatch(ctx, ws.RootPath, patch, newPathGuard(ws), nil)
 }
 
 // ApplyPlannedWorkspaceChanges executes a validated set of workspace mutations.
@@ -183,15 +187,15 @@ func ApplyPlannedWorkspaceChanges(changes []PlannedWorkspaceChange) (string, err
 }
 
 // applyPatch parses and applies a patch, returning a summary of changes.
-func applyPatch(cwd string, input string, guard *pathGuard) (string, error) {
-	changes, err := planPatch(cwd, input, guard)
+func applyPatch(ctx context.Context, cwd string, input string, guard *pathGuard, approvalRequester CommandApprovalRequester) (string, error) {
+	changes, err := planPatch(ctx, cwd, input, guard, approvalRequester)
 	if err != nil {
 		return "", err
 	}
 	return ApplyPlannedWorkspaceChanges(changes)
 }
 
-func planPatch(cwd string, input string, guard *pathGuard) ([]PlannedWorkspaceChange, error) {
+func planPatch(ctx context.Context, cwd string, input string, guard *pathGuard, approvalRequester CommandApprovalRequester) ([]PlannedWorkspaceChange, error) {
 	lines := strings.Split(input, "\n")
 
 	// Validate envelope.
@@ -240,7 +244,7 @@ func planPatch(cwd string, input string, guard *pathGuard) ([]PlannedWorkspaceCh
 				}
 				i++
 			}
-			absPath, err := resolvePath(cwd, path, guard)
+			absPath, err := resolvePath(ctx, cwd, path, guard, approvalRequester)
 			if err != nil {
 				return nil, err
 			}
@@ -255,7 +259,7 @@ func planPatch(cwd string, input string, guard *pathGuard) ([]PlannedWorkspaceCh
 
 		} else if strings.HasPrefix(trimmed, "*** Delete File:") {
 			path := strings.TrimSpace(strings.TrimPrefix(trimmed, "*** Delete File:"))
-			absPath, err := resolvePath(cwd, path, guard)
+			absPath, err := resolvePath(ctx, cwd, path, guard, approvalRequester)
 			if err != nil {
 				return nil, err
 			}
@@ -315,7 +319,7 @@ func planPatch(cwd string, input string, guard *pathGuard) ([]PlannedWorkspaceCh
 				}
 			}
 
-			absPath, err := resolvePath(cwd, path, guard)
+			absPath, err := resolvePath(ctx, cwd, path, guard, approvalRequester)
 			if err != nil {
 				return nil, err
 			}
@@ -341,7 +345,7 @@ func planPatch(cwd string, input string, guard *pathGuard) ([]PlannedWorkspaceCh
 			newContent := strings.Join(fileLines, "\n") + "\n"
 
 			if moveTo != "" {
-				absMoveTo, err := resolvePath(cwd, moveTo, guard)
+				absMoveTo, err := resolvePath(ctx, cwd, moveTo, guard, approvalRequester)
 				if err != nil {
 					return nil, err
 				}
@@ -491,9 +495,9 @@ func matchesAt(fileLines []string, pos int, searchLines []string) bool {
 	return true
 }
 
-func resolvePath(cwd, path string, guard *pathGuard) (string, error) {
+func resolvePath(ctx context.Context, cwd, path string, guard *pathGuard, approvalRequester CommandApprovalRequester) (string, error) {
 	if filepath.IsAbs(path) {
-		return guard.requireAllowedPath(path)
+		return guard.requireAllowedPath(ctx, path, approvalRequester, "apply_patch")
 	}
-	return guard.resolveForPatch(filepath.Join(cwd, path))
+	return guard.resolveForPatch(ctx, filepath.Join(cwd, path), approvalRequester)
 }

@@ -61,7 +61,7 @@ func newPathGuard(ws *models.Workspace) *pathGuard {
 	return g
 }
 
-func (g *pathGuard) requireAllowedPath(path string) (string, error) {
+func (g *pathGuard) requireAllowedPath(ctx context.Context, path string, requester CommandApprovalRequester, toolName string) (string, error) {
 	if g.initErr != nil {
 		return "", g.initErr
 	}
@@ -72,15 +72,38 @@ func (g *pathGuard) requireAllowedPath(path string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("invalid path %q: %w", path, err)
 	}
-	for _, root := range g.allowedRoots {
-		if isWithinRoot(canonPath, root) {
+	if g.isAllowedCanonicalPath(canonPath) {
+		return canonPath, nil
+	}
+
+	if requester != nil && ctx != nil {
+		// Intercept out-of-bounds reads and prompt the user.
+		req := CommandApprovalRequest{
+			ToolName: toolName,
+			Command:  canonPath,
+			Workdir:  g.workspaceRoot,
+		}
+		err := maybeRequireCommandApproval(ctx, requester, req)
+		if err == nil {
+			// The user allowed it.
 			return canonPath, nil
 		}
+		return "", err
 	}
+
 	return "", fmt.Errorf("path %q is outside workspace/granted roots (workspace root: %q)", canonPath, g.workspaceRoot)
 }
 
-func (g *pathGuard) requireAllowedWorkdir(path string) (string, error) {
+func (g *pathGuard) isAllowedCanonicalPath(canonPath string) bool {
+	for _, root := range g.allowedRoots {
+		if isWithinRoot(canonPath, root) {
+			return true
+		}
+	}
+	return false
+}
+
+func (g *pathGuard) requireAllowedWorkdir(ctx context.Context, path string, requester CommandApprovalRequester, toolName string) (string, error) {
 	if g.initErr != nil {
 		return "", g.initErr
 	}
@@ -91,10 +114,10 @@ func (g *pathGuard) requireAllowedWorkdir(path string) (string, error) {
 	if !filepath.IsAbs(trimmed) {
 		trimmed = filepath.Join(g.workspaceRoot, trimmed)
 	}
-	return g.requireAllowedPath(trimmed)
+	return g.requireAllowedPath(ctx, trimmed, requester, toolName)
 }
 
-func (g *pathGuard) resolveForPatch(path string) (string, error) {
+func (g *pathGuard) resolveForPatch(ctx context.Context, path string, requester CommandApprovalRequester) (string, error) {
 	if g.initErr != nil {
 		return "", g.initErr
 	}
@@ -106,7 +129,7 @@ func (g *pathGuard) resolveForPatch(path string) (string, error) {
 	if !filepath.IsAbs(candidate) {
 		candidate = filepath.Join(g.workspaceRoot, candidate)
 	}
-	return g.requireAllowedPath(candidate)
+	return g.requireAllowedPath(ctx, candidate, requester, "apply_patch")
 }
 
 func (g *pathGuard) rejectIfGitIgnored(ctx context.Context, path string, allowIgnored bool) error {

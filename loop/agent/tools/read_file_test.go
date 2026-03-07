@@ -21,7 +21,7 @@ func TestReadFile_BasicRange(t *testing.T) {
 		"limit":     2,
 	})
 
-	result, err := handleReadFile(context.Background(), args, guard)
+	result, err := handleReadFile(context.Background(), args, guard, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -49,7 +49,7 @@ func TestReadFile_OffsetExceedsLength(t *testing.T) {
 		"offset":    100,
 	})
 
-	_, err := handleReadFile(context.Background(), args, guard)
+	_, err := handleReadFile(context.Background(), args, guard, nil)
 	if err == nil {
 		t.Fatal("expected error for offset exceeding length")
 	}
@@ -65,7 +65,7 @@ func TestReadFile_AcceptsWorkspaceRelativePath(t *testing.T) {
 		"file_path": "relative.txt",
 	})
 
-	result, err := handleReadFile(context.Background(), args, guard)
+	result, err := handleReadFile(context.Background(), args, guard, nil)
 	if err != nil {
 		t.Fatalf("unexpected error for workspace-relative path: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestReadFile_TruncatesLongLines(t *testing.T) {
 	os.WriteFile(path, []byte(longLine+"\n"), 0o644)
 
 	args, _ := json.Marshal(map[string]any{"file_path": path})
-	result, err := handleReadFile(context.Background(), args, guard)
+	result, err := handleReadFile(context.Background(), args, guard, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestReadFile_CRLF(t *testing.T) {
 	os.WriteFile(path, []byte("one\r\ntwo\r\n"), 0o644)
 
 	args, _ := json.Marshal(map[string]any{"file_path": path})
-	result, _ := handleReadFile(context.Background(), args, guard)
+	result, _ := handleReadFile(context.Background(), args, guard, nil)
 
 	var resp map[string]any
 	json.Unmarshal(result, &resp)
@@ -128,7 +128,7 @@ func TestReadFile_RespectsGitIgnoreByDefault(t *testing.T) {
 	os.WriteFile(path, []byte("top-secret\n"), 0o644)
 
 	args, _ := json.Marshal(map[string]any{"file_path": path})
-	_, err := handleReadFile(context.Background(), args, guard)
+	_, err := handleReadFile(context.Background(), args, guard, nil)
 	if err == nil {
 		t.Fatal("expected read_file to reject .gitignore-excluded path by default")
 	}
@@ -150,7 +150,7 @@ func TestReadFile_AllowsIgnoredWhenExplicit(t *testing.T) {
 		"file_path":       path,
 		"include_ignored": true,
 	})
-	result, err := handleReadFile(context.Background(), args, guard)
+	result, err := handleReadFile(context.Background(), args, guard, nil)
 	if err != nil {
 		t.Fatalf("unexpected error with include_ignored=true: %v", err)
 	}

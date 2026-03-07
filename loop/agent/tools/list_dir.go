@@ -32,8 +32,12 @@ type listDirArgs struct {
 }
 
 // NewListDirTool creates the list_dir tool.
-func NewListDirTool(ws *models.Workspace) *agent.ToolDef {
+func NewListDirTool(ws *models.Workspace, approvalRequesters ...CommandApprovalRequester) *agent.ToolDef {
 	guard := newPathGuard(ws)
+	var approvalRequester CommandApprovalRequester
+	if len(approvalRequesters) > 0 {
+		approvalRequester = approvalRequesters[0]
+	}
 	return &agent.ToolDef{
 		Declaration: &genai.FunctionDeclaration{
 			Name:        "list_dir",
@@ -66,7 +70,7 @@ func NewListDirTool(ws *models.Workspace) *agent.ToolDef {
 			},
 		},
 		Handler: func(ctx context.Context, args json.RawMessage) (json.RawMessage, error) {
-			return handleListDir(ctx, args, guard)
+			return handleListDir(ctx, args, guard, approvalRequester)
 		},
 		Intents: []string{
 			"Use as the default first step for directory/repo structure discovery",
@@ -92,7 +96,7 @@ const (
 	kindOther
 )
 
-func handleListDir(ctx context.Context, args json.RawMessage, guard *pathGuard) (json.RawMessage, error) {
+func handleListDir(ctx context.Context, args json.RawMessage, guard *pathGuard, approvalRequester CommandApprovalRequester) (json.RawMessage, error) {
 	var a listDirArgs
 	if err := json.Unmarshal(args, &a); err != nil {
 		return nil, fmt.Errorf("failed to parse arguments: %w", err)
@@ -106,7 +110,7 @@ func handleListDir(ctx context.Context, args json.RawMessage, guard *pathGuard) 
 	if !filepath.IsAbs(dirPath) {
 		dirPath = filepath.Join(guard.workspaceRoot, dirPath)
 	}
-	dirPath, err := guard.requireAllowedPath(dirPath)
+	dirPath, err := guard.requireAllowedPath(ctx, dirPath, approvalRequester, "list_dir")
 	if err != nil {
 		return nil, err
 	}

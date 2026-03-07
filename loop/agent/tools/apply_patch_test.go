@@ -26,7 +26,7 @@ func TestApplyPatch_AddFile(t *testing.T) {
 +Second line
 *** End Patch`
 
-	result, err := applyPatch(dir, patch, guardForDir(dir))
+	result, err := applyPatch(context.Background(), dir, patch, guardForDir(dir), nil)
 	if err != nil {
 		t.Fatalf("applyPatch failed: %v", err)
 	}
@@ -49,7 +49,7 @@ func TestApplyPatch_DeleteFile(t *testing.T) {
 *** Delete File: obsolete.txt
 *** End Patch`
 
-	result, err := applyPatch(dir, patch, guardForDir(dir))
+	result, err := applyPatch(context.Background(), dir, patch, guardForDir(dir), nil)
 	if err != nil {
 		t.Fatalf("applyPatch failed: %v", err)
 	}
@@ -70,7 +70,7 @@ func TestApplyPatch_UpdateFile(t *testing.T) {
 
 	patch := "*** Begin Patch\n*** Update File: app.py\n@@ def greet():\n def greet():\n-    print(\"Hi\")\n+    print(\"Hello, world!\")\n     return True\n*** End Patch"
 
-	result, err := applyPatch(dir, patch, guardForDir(dir))
+	result, err := applyPatch(context.Background(), dir, patch, guardForDir(dir), nil)
 	if err != nil {
 		t.Fatalf("applyPatch failed: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestApplyPatch_UpdateFileWithMove(t *testing.T) {
  content
 *** End Patch`
 
-	result, err := applyPatch(dir, patch, guardForDir(dir))
+	result, err := applyPatch(context.Background(), dir, patch, guardForDir(dir), nil)
 	if err != nil {
 		t.Fatalf("applyPatch failed: %v", err)
 	}
@@ -132,7 +132,7 @@ func TestApplyPatch_MultiFile(t *testing.T) {
 *** End Patch`
 
 	// temp.txt doesn't exist but delete should succeed silently.
-	result, err := applyPatch(dir, patch, guardForDir(dir))
+	result, err := applyPatch(context.Background(), dir, patch, guardForDir(dir), nil)
 	if err != nil {
 		t.Fatalf("applyPatch failed: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestApplyPatch_DoesNotApplyPartialChangesOnFailure(t *testing.T) {
 +still broken
 *** End Patch`
 
-	if _, err := applyPatch(dir, patch, guardForDir(dir)); err == nil {
+	if _, err := applyPatch(context.Background(), dir, patch, guardForDir(dir), nil); err == nil {
 		t.Fatal("expected applyPatch to fail")
 	}
 
@@ -179,7 +179,7 @@ func TestApplyPatch_DoesNotApplyPartialChangesOnFailure(t *testing.T) {
 func TestApplyPatch_InvalidPatch(t *testing.T) {
 	dir := t.TempDir()
 
-	_, err := applyPatch(dir, "not a patch", guardForDir(dir))
+	_, err := applyPatch(context.Background(), dir, "not a patch", guardForDir(dir), nil)
 	if err == nil {
 		t.Fatal("expected error for invalid patch")
 	}
@@ -193,7 +193,7 @@ func TestApplyPatch_AddFileWithSubdirs(t *testing.T) {
 +nested content
 *** End Patch`
 
-	_, err := applyPatch(dir, patch, guardForDir(dir))
+	_, err := applyPatch(context.Background(), dir, patch, guardForDir(dir), nil)
 	if err != nil {
 		t.Fatalf("applyPatch failed: %v", err)
 	}
@@ -216,7 +216,7 @@ func TestHandleApplyPatch_UsesBaseDir(t *testing.T) {
 		t.Fatalf("marshal args: %v", err)
 	}
 
-	_, err = handleApplyPatch(context.Background(), args, guardForDir(dir))
+	_, err = handleApplyPatch(context.Background(), args, guardForDir(dir), nil)
 	if err != nil {
 		t.Fatalf("handleApplyPatch failed: %v", err)
 	}

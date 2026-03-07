@@ -17,7 +17,7 @@ func TestListDir_BasicListing(t *testing.T) {
 	os.MkdirAll(filepath.Join(dir, "subdir"), 0o755)
 
 	args, _ := json.Marshal(map[string]any{"dir_path": dir})
-	result, err := handleListDir(context.Background(), args, guard)
+	result, err := handleListDir(context.Background(), args, guard, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -45,7 +45,7 @@ func TestListDir_DepthControl(t *testing.T) {
 
 	// Depth 1 should only show immediate children.
 	args, _ := json.Marshal(map[string]any{"dir_path": dir, "depth": 1})
-	result, _ := handleListDir(context.Background(), args, guard)
+	result, _ := handleListDir(context.Background(), args, guard, nil)
 
 	var resp map[string]any
 	json.Unmarshal(result, &resp)
@@ -67,7 +67,7 @@ func TestListDir_Pagination(t *testing.T) {
 	}
 
 	args, _ := json.Marshal(map[string]any{"dir_path": dir, "limit": 3})
-	result, _ := handleListDir(context.Background(), args, guard)
+	result, _ := handleListDir(context.Background(), args, guard, nil)
 
 	var resp map[string]any
 	json.Unmarshal(result, &resp)
@@ -85,7 +85,7 @@ func TestListDir_AcceptsWorkspaceRelativePath(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 	args, _ := json.Marshal(map[string]any{"dir_path": "relative"})
-	result, err := handleListDir(context.Background(), args, guard)
+	result, err := handleListDir(context.Background(), args, guard, nil)
 	if err != nil {
 		t.Fatalf("unexpected error for relative path: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestListDir_Sorted(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "m.txt"), []byte("m"), 0o644)
 
 	args, _ := json.Marshal(map[string]any{"dir_path": dir})
-	result, _ := handleListDir(context.Background(), args, guard)
+	result, _ := handleListDir(context.Background(), args, guard, nil)
 
 	var resp map[string]any
 	json.Unmarshal(result, &resp)
@@ -133,7 +133,7 @@ func TestListDir_RespectsGitIgnoreByDefault(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "ignored_dir", "inside.txt"), []byte("x"), 0o644)
 
 	args, _ := json.Marshal(map[string]any{"dir_path": dir, "depth": 2, "limit": 50})
-	result, err := handleListDir(context.Background(), args, guard)
+	result, err := handleListDir(context.Background(), args, guard, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -164,7 +164,7 @@ func TestListDir_AllowsIgnoredWhenExplicit(t *testing.T) {
 		"limit":           50,
 		"include_ignored": true,
 	})
-	result, err := handleListDir(context.Background(), args, guard)
+	result, err := handleListDir(context.Background(), args, guard, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

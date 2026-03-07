@@ -31,8 +31,12 @@ type grepFilesArgs struct {
 }
 
 // NewGrepFilesTool creates the grep_files tool.
-func NewGrepFilesTool(ws *models.Workspace) *agent.ToolDef {
+func NewGrepFilesTool(ws *models.Workspace, approvalRequesters ...CommandApprovalRequester) *agent.ToolDef {
 	guard := newPathGuard(ws)
+	var approvalRequester CommandApprovalRequester
+	if len(approvalRequesters) > 0 {
+		approvalRequester = approvalRequesters[0]
+	}
 	return &agent.ToolDef{
 		Declaration: &genai.FunctionDeclaration{
 			Name:        "grep_files",
@@ -65,7 +69,7 @@ func NewGrepFilesTool(ws *models.Workspace) *agent.ToolDef {
 			},
 		},
 		Handler: func(ctx context.Context, args json.RawMessage) (json.RawMessage, error) {
-			return handleGrepFiles(ctx, args, guard)
+			return handleGrepFiles(ctx, args, guard, approvalRequester)
 		},
 		Intents: []string{
 			"Use as the default first step for symbol/TODO/usages searches",
@@ -75,7 +79,7 @@ func NewGrepFilesTool(ws *models.Workspace) *agent.ToolDef {
 	}
 }
 
-func handleGrepFiles(ctx context.Context, args json.RawMessage, guard *pathGuard) (json.RawMessage, error) {
+func handleGrepFiles(ctx context.Context, args json.RawMessage, guard *pathGuard, approvalRequester CommandApprovalRequester) (json.RawMessage, error) {
 	var a grepFilesArgs
 	if err := json.Unmarshal(args, &a); err != nil {
 		return nil, fmt.Errorf("failed to parse arguments: %w", err)
@@ -105,7 +109,7 @@ func handleGrepFiles(ctx context.Context, args json.RawMessage, guard *pathGuard
 	if !filepath.IsAbs(searchPath) {
 		searchPath = filepath.Join(guard.workspaceRoot, searchPath)
 	}
-	searchPath, err := guard.requireAllowedPath(searchPath)
+	searchPath, err := guard.requireAllowedPath(ctx, searchPath, approvalRequester, "grep_files")
 	if err != nil {
 		return nil, err
 	}
@@ -172,7 +176,7 @@ func runRgSearch(ctx context.Context, pattern string, include string, searchPath
 		return nil, fmt.Errorf("rg failed: %w", err)
 	}
 
-	return filterIgnoredResults(ctx, parseSearchResults(output, limit), guard, allowIgnored), nil
+	return filterIgnoredResults(ctx, parseSearchResults(output, limit), guard, searchPath, allowIgnored), nil
 }
 
 func runGrepFallback(ctx context.Context, pattern string, include string, searchPath string, limit int, guard *pathGuard, allowIgnored bool) ([]string, error) {
@@ -191,7 +195,7 @@ func runGrepFallback(ctx context.Context, pattern string, include string, search
 		return nil, fmt.Errorf("grep failed: %w", err)
 	}
 
-	return filterIgnoredResults(ctx, parseSearchResults(output, limit), guard, allowIgnored), nil
+	return filterIgnoredResults(ctx, parseSearchResults(output, limit), guard, searchPath, allowIgnored), nil
 }
 
 func parseSearchResults(output []byte, limit int) []string {
@@ -214,19 +218,24 @@ func isNotFound(err error) bool {
 		strings.Contains(err.Error(), "no such file or directory")
 }
 
-func filterIgnoredResults(ctx context.Context, paths []string, guard *pathGuard, allowIgnored bool) []string {
-	if allowIgnored || len(paths) == 0 {
+func filterIgnoredResults(ctx context.Context, paths []string, guard *pathGuard, searchPath string, allowIgnored bool) []string {
+	if len(paths) == 0 {
 		return paths
 	}
 
 	filtered := make([]string, 0, len(paths))
 	for _, p := range paths {
-		canon, err := guard.requireAllowedPath(p)
+		canon, err := canonicalizePath(p)
 		if err != nil {
 			continue
 		}
-		if err := guard.rejectIfGitIgnored(ctx, canon, false); err != nil {
+		if !isWithinRoot(canon, searchPath) && !guard.isAllowedCanonicalPath(canon) {
 			continue
+		}
+		if !allowIgnored {
+			if err := guard.rejectIfGitIgnored(ctx, canon, false); err != nil {
+				continue
+			}
 		}
 		filtered = append(filtered, p)
 	}

@@ -29,8 +29,12 @@ type readFileArgs struct {
 }
 
 // NewReadFileTool creates the read_file tool (slice mode).
-func NewReadFileTool(ws *models.Workspace) *agent.ToolDef {
+func NewReadFileTool(ws *models.Workspace, approvalRequesters ...CommandApprovalRequester) *agent.ToolDef {
 	guard := newPathGuard(ws)
+	var approvalRequester CommandApprovalRequester
+	if len(approvalRequesters) > 0 {
+		approvalRequester = approvalRequesters[0]
+	}
 	return &agent.ToolDef{
 		Declaration: &genai.FunctionDeclaration{
 			Name:        "read_file",
@@ -59,7 +63,7 @@ func NewReadFileTool(ws *models.Workspace) *agent.ToolDef {
 			},
 		},
 		Handler: func(ctx context.Context, args json.RawMessage) (json.RawMessage, error) {
-			return handleReadFile(ctx, args, guard)
+			return handleReadFile(ctx, args, guard, approvalRequester)
 		},
 		Intents: []string{
 			"Use as the default first choice for reading known files",
@@ -69,7 +73,7 @@ func NewReadFileTool(ws *models.Workspace) *agent.ToolDef {
 	}
 }
 
-func handleReadFile(ctx context.Context, args json.RawMessage, guard *pathGuard) (json.RawMessage, error) {
+func handleReadFile(ctx context.Context, args json.RawMessage, guard *pathGuard, approvalRequester CommandApprovalRequester) (json.RawMessage, error) {
 	var a readFileArgs
 	if err := json.Unmarshal(args, &a); err != nil {
 		return nil, fmt.Errorf("failed to parse arguments: %w", err)
@@ -100,7 +104,7 @@ func handleReadFile(ctx context.Context, args json.RawMessage, guard *pathGuard)
 		return nil, fmt.Errorf("limit must be greater than zero")
 	}
 
-	filePath, err := guard.requireAllowedPath(filePath)
+	filePath, err := guard.requireAllowedPath(ctx, filePath, approvalRequester, "read_file")
 	if err != nil {
 		return nil, err
 	}
