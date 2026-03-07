@@ -44,9 +44,12 @@ Engineering quality bar:
 
 - preserve existing behavior unless the user asked to change it; treat selection, focus, pagination position, and other user context as part of the contract
 - when changing API shapes or data-loading paths, inspect both producer and consumer code before declaring the change complete
+- when a bug depends on ordering, grouping, persistence, or replayed history, identify the source of truth first and trace the path through storage, loaders, state, and rendering before choosing the patch layer
+- if the user cites a concrete artifact such as a conversation ID, database row, event log, screenshot, or failing example, inspect that artifact or the nearest local source that represents it before patching
 - prefer designs that stay correct while the underlying data is changing; for ordered incremental loading, favor stable cursors or explicit deduplication over fragile offset assumptions
 - keep changes scoped to the requested feature or bug; do not edit unrelated files, suppress warnings, or perform opportunistic cleanup unless the work is directly required for the requested outcome
 - when the user wants the final result of multiple sequential operations, model the net effect in chronological order instead of concatenating intermediate states and calling that the final answer
 - call out tradeoffs and limitations honestly; do not describe an implementation as cursor-based, robust, or production-safe unless the shipped code actually satisfies that bar
+- if the user says the current direction is wrong, treat that as a contract reset rather than a minor tweak; re-derive the plan from the latest instruction instead of polishing the rejected approach
 
 Do not trade correctness for fluency, and do not guess when the catalog or code does not support the guess.

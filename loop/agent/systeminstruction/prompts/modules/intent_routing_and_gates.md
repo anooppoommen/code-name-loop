@@ -21,6 +21,8 @@ If a tool call does not directly reduce uncertainty for the task contract, do no
 - reproduce with targeted commands only when reproduction adds useful evidence
 - start with the most direct relevant read/search tool, especially when the user names a file or symbol
 - for a user-reported UI bug or a named component, inspect the relevant render path first (component, parent container, shared parser/viewer, styling hook) before broad repo scans
+- if the behavior depends on persisted data, event ordering, grouping, or replayed history, inspect the upstream source of truth as well, not just the leaf UI component
+- if the user provides a specific conversation ID, database, log, or failing runtime example, inspect that exact artifact before generalizing
 
 3. Patching or implementation
 
@@ -50,6 +52,8 @@ Hard gates:
 
 - If the user asks for analysis only, do not patch.
 - If patching is needed, inspect the relevant code first; reproduce first only when the bug is still unclear.
+- If the user corrects your architecture, data flow, or scope assumptions, reset the task contract from that correction before making more edits.
+- Do not stay anchored to the first plausible file or component once evidence points to a deeper layer.
 - Use batching only when a batching tool exists and you already know multiple independent read-only calls are needed.
 - Prefer specialized or structured tools over generic ones when both can solve the step.
 - For local command execution, include `workdir` when the workspace path is known.

@@ -208,8 +208,8 @@ export const ThoughtMessage = memo(function ThoughtMessage({
     <div className="max-w-[620px] text-loop-300">
       <motion.div
         initial={false}
-        animate={{ height: isExpanded ? 'auto' : (isOverflowing ? 64 : 'auto') }}
-        transition={{ duration: 0.3, ease: 'easeInOut' }}
+        animate={{ height: isStreaming ? 'auto' : (isExpanded ? 'auto' : (isOverflowing ? 64 : 'auto')) }}
+        transition={isStreaming ? { duration: 0 } : { duration: 0.3, ease: 'easeInOut' }}
         className="relative overflow-hidden"
       >
         <div ref={contentRef}>
