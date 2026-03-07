@@ -145,6 +145,37 @@ func TestApplyPatch_MultiFile(t *testing.T) {
 	}
 }
 
+func TestApplyPatch_DoesNotApplyPartialChangesOnFailure(t *testing.T) {
+	dir := t.TempDir()
+	original := "line one\nline two\n"
+	os.WriteFile(filepath.Join(dir, "existing.txt"), []byte(original), 0o644)
+
+	patch := `*** Begin Patch
+*** Add File: new.txt
++brand new file
+*** Update File: existing.txt
+@@
+-does not exist
++still broken
+*** End Patch`
+
+	if _, err := applyPatch(dir, patch, guardForDir(dir)); err == nil {
+		t.Fatal("expected applyPatch to fail")
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, "new.txt")); !os.IsNotExist(err) {
+		t.Fatalf("new.txt should not have been created, stat err=%v", err)
+	}
+
+	content, err := os.ReadFile(filepath.Join(dir, "existing.txt"))
+	if err != nil {
+		t.Fatalf("read existing.txt: %v", err)
+	}
+	if string(content) != original {
+		t.Fatalf("existing.txt changed = %q, want %q", string(content), original)
+	}
+}
+
 func TestApplyPatch_InvalidPatch(t *testing.T) {
 	dir := t.TempDir()
 

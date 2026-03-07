@@ -145,6 +145,13 @@ export interface LoopDesktopController {
   cancelStream: () => Promise<void>;
   createCheckpoint: (label?: string) => Promise<void>;
   restoreCheckpoint: (checkpointId: string) => Promise<void>;
+  applyPatchToWorkspace: (
+    conversationId: string,
+    files: import('../utils/patches').PatchFile[],
+    message: string,
+    baseCheckpointId?: string,
+    patchId?: string,
+  ) => Promise<import('./useConversations').ApplyPatchResult | null>;
   undoLatestCheckpoint: () => Promise<void>;
   applyToolResponseSuggestion: (text: string) => void;
   sendToolResponseSuggestion: (text: string) => Promise<void>;

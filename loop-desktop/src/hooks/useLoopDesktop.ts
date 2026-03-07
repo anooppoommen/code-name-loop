@@ -590,6 +590,7 @@ export function useLoopDesktop(): LoopDesktopController {
     cancelStream,
     createCheckpoint: conversationsHook.createCheckpoint,
     restoreCheckpoint: conversationsHook.restoreCheckpoint,
+    applyPatchToWorkspace: conversationsHook.applyPatchToWorkspace,
     undoLatestCheckpoint: conversationsHook.undoLatestCheckpoint,
     applyToolResponseSuggestion,
     sendToolResponseSuggestion,

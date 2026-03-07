@@ -5,12 +5,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"loop/agent"
+	agenttools "loop/agent/tools"
+	"loop/gitcheckpoints"
 	"loop/models"
 	"loop/store"
 	"loop/store/sqlite"
@@ -296,6 +300,187 @@ func TestSessionPersistsUserMessageModelAndThinkingLevel(t *testing.T) {
 	}
 }
 
+func TestSessionCreatesCheckpointForGitWorkspace(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	s := newTestStore(t)
+	ctx := context.Background()
+	repo := t.TempDir()
+	runGitSessionTest(t, ctx, repo, "init")
+	runGitSessionTest(t, ctx, repo, "config", "user.name", "Loop Test")
+	runGitSessionTest(t, ctx, repo, "config", "user.email", "loop@example.com")
+	if err := os.WriteFile(filepath.Join(repo, "tracked.txt"), []byte("base\n"), 0o644); err != nil {
+		t.Fatalf("write tracked: %v", err)
+	}
+	runGitSessionTest(t, ctx, repo, "add", "tracked.txt")
+	runGitSessionTest(t, ctx, repo, "commit", "-m", "initial")
+
+	ws := &models.Workspace{
+		ID:                "ws-git",
+		Name:              "Git workspace",
+		RootPath:          repo,
+		CanonicalRootPath: repo,
+	}
+	if err := s.Workspaces().Create(ctx, ws); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+
+	conv := &models.Conversation{
+		ID:          "conv-git",
+		WorkspaceID: ws.ID,
+		Title:       "Git conversation",
+	}
+	if err := s.Conversations().Create(ctx, conv); err != nil {
+		t.Fatalf("create conversation: %v", err)
+	}
+
+	mock := &mockModelClient{responses: [][]agent.TurnEvent{makeTextResponse("Hello!")}}
+	session := agent.NewSession(s, mock, ws, conv, nil, 0)
+
+	events, cancel, err := session.HandleUserMessage(ctx, textParts("Hi"))
+	if err != nil {
+		t.Fatalf("HandleUserMessage: %v", err)
+	}
+	defer cancel()
+
+	allEvents := collectEvents(events)
+	if findEvent(allEvents, agent.EventTurnComplete) == nil {
+		t.Fatalf("expected turn_complete, events=%+v", allEvents)
+	}
+
+	checkpoints, err := s.Checkpoints().ListByConversation(ctx, conv.ID, 10)
+	if err != nil {
+		t.Fatalf("list checkpoints: %v", err)
+	}
+	if len(checkpoints) != 1 {
+		t.Fatalf("expected 1 checkpoint, got %d", len(checkpoints))
+	}
+	if checkpoints[0].CommitID == "" {
+		t.Fatalf("checkpoint missing commit id: %+v", checkpoints[0])
+	}
+
+	uiEvents, err := s.UIEvents().GetByConversation(ctx, conv.ID)
+	if err != nil {
+		t.Fatalf("get ui events: %v", err)
+	}
+	if len(uiEvents) == 0 {
+		t.Fatalf("expected checkpoint ui events")
+	}
+	found := false
+	for _, evt := range uiEvents {
+		if evt.Kind != models.UIEventKindCheckpointCreated {
+			continue
+		}
+		found = true
+		if evt.MessageID == "" {
+			t.Fatalf("checkpoint created event missing message id: %+v", evt)
+		}
+		if got := fmt.Sprint(evt.Metadata["checkpoint_id"]); got != checkpoints[0].ID {
+			t.Fatalf("checkpoint event metadata checkpoint_id = %v, want %s", evt.Metadata["checkpoint_id"], checkpoints[0].ID)
+		}
+	}
+	if !found {
+		t.Fatalf("expected checkpoint_created ui event, events=%+v", uiEvents)
+	}
+}
+
+func TestSessionCheckpointCapturesPreToolWorkspaceState(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	s := newTestStore(t)
+	ctx := context.Background()
+	repo := t.TempDir()
+	runGitSessionTest(t, ctx, repo, "init")
+	runGitSessionTest(t, ctx, repo, "config", "user.name", "Loop Test")
+	runGitSessionTest(t, ctx, repo, "config", "user.email", "loop@example.com")
+	trackedPath := filepath.Join(repo, "tracked.txt")
+	if err := os.WriteFile(trackedPath, []byte("base\n"), 0o644); err != nil {
+		t.Fatalf("write tracked: %v", err)
+	}
+	runGitSessionTest(t, ctx, repo, "add", "tracked.txt")
+	runGitSessionTest(t, ctx, repo, "commit", "-m", "initial")
+
+	ws := &models.Workspace{
+		ID:                "ws-git-pretool",
+		Name:              "Git pretool workspace",
+		RootPath:          repo,
+		CanonicalRootPath: repo,
+	}
+	if err := s.Workspaces().Create(ctx, ws); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	conv := &models.Conversation{
+		ID:          "conv-git-pretool",
+		WorkspaceID: ws.ID,
+		Title:       "Git pretool conversation",
+	}
+	if err := s.Conversations().Create(ctx, conv); err != nil {
+		t.Fatalf("create conversation: %v", err)
+	}
+
+	patchJSON, err := json.Marshal(map[string]string{
+		"input": "*** Begin Patch\n*** Update File: tracked.txt\n@@ -1,1 +1,1 @@\n-base\n+changed by tool\n*** End Patch",
+	})
+	if err != nil {
+		t.Fatalf("marshal patch args: %v", err)
+	}
+
+	mock := &mockModelClient{
+		responses: [][]agent.TurnEvent{
+			makeToolCallResponse(struct{ Name, CallID, Args string }{
+				"apply_patch", "call-1", string(patchJSON),
+			}),
+			makeTextResponse("Patched the file."),
+		},
+	}
+
+	session := agent.NewSession(s, mock, ws, conv, []*agent.ToolDef{agenttools.NewApplyPatchTool(ws)}, 0)
+	events, cancel, err := session.HandleUserMessage(ctx, textParts("Patch tracked.txt"))
+	if err != nil {
+		t.Fatalf("HandleUserMessage: %v", err)
+	}
+	defer cancel()
+
+	allEvents := collectEvents(events)
+	if findEvent(allEvents, agent.EventTurnComplete) == nil {
+		t.Fatalf("expected turn_complete, events=%+v", allEvents)
+	}
+
+	checkpoints, err := s.Checkpoints().ListByConversation(ctx, conv.ID, 10)
+	if err != nil {
+		t.Fatalf("list checkpoints: %v", err)
+	}
+	if len(checkpoints) != 1 {
+		t.Fatalf("expected 1 checkpoint, got %d", len(checkpoints))
+	}
+
+	gotTracked, err := os.ReadFile(trackedPath)
+	if err != nil {
+		t.Fatalf("read tracked after tool patch: %v", err)
+	}
+	if string(gotTracked) != "changed by tool\n" {
+		t.Fatalf("tracked after tool patch = %q, want %q", string(gotTracked), "changed by tool\n")
+	}
+
+	snapshotContent, err := gitcheckpoints.ReadFileAtSnapshot(ctx, repo, &gitcheckpoints.Snapshot{
+		CommitID:                  checkpoints[0].CommitID,
+		Parent:                    checkpoints[0].ParentCommitID,
+		GitRef:                    checkpoints[0].GitRef,
+		PreexistingUntrackedFiles: checkpoints[0].PreexistingUntrackedFiles,
+		PreexistingUntrackedDirs:  checkpoints[0].PreexistingUntrackedDirs,
+	}, "tracked.txt")
+	if err != nil {
+		t.Fatalf("read tracked from checkpoint snapshot: %v", err)
+	}
+	if string(snapshotContent) != "base\n" {
+		t.Fatalf("tracked content in checkpoint snapshot = %q, want %q", string(snapshotContent), "base\n")
+	}
+}
+
 func TestSessionCheckpointFailureDoesNotBlockMessage(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
@@ -357,6 +542,15 @@ func TestSessionCheckpointFailureDoesNotBlockMessage(t *testing.T) {
 	}
 	if len(checkpoints) != 0 {
 		t.Fatalf("expected no checkpoints, got %d", len(checkpoints))
+	}
+}
+
+func runGitSessionTest(t *testing.T, ctx context.Context, repo string, args ...string) {
+	t.Helper()
+	cmdArgs := append([]string{"-C", repo}, args...)
+	cmd := exec.CommandContext(ctx, "git", cmdArgs...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v failed: %v (%s)", args, err, string(out))
 	}
 }
 

@@ -18,6 +18,11 @@ export interface ActivityInput {
   tool?: ActivityEvent['tool'];
   images?: { mimeType: string; dataUrl: string }[];
   userTurn?: ActivityEvent['userTurn'];
+  checkpointId?: string;
+  checkpointReason?: string;
+  baseCheckpointId?: string;
+  patchId?: string;
+  filePaths?: string[];
 }
 
 function isApplyPatch(toolName: string): boolean {
@@ -195,9 +200,12 @@ export function historyRowsToActivities(items: unknown[]): ActivityEvent[] {
       const msgArchived = getBoolean(msg, ['Archived', 'archived']);
       const sentBy = getString(msg, ['SentBy', 'sent_by', 'sentBy']);
       if (sentBy === 'user') {
+        const metadata = asRecord(getField(msg, ['Metadata', 'metadata']));
+        if (getBoolean(metadata, ['hidden_from_ui', 'hiddenFromUI'])) {
+          continue;
+        }
         const text = extractMessageText(msg);
         const images = extractMessageImages(msg);
-        const metadata = asRecord(getField(msg, ['Metadata', 'metadata']));
         const checkpointId = getString(metadata, ['checkpoint_id', 'checkpointId']);
         const userTurn = userTurnFromMetadata(metadata);
         if (text || images.length > 0) {
@@ -542,6 +550,7 @@ export function historyRowsToActivities(items: unknown[]): ActivityEvent[] {
           break;
         }
         case 'checkpoint_created': {
+          const checkpointId = getString(metadata, ['checkpoint_id', 'checkpointId']);
           activityRows.push({
             id,
             conversationId,
@@ -554,11 +563,15 @@ export function historyRowsToActivities(items: unknown[]): ActivityEvent[] {
             kind: 'lifecycle',
             title: 'Checkpoint created',
             body: text || undefined,
+            checkpointId: checkpointId || undefined,
+            checkpointReason: getString(metadata, ['reason']),
             timestamp,
           });
           break;
         }
         case 'checkpoint_restored': {
+          const checkpointId = getString(metadata, ['checkpoint_id', 'checkpointId']);
+          const reason = getString(metadata, ['reason']);
           activityRows.push({
             id,
             conversationId,
@@ -569,13 +582,18 @@ export function historyRowsToActivities(items: unknown[]): ActivityEvent[] {
             messageVersion,
             archived,
             kind: 'lifecycle',
-            title: 'Checkpoint restored',
+            title: reason === 'undo_latest' ? 'Undo restored checkpoint' : 'Checkpoint restored',
             body: text || undefined,
+            checkpointId: checkpointId || undefined,
+            checkpointReason: reason || undefined,
             timestamp,
           });
           break;
         }
         case 'checkpoint_restore_failed': {
+          const checkpointId = getString(metadata, ['checkpoint_id', 'checkpointId']);
+          const reason = getString(metadata, ['reason']);
+          const error = getString(metadata, ['error']);
           activityRows.push({
             id,
             conversationId,
@@ -586,8 +604,41 @@ export function historyRowsToActivities(items: unknown[]): ActivityEvent[] {
             messageVersion,
             archived,
             kind: 'error',
-            title: 'Checkpoint restore failed',
-            body: text || undefined,
+            title: reason === 'undo_latest' ? 'Undo restore failed' : 'Checkpoint restore failed',
+            body: text || error || undefined,
+            checkpointId: checkpointId || undefined,
+            checkpointReason: reason || undefined,
+            timestamp,
+          });
+          break;
+        }
+        case 'workspace_changes_applied': {
+          const checkpointId = getString(metadata, ['checkpoint_id', 'checkpointId']);
+          const baseCheckpointId = getString(metadata, ['base_checkpoint_id', 'baseCheckpointId']);
+          const patchId = getString(metadata, ['patch_id', 'patchId']);
+          const reason = getString(metadata, ['reason']);
+          const fileCount = getNumber(metadata, ['file_count', 'fileCount']);
+          const rawPaths = getField(metadata, ['file_paths', 'filePaths']);
+          const filePaths = Array.isArray(rawPaths)
+            ? rawPaths.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+            : [];
+          activityRows.push({
+            id,
+            conversationId,
+            sequenceNo,
+            timelineSeq,
+            eventSeq,
+            messageId,
+            messageVersion,
+            archived,
+            kind: 'lifecycle',
+            title: reason === 'manual_revert' ? 'Selected changes reverted' : 'Workspace changes applied',
+            body: text || (fileCount ? `Updated ${fileCount} file(s)` : undefined),
+            checkpointId: checkpointId || undefined,
+            checkpointReason: reason || undefined,
+            baseCheckpointId: baseCheckpointId || undefined,
+            patchId: patchId || undefined,
+            filePaths: filePaths.length > 0 ? filePaths : undefined,
             timestamp,
           });
           break;

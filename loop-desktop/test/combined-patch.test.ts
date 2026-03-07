@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { buildCombinedPatch, parsePatchData } from '../src/utils/patches.ts';
+import { buildPatchIdFromToolCallIDs, buildPatchRevertKey } from '../src/utils/patchRevertKey.ts';
 
 test('parsePatchData tracks move targets', () => {
   const files = parsePatchData(`*** Begin Patch
@@ -94,4 +95,28 @@ test('buildCombinedPatch replays sequential updates in order', () => {
       { type: 'add', oldLn: undefined, newLn: 3 },
     ],
   );
+});
+
+test('buildPatchRevertKey prefers stable patch ids when present', () => {
+  const patches = [
+    `*** Begin Patch
+*** Add File: new1
++one
+*** Add File: new2
++two
+*** Add File: new3
++three
+*** End Patch
+`,
+  ];
+
+  assert.equal(
+    buildPatchRevertKey('conv-1', 'tool-calls:conv-1:call-a,call-b', patches),
+    'patch-id:tool-calls:conv-1:call-a,call-b',
+  );
+});
+
+test('buildPatchIdFromToolCallIDs uses sorted unique tool call ids', () => {
+  const patchId = buildPatchIdFromToolCallIDs('conv-1', ['call-b', 'call-a', 'call-a'], ['*** Begin Patch\n*** End Patch\n']);
+  assert.equal(patchId, 'tool-calls:conv-1:call-a,call-b');
 });

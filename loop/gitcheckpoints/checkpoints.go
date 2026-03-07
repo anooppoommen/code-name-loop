@@ -17,6 +17,8 @@ var (
 	ErrNotGitRepository = errors.New("not a git repository")
 	// ErrWorkspaceOutsideRepository indicates the workspace path is outside the resolved repository root.
 	ErrWorkspaceOutsideRepository = errors.New("workspace path is outside repository root")
+	// ErrPathNotFoundInSnapshot indicates that the requested path is not present in the snapshot commit.
+	ErrPathNotFoundInSnapshot = errors.New("path not found in snapshot")
 )
 
 type Snapshot struct {
@@ -133,6 +135,33 @@ func Restore(ctx context.Context, workspacePath string, snapshot *Snapshot) erro
 	return nil
 }
 
+// ReadFileAtSnapshot returns the raw file contents captured at a snapshot-relative path.
+func ReadFileAtSnapshot(ctx context.Context, workspacePath string, snapshot *Snapshot, relativePath string) ([]byte, error) {
+	if snapshot == nil || strings.TrimSpace(snapshot.CommitID) == "" {
+		return nil, fmt.Errorf("invalid snapshot")
+	}
+
+	scope, err := resolveScope(ctx, workspacePath)
+	if err != nil {
+		return nil, err
+	}
+
+	repoPath, err := snapshotRepoPath(scope, relativePath)
+	if err != nil {
+		return nil, err
+	}
+
+	out, err := runGitRaw(ctx, scope.RepoRoot, nil, "show", fmt.Sprintf("%s:%s", snapshot.CommitID, repoPath))
+	if err != nil {
+		msg := strings.ToLower(err.Error())
+		if strings.Contains(msg, "does not exist in") || strings.Contains(msg, "exists on disk, but not in") {
+			return nil, ErrPathNotFoundInSnapshot
+		}
+		return nil, err
+	}
+	return out, nil
+}
+
 // DeleteRef removes a checkpoint ref from the repository if it exists.
 func DeleteRef(ctx context.Context, workspacePath string, gitRef string) error {
 	gitRef = strings.TrimSpace(gitRef)
@@ -196,6 +225,24 @@ func resolveScope(ctx context.Context, workspacePath string) (scopeInfo, error) 
 		RepoRoot: repoRoot,
 		Prefix:   rel,
 	}, nil
+}
+
+func snapshotRepoPath(scope scopeInfo, relativePath string) (string, error) {
+	clean := filepath.Clean(strings.TrimSpace(relativePath))
+	if clean == "." || clean == "" {
+		return "", fmt.Errorf("path is required")
+	}
+	if filepath.IsAbs(clean) {
+		return "", fmt.Errorf("path must be relative")
+	}
+	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("path escapes workspace")
+	}
+
+	if scope.Prefix == "" {
+		return filepath.ToSlash(clean), nil
+	}
+	return filepath.ToSlash(filepath.Join(scope.Prefix, clean)), nil
 }
 
 func resolvedPath(path string) (string, error) {

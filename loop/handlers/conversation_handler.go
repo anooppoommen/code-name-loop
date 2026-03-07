@@ -19,6 +19,7 @@ import (
 
 	"loop/agent"
 	"loop/agent/tools"
+	"loop/checkpoints"
 	"loop/gitcheckpoints"
 	"loop/models"
 	"loop/store"
@@ -39,6 +40,7 @@ type ConversationHandler struct {
 	client           agent.ModelClient
 	pm               *tools.ProcessManager
 	commandApprovals *tools.CommandApprovalManager
+	checkpoints      *checkpoints.Service
 }
 
 func NewConversationHandler(s store.Store, client agent.ModelClient, pm *tools.ProcessManager) *ConversationHandler {
@@ -47,6 +49,7 @@ func NewConversationHandler(s store.Store, client agent.ModelClient, pm *tools.P
 		client:           client,
 		pm:               pm,
 		commandApprovals: tools.NewCommandApprovalManager(),
+		checkpoints:      checkpoints.NewService(s, checkpoints.StaticResolver{Backend: checkpoints.NewGitBackend()}),
 	}
 }
 
@@ -64,6 +67,7 @@ func (h *ConversationHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /conversations/{id}/checkpoints", h.CreateCheckpoint)
 	mux.HandleFunc("POST /conversations/{id}/checkpoints/{checkpointID}/restore", h.RestoreCheckpoint)
 	mux.HandleFunc("POST /conversations/{id}/undo", h.Undo)
+	mux.HandleFunc("POST /conversations/{id}/apply-patch", h.ApplyPatch)
 	mux.HandleFunc("GET /workspaces/{wsID}/conversations", h.ListByWorkspace)
 	mux.HandleFunc("GET /conversations/{id}/threads", h.ListThreads)
 	mux.HandleFunc("POST /conversations/{id}/reply", h.Reply)
@@ -413,179 +417,16 @@ func (h *ConversationHandler) loadConversationAndWorkspace(ctx context.Context, 
 	return conv, ws, nil
 }
 
-func workspaceGitPath(ws *models.Workspace) string {
-	if ws == nil {
-		return ""
-	}
-	if strings.TrimSpace(ws.CanonicalRootPath) != "" {
-		return strings.TrimSpace(ws.CanonicalRootPath)
-	}
-	return strings.TrimSpace(ws.RootPath)
-}
-
-func sanitizeRefComponent(raw string) string {
-	if raw == "" {
-		return "unknown"
-	}
-	b := strings.Builder{}
-	for _, r := range raw {
-		switch {
-		case r >= 'a' && r <= 'z':
-			b.WriteRune(r)
-		case r >= 'A' && r <= 'Z':
-			b.WriteRune(r)
-		case r >= '0' && r <= '9':
-			b.WriteRune(r)
-		case r == '.', r == '-', r == '_':
-			b.WriteRune(r)
-		default:
-			b.WriteRune('-')
-		}
-	}
-	out := strings.Trim(b.String(), "-")
-	if out == "" {
-		return "unknown"
-	}
-	return out
-}
-
-func checkpointRefName(conversationID models.ConversationID, checkpointID string) string {
-	return fmt.Sprintf("refs/loop/checkpoints/%s/%s",
-		sanitizeRefComponent(string(conversationID)),
-		sanitizeRefComponent(checkpointID),
-	)
-}
-
-func shortCommitID(commitID string) string {
-	id := strings.TrimSpace(commitID)
-	if len(id) <= 7 {
-		return id
-	}
-	return id[:7]
-}
-
-func (h *ConversationHandler) appendCheckpointUIEvent(ctx context.Context, conversationID models.ConversationID, kind models.UIEventKind, text string, metadata map[string]any) {
-	if err := h.store.UIEvents().Append(ctx, &models.UIEvent{
-		ConversationID: conversationID,
-		Kind:           kind,
-		Text:           text,
-		Metadata:       metadata,
-	}); err != nil {
-		log.Printf("[checkpoint] append ui event conv=%s kind=%s: %v", conversationID, kind, err)
-	}
-}
-
 func (h *ConversationHandler) createCheckpoint(ctx context.Context, ws *models.Workspace, conv *models.Conversation, label string, auto bool) (*models.Checkpoint, error) {
-	checkpointID := "chk-" + uuid.New().String()
-	gitRef := checkpointRefName(conv.ID, checkpointID)
-	checkpointLabel := strings.TrimSpace(label)
-	if checkpointLabel == "" {
-		checkpointLabel = "checkpoint"
-		if auto {
-			checkpointLabel = "auto checkpoint"
-		}
-	}
-
-	snapshot, err := gitcheckpoints.Create(ctx, workspaceGitPath(ws), gitRef, checkpointLabel)
-	if err != nil {
-		return nil, err
-	}
-
-	cp := &models.Checkpoint{
-		ID:                        checkpointID,
-		ConversationID:            conv.ID,
-		WorkspaceID:               ws.ID,
-		Label:                     checkpointLabel,
-		GitRef:                    gitRef,
-		CommitID:                  snapshot.CommitID,
-		ParentCommitID:            snapshot.Parent,
-		PreexistingUntrackedFiles: snapshot.PreexistingUntrackedFiles,
-		PreexistingUntrackedDirs:  snapshot.PreexistingUntrackedDirs,
-	}
-	if err := h.store.Checkpoints().Create(ctx, cp); err != nil {
-		_ = gitcheckpoints.DeleteRef(ctx, workspaceGitPath(ws), gitRef)
-		return nil, err
-	}
-
-	h.appendCheckpointUIEvent(ctx, conv.ID, models.UIEventKindCheckpointCreated,
-		fmt.Sprintf("checkpoint saved (%s)", shortCommitID(cp.CommitID)),
-		map[string]any{
-			"checkpoint_id": cp.ID,
-			"label":         cp.Label,
-			"commit_id":     cp.CommitID,
-			"auto":          auto,
-		},
-	)
-
-	if err := h.pruneCheckpointHistory(ctx, ws, conv.ID, checkpointRetentionLimit); err != nil {
-		log.Printf("[checkpoint] prune conv=%s: %v", conv.ID, err)
-	}
-
-	return cp, nil
-}
-
-func (h *ConversationHandler) pruneCheckpointHistory(ctx context.Context, ws *models.Workspace, convID models.ConversationID, keep int) error {
-	if keep <= 0 {
-		return nil
-	}
-
-	checkpoints, err := h.store.Checkpoints().ListByConversation(ctx, convID, keep+256)
-	if err != nil {
-		return err
-	}
-	if len(checkpoints) <= keep {
-		return nil
-	}
-
-	for _, stale := range checkpoints[keep:] {
-		if err := h.store.Checkpoints().Delete(ctx, stale.ID); err != nil {
-			log.Printf("[checkpoint] delete stale record id=%s conv=%s: %v", stale.ID, convID, err)
-		}
-		if err := gitcheckpoints.DeleteRef(ctx, workspaceGitPath(ws), stale.GitRef); err != nil && !errors.Is(err, gitcheckpoints.ErrNotGitRepository) {
-			log.Printf("[checkpoint] delete stale ref=%s conv=%s: %v", stale.GitRef, convID, err)
-		}
-	}
-	return nil
-}
-
-func toGitSnapshot(cp *models.Checkpoint) *gitcheckpoints.Snapshot {
-	if cp == nil {
-		return nil
-	}
-	return &gitcheckpoints.Snapshot{
-		CommitID:                  cp.CommitID,
-		Parent:                    cp.ParentCommitID,
-		GitRef:                    cp.GitRef,
-		PreexistingUntrackedFiles: cp.PreexistingUntrackedFiles,
-		PreexistingUntrackedDirs:  cp.PreexistingUntrackedDirs,
-	}
+	return h.checkpoints.Create(ctx, ws, conv, checkpoints.CreateOptions{
+		Label:          label,
+		Auto:           auto,
+		RetentionLimit: checkpointRetentionLimit,
+	})
 }
 
 func (h *ConversationHandler) restoreCheckpoint(ctx context.Context, ws *models.Workspace, convID models.ConversationID, cp *models.Checkpoint, reason string) error {
-	if err := gitcheckpoints.Restore(ctx, workspaceGitPath(ws), toGitSnapshot(cp)); err != nil {
-		h.appendCheckpointUIEvent(ctx, convID, models.UIEventKindCheckpointRestoreFailed,
-			fmt.Sprintf("checkpoint restore failed (%s)", shortCommitID(cp.CommitID)),
-			map[string]any{
-				"checkpoint_id": cp.ID,
-				"label":         cp.Label,
-				"commit_id":     cp.CommitID,
-				"reason":        strings.TrimSpace(reason),
-				"error":         err.Error(),
-			},
-		)
-		return err
-	}
-
-	h.appendCheckpointUIEvent(ctx, convID, models.UIEventKindCheckpointRestored,
-		fmt.Sprintf("restored checkpoint (%s)", shortCommitID(cp.CommitID)),
-		map[string]any{
-			"checkpoint_id": cp.ID,
-			"label":         cp.Label,
-			"commit_id":     cp.CommitID,
-			"reason":        strings.TrimSpace(reason),
-		},
-	)
-	return nil
+	return h.checkpoints.Restore(ctx, ws, convID, cp, checkpoints.RestoreOptions{Reason: reason})
 }
 
 func (h *ConversationHandler) ListCheckpoints(w http.ResponseWriter, r *http.Request) {
@@ -689,6 +530,7 @@ func (h *ConversationHandler) RestoreCheckpoint(w http.ResponseWriter, r *http.R
 
 func (h *ConversationHandler) Undo(w http.ResponseWriter, r *http.Request) {
 	convID := models.ConversationID(r.PathValue("id"))
+	log.Printf("[checkpoint] undo requested conv=%s", convID)
 	_, ws, err := h.loadConversationAndWorkspace(r.Context(), convID)
 	if err != nil {
 		if strings.Contains(err.Error(), "not found") {
@@ -699,17 +541,13 @@ func (h *ConversationHandler) Undo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cp, err := h.store.Checkpoints().LatestByConversation(r.Context(), convID)
+	undone, err := h.checkpoints.UndoLatest(r.Context(), ws, convID, checkpoints.RestoreOptions{Reason: "undo_latest"})
 	if err != nil {
+		log.Printf("[checkpoint] undo failed conv=%s: %v", convID, err)
 		if strings.Contains(err.Error(), "not found") {
 			utils.WriteError(w, http.StatusNotFound, "no checkpoints available")
 			return
 		}
-		utils.WriteError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	if err := h.restoreCheckpoint(r.Context(), ws, convID, cp, "undo_latest"); err != nil {
 		if errors.Is(err, gitcheckpoints.ErrNotGitRepository) {
 			utils.WriteError(w, http.StatusConflict, "workspace is not a git repository")
 			return
@@ -717,17 +555,11 @@ func (h *ConversationHandler) Undo(w http.ResponseWriter, r *http.Request) {
 		utils.WriteError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-
-	if err := h.store.Checkpoints().Delete(r.Context(), cp.ID); err != nil {
-		log.Printf("[checkpoint] undo delete record id=%s conv=%s: %v", cp.ID, convID, err)
-	}
-	if err := gitcheckpoints.DeleteRef(r.Context(), workspaceGitPath(ws), cp.GitRef); err != nil && !errors.Is(err, gitcheckpoints.ErrNotGitRepository) {
-		log.Printf("[checkpoint] undo delete ref=%s conv=%s: %v", cp.GitRef, convID, err)
-	}
+	log.Printf("[checkpoint] undo restored conv=%s checkpoint=%s commit=%s", convID, undone.ID, undone.CommitID)
 
 	utils.WriteJSON(w, http.StatusOK, map[string]any{
 		"success":    true,
-		"checkpoint": cp,
+		"checkpoint": undone,
 	})
 }
 
@@ -1481,4 +1313,349 @@ func truncateForLog(text string, max int) string {
 		return text
 	}
 	return text[:max] + "...(truncated)"
+}
+
+type applyPatchRequest struct {
+	Patch            string           `json:"patch"`
+	Message          string           `json:"message"`
+	BaseCheckpointID string           `json:"baseCheckpointId"`
+	PatchID          string           `json:"patchId"`
+	Files            []applyPatchFile `json:"files"`
+}
+
+type applyPatchFile struct {
+	Action       string           `json:"action"`
+	Path         string           `json:"path"`
+	PreviousPath string           `json:"previousPath,omitempty"`
+	Hunks        []applyPatchHunk `json:"hunks,omitempty"`
+}
+
+type applyPatchHunk struct {
+	Header string           `json:"header"`
+	Lines  []applyPatchLine `json:"lines"`
+}
+
+type applyPatchLine struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+type applyPatchResponse struct {
+	Success         bool                     `json:"success"`
+	Checkpoint      *models.Checkpoint       `json:"checkpoint,omitempty"`
+	WorkspaceChange *workspaceChangeResponse `json:"workspace_change,omitempty"`
+}
+
+type workspaceChangeResponse struct {
+	EventID          string   `json:"event_id,omitempty"`
+	MessageID        string   `json:"message_id,omitempty"`
+	Kind             string   `json:"kind"`
+	Text             string   `json:"text"`
+	Reason           string   `json:"reason,omitempty"`
+	PatchID          string   `json:"patch_id,omitempty"`
+	CheckpointID     string   `json:"checkpoint_id,omitempty"`
+	BaseCheckpointID string   `json:"base_checkpoint_id,omitempty"`
+	FileCount        int      `json:"file_count,omitempty"`
+	FilePaths        []string `json:"file_paths,omitempty"`
+}
+
+func (h *ConversationHandler) ApplyPatch(w http.ResponseWriter, r *http.Request) {
+	convID := models.ConversationID(r.PathValue("id"))
+	conv, ws, err := h.loadConversationAndWorkspace(r.Context(), convID)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			utils.WriteError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		utils.WriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	var req applyPatchRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		utils.WriteError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	log.Printf("[workspace] apply_patch requested conv=%s file_count=%d has_patch=%t base_checkpoint_id=%s patch_id=%s",
+		convID,
+		len(req.Files),
+		strings.TrimSpace(req.Patch) != "",
+		strings.TrimSpace(req.BaseCheckpointID),
+		strings.TrimSpace(req.PatchID),
+	)
+
+	var applyCheckpoint *models.Checkpoint
+
+	switch {
+	case len(req.Files) > 0:
+		changes, err := h.planRevertChanges(r.Context(), ws, convID, req)
+		if err != nil {
+			switch {
+			case errors.Is(err, gitcheckpoints.ErrNotGitRepository):
+				utils.WriteError(w, http.StatusConflict, "workspace is not a git repository")
+			case errors.Is(err, gitcheckpoints.ErrPathNotFoundInSnapshot):
+				utils.WriteError(w, http.StatusConflict, err.Error())
+			case strings.Contains(err.Error(), "not found"), strings.Contains(err.Error(), "required"), strings.Contains(err.Error(), "unsupported"):
+				utils.WriteError(w, http.StatusBadRequest, err.Error())
+			default:
+				utils.WriteError(w, http.StatusInternalServerError, fmt.Sprintf("failed to plan revert: %v", err))
+			}
+			return
+		}
+		applyCheckpoint, err = h.createCheckpoint(r.Context(), ws, conv, "before manual workspace change", true)
+		if err != nil && !errors.Is(err, gitcheckpoints.ErrNotGitRepository) {
+			log.Printf("[workspace] apply_patch checkpoint create failed conv=%s: %v", convID, err)
+			utils.WriteError(w, http.StatusInternalServerError, fmt.Sprintf("failed to create checkpoint: %v", err))
+			return
+		}
+		if applyCheckpoint != nil {
+			log.Printf("[workspace] apply_patch checkpoint created conv=%s checkpoint=%s", convID, applyCheckpoint.ID)
+		}
+		if _, err := tools.ApplyPlannedWorkspaceChanges(changes); err != nil {
+			log.Printf("[workspace] apply_patch apply planned changes failed conv=%s: %v", convID, err)
+			utils.WriteError(w, http.StatusInternalServerError, fmt.Sprintf("failed to apply patch: %v", err))
+			return
+		}
+	case strings.TrimSpace(req.Patch) != "":
+		applyCheckpoint, err = h.createCheckpoint(r.Context(), ws, conv, "before manual workspace patch", true)
+		if err != nil && !errors.Is(err, gitcheckpoints.ErrNotGitRepository) {
+			log.Printf("[workspace] apply_patch checkpoint create failed conv=%s: %v", convID, err)
+			utils.WriteError(w, http.StatusInternalServerError, fmt.Sprintf("failed to create checkpoint: %v", err))
+			return
+		}
+		if applyCheckpoint != nil {
+			log.Printf("[workspace] apply_patch checkpoint created conv=%s checkpoint=%s", convID, applyCheckpoint.ID)
+		}
+		if _, err := tools.ApplyPatchWorkspace(ws, req.Patch); err != nil {
+			log.Printf("[workspace] apply_patch raw patch apply failed conv=%s: %v", convID, err)
+			utils.WriteError(w, http.StatusInternalServerError, fmt.Sprintf("failed to apply patch: %v", err))
+			return
+		}
+	default:
+		utils.WriteError(w, http.StatusBadRequest, "patch or files are required")
+		return
+	}
+
+	// Record message
+	msg := &models.Message{
+		ID:             models.MessageID(uuid.New().String()),
+		ConversationID: convID,
+		SentBy:         models.SentByUser,
+		State:          models.MessageStateCompleted,
+		Metadata: map[string]any{
+			"synthetic_kind": "workspace_change",
+			"hidden_from_ui": true,
+		},
+		Parts: []models.MessagePart{
+			{
+				Kind: models.PartText,
+				Text: &models.TextPart{Text: req.Message},
+			},
+		},
+		CreatedAt: time.Now().UTC(),
+	}
+	if applyCheckpoint != nil {
+		msg.Metadata["checkpoint_id"] = applyCheckpoint.ID
+	}
+	if len(msg.Metadata) == 0 {
+		msg.Metadata = nil
+	}
+	if err := h.store.Messages().Append(r.Context(), msg); err != nil {
+		log.Printf("failed to append message for apply patch conv=%s: %v", convID, err)
+	}
+	workspaceChangeEvent := &models.UIEvent{
+		ConversationID: convID,
+		MessageID:      msg.ID,
+		Kind:           models.UIEventKindWorkspaceChangesApplied,
+		Text:           workspaceChangesAppliedText(req),
+		Metadata: map[string]any{
+			"checkpoint_id":      checkpointIDOrEmpty(applyCheckpoint),
+			"reason":             workspaceChangesReason(req),
+			"patch_id":           strings.TrimSpace(req.PatchID),
+			"file_count":         len(req.Files),
+			"file_paths":         workspaceChangePaths(req.Files),
+			"base_checkpoint_id": strings.TrimSpace(req.BaseCheckpointID),
+		},
+	}
+	if err := h.store.UIEvents().Append(r.Context(), workspaceChangeEvent); err != nil {
+		log.Printf("failed to append workspace change ui event conv=%s: %v", convID, err)
+	}
+	log.Printf("[workspace] apply_patch completed conv=%s checkpoint=%s file_count=%d",
+		convID,
+		checkpointIDOrEmpty(applyCheckpoint),
+		len(req.Files),
+	)
+
+	utils.WriteJSON(w, http.StatusOK, applyPatchResponse{
+		Success:    true,
+		Checkpoint: applyCheckpoint,
+		WorkspaceChange: &workspaceChangeResponse{
+			EventID:          workspaceChangeEvent.ID,
+			MessageID:        string(msg.ID),
+			Kind:             string(workspaceChangeEvent.Kind),
+			Text:             workspaceChangeEvent.Text,
+			Reason:           workspaceChangesReason(req),
+			PatchID:          strings.TrimSpace(req.PatchID),
+			CheckpointID:     checkpointIDOrEmpty(applyCheckpoint),
+			BaseCheckpointID: strings.TrimSpace(req.BaseCheckpointID),
+			FileCount:        len(req.Files),
+			FilePaths:        workspaceChangePaths(req.Files),
+		},
+	})
+}
+
+func workspaceChangesAppliedText(req applyPatchRequest) string {
+	if len(req.Files) > 0 {
+		return fmt.Sprintf("reverted %d selected file(s)", len(req.Files))
+	}
+	return "applied workspace patch"
+}
+
+func workspaceChangesReason(req applyPatchRequest) string {
+	if len(req.Files) > 0 {
+		return "manual_revert"
+	}
+	return "patch_apply"
+}
+
+func workspaceChangePaths(files []applyPatchFile) []string {
+	if len(files) == 0 {
+		return nil
+	}
+	paths := make([]string, 0, len(files))
+	for _, file := range files {
+		path := strings.TrimSpace(file.Path)
+		if path == "" {
+			continue
+		}
+		paths = append(paths, path)
+	}
+	return paths
+}
+
+func checkpointIDOrEmpty(cp *models.Checkpoint) string {
+	if cp == nil {
+		return ""
+	}
+	return strings.TrimSpace(cp.ID)
+}
+
+func (h *ConversationHandler) planRevertChanges(ctx context.Context, ws *models.Workspace, convID models.ConversationID, req applyPatchRequest) ([]tools.PlannedWorkspaceChange, error) {
+	var (
+		changes       []tools.PlannedWorkspaceChange
+		reverseTarget []applyPatchFile
+	)
+
+	for _, file := range req.Files {
+		action := strings.TrimSpace(file.Action)
+		switch action {
+		case "Delete":
+			checkpointID := strings.TrimSpace(req.BaseCheckpointID)
+			if checkpointID == "" {
+				return nil, fmt.Errorf("base checkpoint id is required to restore deleted files")
+			}
+			content, _, err := h.checkpoints.ReadFileAtCheckpoint(ctx, ws, convID, checkpointID, file.Path)
+			if err != nil {
+				if errors.Is(err, gitcheckpoints.ErrPathNotFoundInSnapshot) {
+					return nil, fmt.Errorf("deleted file %s is not present in checkpoint %s: %w", file.Path, req.BaseCheckpointID, err)
+				}
+				if strings.Contains(err.Error(), "not found") {
+					return nil, fmt.Errorf("checkpoint not found")
+				}
+				return nil, err
+			}
+			absPath, err := tools.ResolveWorkspacePath(ws, file.Path)
+			if err != nil {
+				return nil, err
+			}
+			changes = append(changes, tools.PlannedWorkspaceChange{
+				Writes:  []tools.PlannedFileWrite{{AbsPath: absPath, Content: content}},
+				Summary: fmt.Sprintf("Restored %s", file.Path),
+			})
+		case "Add", "Move", "Update":
+			reverseTarget = append(reverseTarget, file)
+		default:
+			return nil, fmt.Errorf("unsupported file action %q", file.Action)
+		}
+	}
+
+	if len(reverseTarget) > 0 {
+		reversePatch, err := buildReversePatch(reverseTarget)
+		if err != nil {
+			return nil, err
+		}
+		patchChanges, err := tools.PlanPatchWorkspace(ws, reversePatch)
+		if err != nil {
+			return nil, err
+		}
+		changes = append(changes, patchChanges...)
+	}
+
+	return changes, nil
+}
+
+func buildReversePatch(files []applyPatchFile) (string, error) {
+	var out strings.Builder
+	out.WriteString("*** Begin Patch\n")
+
+	for _, file := range files {
+		switch strings.TrimSpace(file.Action) {
+		case "Add":
+			out.WriteString(fmt.Sprintf("*** Delete File: %s\n", file.Path))
+			// Reverting an added file is a straight delete; any recorded hunks are
+			// descriptive only and must not be emitted after a Delete File header.
+			continue
+		case "Move":
+			if strings.TrimSpace(file.PreviousPath) == "" {
+				return "", fmt.Errorf("previous path is required to revert moved file %s", file.Path)
+			}
+			out.WriteString(fmt.Sprintf("*** Update File: %s\n", file.Path))
+			out.WriteString(fmt.Sprintf("*** Move to: %s\n", file.PreviousPath))
+		case "Update":
+			out.WriteString(fmt.Sprintf("*** Update File: %s\n", file.Path))
+		default:
+			return "", fmt.Errorf("unsupported reverse patch action %q", file.Action)
+		}
+
+		for _, hunk := range file.Hunks {
+			out.WriteString(strings.TrimRight(hunk.Header, "\n"))
+			out.WriteString("\n")
+			for _, line := range hunk.Lines {
+				reversed, err := reversePatchLine(line)
+				if err != nil {
+					return "", err
+				}
+				out.WriteString(reversed)
+				out.WriteString("\n")
+			}
+		}
+	}
+
+	out.WriteString("*** End Patch")
+	return out.String(), nil
+}
+
+func reversePatchLine(line applyPatchLine) (string, error) {
+	switch strings.TrimSpace(line.Type) {
+	case "add":
+		return "-" + stripPatchLinePrefix(line.Text), nil
+	case "remove":
+		return "+" + stripPatchLinePrefix(line.Text), nil
+	case "context":
+		return line.Text, nil
+	default:
+		return "", fmt.Errorf("unsupported patch line type %q", line.Type)
+	}
+}
+
+func stripPatchLinePrefix(text string) string {
+	if text == "" {
+		return ""
+	}
+	switch text[0] {
+	case '+', '-', ' ':
+		return text[1:]
+	default:
+		return text
+	}
 }

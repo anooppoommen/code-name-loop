@@ -23,7 +23,7 @@ export function PatchViewer({ patchText }: { patchText: string }) {
   );
 }
 
-export function FilePatchView({ file }: { file: PatchFile }) {
+export function FilePatchView({ file, statusBadgeLabel }: { file: PatchFile; statusBadgeLabel?: string }) {
   const [expanded, setExpanded] = useState(false);
   const badgeLabel = file.action === 'Move' ? 'Moved' : file.action !== 'Update' ? file.action : null;
   const emptyStateText =
@@ -53,6 +53,11 @@ export function FilePatchView({ file }: { file: PatchFile }) {
           {badgeLabel ? (
             <span className="text-[10px] uppercase font-bold text-loop-300 ml-1 bg-loop-700 px-1.5 rounded">
               {badgeLabel}
+            </span>
+          ) : null}
+          {statusBadgeLabel ? (
+            <span className="text-[10px] uppercase font-bold text-loop-300 ml-1 bg-loop-700/80 border border-loop-500/40 px-1.5 rounded">
+              {statusBadgeLabel}
             </span>
           ) : null}
         </div>

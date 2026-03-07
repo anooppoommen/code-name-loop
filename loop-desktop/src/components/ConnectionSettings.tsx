@@ -1,10 +1,27 @@
 import { motion } from 'framer-motion';
 import { X, Server, Key, User, Play, Square, AlertCircle } from 'lucide-react';
-import { useLoopDesktop } from '../hooks/useLoopDesktop';
+import type { Dispatch, SetStateAction } from 'react';
+import type { SshTunnelConfig, SshTunnelStatus } from '../hooks/useLoopDesktop.types';
 
-export function ConnectionSettings({ onClose }: { onClose: () => void }) {
-    const app = useLoopDesktop();
-    const { sshTunnelConfig, setSshTunnelConfig, sshTunnelStatus, sshTunnelError, connectTunnel, disconnectTunnel } = app;
+interface ConnectionSettingsProps {
+    onClose: () => void;
+    sshTunnelConfig: SshTunnelConfig;
+    setSshTunnelConfig: Dispatch<SetStateAction<SshTunnelConfig>>;
+    sshTunnelStatus: SshTunnelStatus;
+    sshTunnelError: string | null;
+    connectTunnel: (config: SshTunnelConfig) => Promise<void>;
+    disconnectTunnel: () => Promise<void>;
+}
+
+export function ConnectionSettings({
+    onClose,
+    sshTunnelConfig,
+    setSshTunnelConfig,
+    sshTunnelStatus,
+    sshTunnelError,
+    connectTunnel,
+    disconnectTunnel,
+}: ConnectionSettingsProps) {
 
     const handleChange = (field: keyof typeof sshTunnelConfig, value: string | number) => {
         setSshTunnelConfig((prev) => ({ ...prev, [field]: value }));

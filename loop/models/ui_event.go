@@ -36,6 +36,8 @@ const (
 	UIEventKindCheckpointRestored UIEventKind = "checkpoint_restored"
 	// UIEventKindCheckpointRestoreFailed is emitted when checkpoint restore fails.
 	UIEventKindCheckpointRestoreFailed UIEventKind = "checkpoint_restore_failed"
+	// UIEventKindWorkspaceChangesApplied is emitted when user-requested workspace changes are applied.
+	UIEventKindWorkspaceChangesApplied UIEventKind = "workspace_changes_applied"
 )
 
 // UIEvent is a concrete, persisted timeline entry for the UI.

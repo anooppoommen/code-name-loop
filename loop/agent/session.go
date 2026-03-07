@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 
 	"loop/agent/systeminstruction"
+	"loop/checkpoints"
 	"loop/gitcheckpoints"
 	"loop/models"
 	"loop/store"
@@ -1185,47 +1186,7 @@ func (s *Session) emitUIEvent(
 }
 
 func workspaceGitPath(workspace *models.Workspace) string {
-	if workspace == nil {
-		return ""
-	}
-	if trimmed := strings.TrimSpace(workspace.CanonicalRootPath); trimmed != "" {
-		return trimmed
-	}
-	return strings.TrimSpace(workspace.RootPath)
-}
-
-func sanitizeCheckpointRefComponent(raw string) string {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return "unknown"
-	}
-	var b strings.Builder
-	for _, r := range raw {
-		switch {
-		case r >= 'a' && r <= 'z':
-			b.WriteRune(r)
-		case r >= 'A' && r <= 'Z':
-			b.WriteRune(r)
-		case r >= '0' && r <= '9':
-			b.WriteRune(r)
-		case r == '.', r == '-', r == '_':
-			b.WriteRune(r)
-		default:
-			b.WriteRune('-')
-		}
-	}
-	out := strings.Trim(b.String(), "-")
-	if out == "" {
-		return "unknown"
-	}
-	return out
-}
-
-func checkpointRefNameForConversation(conversationID models.ConversationID, checkpointID string) string {
-	return fmt.Sprintf("refs/loop/checkpoints/%s/%s",
-		sanitizeCheckpointRefComponent(string(conversationID)),
-		sanitizeCheckpointRefComponent(checkpointID),
-	)
+	return checkpoints.WorkspacePath(workspace)
 }
 
 func checkpointLabelForUserMessage(parts []models.MessagePart) string {
@@ -1246,14 +1207,6 @@ func checkpointLabelForUserMessage(parts []models.MessagePart) string {
 	return "before user message"
 }
 
-func shortCheckpointCommit(commitID string) string {
-	trimmed := strings.TrimSpace(commitID)
-	if len(trimmed) <= 7 {
-		return trimmed
-	}
-	return trimmed[:7]
-}
-
 func (s *Session) createCheckpointForUserMessage(ctx context.Context, userMsg *models.Message) (*models.Checkpoint, error) {
 	if s == nil || s.Store == nil || s.Conversation == nil || s.Workspace == nil || userMsg == nil {
 		return nil, nil
@@ -1264,59 +1217,19 @@ func (s *Session) createCheckpointForUserMessage(ctx context.Context, userMsg *m
 		return nil, nil
 	}
 
-	checkpointID := "chk-" + uuid.New().String()
-	gitRef := checkpointRefNameForConversation(s.Conversation.ID, checkpointID)
-
-	snapshot, err := gitcheckpoints.Create(ctx, workspacePath, gitRef, checkpointLabelForUserMessage(userMsg.Parts))
+	service := checkpoints.NewService(s.Store, checkpoints.StaticResolver{Backend: checkpoints.NewGitBackend()})
+	cp, err := service.Create(ctx, s.Workspace, s.Conversation, checkpoints.CreateOptions{
+		Label:          checkpointLabelForUserMessage(userMsg.Parts),
+		Auto:           true,
+		MessageID:      userMsg.ID,
+		RetentionLimit: checkpointRetentionLimit,
+	})
 	if err != nil {
 		if errors.Is(err, gitcheckpoints.ErrNotGitRepository) {
 			return nil, nil
 		}
 		return nil, err
 	}
-
-	cp := &models.Checkpoint{
-		ID:                        checkpointID,
-		ConversationID:            s.Conversation.ID,
-		WorkspaceID:               s.Workspace.ID,
-		Label:                     checkpointLabelForUserMessage(userMsg.Parts),
-		GitRef:                    gitRef,
-		CommitID:                  snapshot.CommitID,
-		ParentCommitID:            snapshot.Parent,
-		PreexistingUntrackedFiles: snapshot.PreexistingUntrackedFiles,
-		PreexistingUntrackedDirs:  snapshot.PreexistingUntrackedDirs,
-	}
-	if err := s.Store.Checkpoints().Create(ctx, cp); err != nil {
-		_ = gitcheckpoints.DeleteRef(ctx, workspacePath, cp.GitRef)
-		return nil, err
-	}
-
-	// Keep checkpoint history bounded per conversation and delete stale refs.
-	if checkpoints, err := s.Store.Checkpoints().ListByConversation(ctx, s.Conversation.ID, checkpointRetentionLimit+256); err == nil {
-		if len(checkpoints) > checkpointRetentionLimit {
-			for _, stale := range checkpoints[checkpointRetentionLimit:] {
-				if err := s.Store.Checkpoints().Delete(ctx, stale.ID); err != nil {
-					log.Printf("[session] checkpoint prune delete %s: %v", stale.ID, err)
-				}
-				if err := gitcheckpoints.DeleteRef(ctx, workspacePath, stale.GitRef); err != nil && !errors.Is(err, gitcheckpoints.ErrNotGitRepository) {
-					log.Printf("[session] checkpoint prune delete ref %s: %v", stale.GitRef, err)
-				}
-			}
-		}
-	} else {
-		log.Printf("[session] checkpoint prune list failed: %v", err)
-	}
-
-	s.emitUIEvent(ctx, models.UIEventKindCheckpointCreated,
-		fmt.Sprintf("checkpoint saved (%s)", shortCheckpointCommit(cp.CommitID)),
-		userMsg.ID,
-		map[string]any{
-			"checkpoint_id": cp.ID,
-			"label":         cp.Label,
-			"commit_id":     cp.CommitID,
-			"auto":          true,
-		},
-	)
 
 	return cp, nil
 }
@@ -1379,6 +1292,10 @@ func (s *Session) HandleUserMessage(ctx context.Context, parts []models.MessageP
 
 	if err := s.Store.Messages().Append(ctx, userMsg); err != nil {
 		return nil, nil, fmt.Errorf("append user message: %w", err)
+	}
+
+	if _, err := s.createCheckpointForUserMessage(ctx, userMsg); err != nil {
+		log.Printf("[session] create checkpoint conv=%s msg=%s: %v", s.Conversation.ID, userMsg.ID, err)
 	}
 
 	return s.startTurn(ctx)

@@ -76,6 +76,7 @@ Important:
 			return handleApplyPatch(ctx, args, guard)
 		},
 		Intents: []string{
+			"When creating, deleting or updating a file reach for this tool only",
 			"Use this as the default and only mechanism for workspace file modifications",
 			"Prefer a single precise patch once the target lines are identified",
 			"Do not stage edits through temporary .diff/.py/.js files or shell redirection",
@@ -107,18 +108,100 @@ func handleApplyPatch(_ context.Context, args json.RawMessage, guard *pathGuard)
 	return json.Marshal(map[string]any{"output": result})
 }
 
+// ApplyPatchWorkspace exposes the patch engine directly for backend use.
+func ApplyPatchWorkspace(ws *models.Workspace, patch string) (string, error) {
+	return applyPatch(ws.RootPath, patch, newPathGuard(ws))
+}
+
+// PlannedFileWrite describes a file write that has been validated and is ready to apply.
+type PlannedFileWrite struct {
+	AbsPath string
+	Content []byte
+}
+
+// PlannedFileDelete describes a file deletion that has been validated and is ready to apply.
+type PlannedFileDelete struct {
+	AbsPath       string
+	IgnoreMissing bool
+}
+
+// PlannedWorkspaceChange describes a validated filesystem mutation.
+type PlannedWorkspaceChange struct {
+	Writes  []PlannedFileWrite
+	Deletes []PlannedFileDelete
+	Summary string
+}
+
+// ResolveWorkspacePath resolves a relative path inside the workspace using the patch guard rules.
+func ResolveWorkspacePath(ws *models.Workspace, path string) (string, error) {
+	if ws == nil {
+		return "", fmt.Errorf("workspace is required")
+	}
+	return resolvePath(ws.RootPath, path, newPathGuard(ws))
+}
+
+// PlanPatchWorkspace validates a patch and returns the filesystem changes needed to apply it.
+func PlanPatchWorkspace(ws *models.Workspace, patch string) ([]PlannedWorkspaceChange, error) {
+	if ws == nil {
+		return nil, fmt.Errorf("workspace is required")
+	}
+	return planPatch(ws.RootPath, patch, newPathGuard(ws))
+}
+
+// ApplyPlannedWorkspaceChanges executes a validated set of workspace mutations.
+func ApplyPlannedWorkspaceChanges(changes []PlannedWorkspaceChange) (string, error) {
+	var summaryParts []string
+
+	for _, change := range changes {
+		for _, write := range change.Writes {
+			if err := os.MkdirAll(filepath.Dir(write.AbsPath), 0o755); err != nil {
+				return "", fmt.Errorf("failed to create directories for %s: %w", write.AbsPath, err)
+			}
+			if err := os.WriteFile(write.AbsPath, write.Content, 0o644); err != nil {
+				return "", fmt.Errorf("failed to write file %s: %w", write.AbsPath, err)
+			}
+		}
+
+		for _, del := range change.Deletes {
+			if err := os.Remove(del.AbsPath); err != nil {
+				if del.IgnoreMissing && os.IsNotExist(err) {
+					continue
+				}
+				return "", fmt.Errorf("failed to delete file %s: %w", del.AbsPath, err)
+			}
+		}
+
+		if strings.TrimSpace(change.Summary) != "" {
+			summaryParts = append(summaryParts, change.Summary)
+		}
+	}
+
+	if len(summaryParts) == 0 {
+		return "No changes applied.", nil
+	}
+	return strings.Join(summaryParts, "\n"), nil
+}
+
 // applyPatch parses and applies a patch, returning a summary of changes.
 func applyPatch(cwd string, input string, guard *pathGuard) (string, error) {
+	changes, err := planPatch(cwd, input, guard)
+	if err != nil {
+		return "", err
+	}
+	return ApplyPlannedWorkspaceChanges(changes)
+}
+
+func planPatch(cwd string, input string, guard *pathGuard) ([]PlannedWorkspaceChange, error) {
 	lines := strings.Split(input, "\n")
 
 	// Validate envelope.
 	if len(lines) < 2 {
-		return "", fmt.Errorf("patch must contain *** Begin Patch and *** End Patch")
+		return nil, fmt.Errorf("patch must contain *** Begin Patch and *** End Patch")
 	}
 
 	firstLine := strings.TrimSpace(lines[0])
 	if firstLine != "*** Begin Patch" {
-		return "", fmt.Errorf("patch must start with '*** Begin Patch', got: %q", firstLine)
+		return nil, fmt.Errorf("patch must start with '*** Begin Patch', got: %q", firstLine)
 	}
 
 	// Find *** End Patch.
@@ -130,12 +213,12 @@ func applyPatch(cwd string, input string, guard *pathGuard) (string, error) {
 		}
 	}
 	if endIdx < 0 {
-		return "", fmt.Errorf("patch must end with '*** End Patch'")
+		return nil, fmt.Errorf("patch must end with '*** End Patch'")
 	}
 
 	body := lines[1:endIdx]
 
-	var summaryParts []string
+	var changes []PlannedWorkspaceChange
 	i := 0
 	for i < len(body) {
 		line := body[i]
@@ -159,30 +242,27 @@ func applyPatch(cwd string, input string, guard *pathGuard) (string, error) {
 			}
 			absPath, err := resolvePath(cwd, path, guard)
 			if err != nil {
-				return "", err
-			}
-			if err := os.MkdirAll(filepath.Dir(absPath), 0o755); err != nil {
-				return "", fmt.Errorf("failed to create directories for %s: %w", path, err)
+				return nil, err
 			}
 			content := strings.Join(contentLines, "\n")
 			if len(contentLines) > 0 {
 				content += "\n"
 			}
-			if err := os.WriteFile(absPath, []byte(content), 0o644); err != nil {
-				return "", fmt.Errorf("failed to create file %s: %w", path, err)
-			}
-			summaryParts = append(summaryParts, fmt.Sprintf("Added %s", path))
+			changes = append(changes, PlannedWorkspaceChange{
+				Writes:  []PlannedFileWrite{{AbsPath: absPath, Content: []byte(content)}},
+				Summary: fmt.Sprintf("Added %s", path),
+			})
 
 		} else if strings.HasPrefix(trimmed, "*** Delete File:") {
 			path := strings.TrimSpace(strings.TrimPrefix(trimmed, "*** Delete File:"))
 			absPath, err := resolvePath(cwd, path, guard)
 			if err != nil {
-				return "", err
+				return nil, err
 			}
-			if err := os.Remove(absPath); err != nil && !os.IsNotExist(err) {
-				return "", fmt.Errorf("failed to delete file %s: %w", path, err)
-			}
-			summaryParts = append(summaryParts, fmt.Sprintf("Deleted %s", path))
+			changes = append(changes, PlannedWorkspaceChange{
+				Deletes: []PlannedFileDelete{{AbsPath: absPath, IgnoreMissing: true}},
+				Summary: fmt.Sprintf("Deleted %s", path),
+			})
 			i++
 
 		} else if strings.HasPrefix(trimmed, "*** Update File:") {
@@ -237,11 +317,11 @@ func applyPatch(cwd string, input string, guard *pathGuard) (string, error) {
 
 			absPath, err := resolvePath(cwd, path, guard)
 			if err != nil {
-				return "", err
+				return nil, err
 			}
 			data, err := os.ReadFile(absPath)
 			if err != nil {
-				return "", fmt.Errorf("failed to read file %s for update: %w", path, err)
+				return nil, fmt.Errorf("failed to read file %s for update: %w", path, err)
 			}
 
 			fileLines := strings.Split(string(data), "\n")
@@ -254,7 +334,7 @@ func applyPatch(cwd string, input string, guard *pathGuard) (string, error) {
 				var err error
 				fileLines, err = applyHunk(fileLines, h)
 				if err != nil {
-					return "", fmt.Errorf("failed to apply hunk to %s: %w", path, err)
+					return nil, fmt.Errorf("failed to apply hunk to %s: %w", path, err)
 				}
 			}
 
@@ -263,34 +343,26 @@ func applyPatch(cwd string, input string, guard *pathGuard) (string, error) {
 			if moveTo != "" {
 				absMoveTo, err := resolvePath(cwd, moveTo, guard)
 				if err != nil {
-					return "", err
+					return nil, err
 				}
-				if err := os.MkdirAll(filepath.Dir(absMoveTo), 0o755); err != nil {
-					return "", fmt.Errorf("failed to create directories for %s: %w", moveTo, err)
-				}
-				if err := os.WriteFile(absMoveTo, []byte(newContent), 0o644); err != nil {
-					return "", fmt.Errorf("failed to write file %s: %w", moveTo, err)
-				}
-				if err := os.Remove(absPath); err != nil {
-					return "", fmt.Errorf("failed to remove original file %s: %w", path, err)
-				}
-				summaryParts = append(summaryParts, fmt.Sprintf("Updated %s → %s", path, moveTo))
+				changes = append(changes, PlannedWorkspaceChange{
+					Writes:  []PlannedFileWrite{{AbsPath: absMoveTo, Content: []byte(newContent)}},
+					Deletes: []PlannedFileDelete{{AbsPath: absPath}},
+					Summary: fmt.Sprintf("Updated %s → %s", path, moveTo),
+				})
 			} else {
-				if err := os.WriteFile(absPath, []byte(newContent), 0o644); err != nil {
-					return "", fmt.Errorf("failed to write file %s: %w", path, err)
-				}
-				summaryParts = append(summaryParts, fmt.Sprintf("Updated %s", path))
+				changes = append(changes, PlannedWorkspaceChange{
+					Writes:  []PlannedFileWrite{{AbsPath: absPath, Content: []byte(newContent)}},
+					Summary: fmt.Sprintf("Updated %s", path),
+				})
 			}
 
 		} else {
-			return "", fmt.Errorf("unexpected line in patch: %q", trimmed)
+			return nil, fmt.Errorf("unexpected line in patch: %q", trimmed)
 		}
 	}
 
-	if len(summaryParts) == 0 {
-		return "No changes applied.", nil
-	}
-	return strings.Join(summaryParts, "\n"), nil
+	return changes, nil
 }
 
 type hunkOp int

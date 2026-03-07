@@ -193,7 +193,15 @@ export default function App() {
         />
         <AnimatePresence>
           {isConnectionSettingsOpen && (
-            <ConnectionSettings onClose={() => setIsConnectionSettingsOpen(false)} />
+            <ConnectionSettings
+              onClose={() => setIsConnectionSettingsOpen(false)}
+              sshTunnelConfig={app.sshTunnelConfig}
+              setSshTunnelConfig={app.setSshTunnelConfig}
+              sshTunnelStatus={app.sshTunnelStatus}
+              sshTunnelError={app.sshTunnelError}
+              connectTunnel={app.connectTunnel}
+              disconnectTunnel={app.disconnectTunnel}
+            />
           )}
         </AnimatePresence>
 
@@ -279,6 +287,7 @@ export default function App() {
                   currentStatus={app.currentStatus}
                   hideLifecycle={app.hideLifecycle}
                   isLoadingHistory={app.isLoadingSelectedConversation}
+                  applyPatchToWorkspace={app.applyPatchToWorkspace}
                   canCompose={app.canCompose}
                   isSending={app.isSending}
                   onUseToolReply={app.applyToolResponseSuggestion}

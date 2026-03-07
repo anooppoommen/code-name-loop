@@ -62,6 +62,7 @@ export function Composer({
   const [isThinkingMenuOpen, setIsThinkingMenuOpen] = useState(false);
   const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
   const hasContent = messageInput.trim().length > 0 || composerImages.length > 0;
+  const [isPopping, setIsPopping] = useState(false);
   // If isSending is true, we can still Queue, so only disable if we can't compose at all
   const actionDisabled = !canCompose || !hasContent;
   const thinkingOptionsForModel = useMemo(() => {
@@ -168,6 +169,10 @@ export function Composer({
     if (isSending && onQueue) {
       onQueue();
     } else {
+      setIsPopping(true);
+      setTimeout(() => {
+        setIsPopping(false);
+      }, 500);
       void onSubmit();
     }
     return true;
@@ -185,13 +190,26 @@ export function Composer({
             if (isSending && onQueue) {
               onQueue();
             } else {
+              setIsPopping(true);
+              setTimeout(() => {
+                setIsPopping(false);
+              }, 500);
               void onSubmit();
             }
           }}
-          className="no-drag relative flex shrink-0 flex-col rounded-xl border border-loop-700/50 bg-loop-800 p-2 shadow-sm transition-all focus-within:border-blue-500/50 focus-within:ring-1 focus-within:ring-blue-500/50"
+          className={`no-drag relative z-0 flex shrink-0 flex-col rounded-xl border p-2 shadow-sm transition-all ${
+            isSending
+              ? 'google-running-glow border-loop-700/50 bg-loop-800'
+              : 'border-loop-700/50 bg-loop-800 focus-within:border-blue-500/50 focus-within:ring-1 focus-within:ring-blue-500/50'
+          }`}
         >
+          {isPopping && (
+            <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden rounded-xl">
+              <div className="absolute left-1/2 top-1/2 h-64 w-64 -translate-x-1/2 -translate-y-1/2 rounded-full bubble-pop-animation mix-blend-screen" style={{ backgroundImage: 'radial-gradient(circle, transparent 10%, rgba(138, 180, 248, 0.4) 30%, rgba(242, 139, 130, 0.4) 60%, rgba(253, 226, 147, 0.4) 80%, rgba(129, 201, 149, 0.4) 100%)' }} />
+            </div>
+          )}
           {composerImages.length > 0 && (
-            <div className="mb-2 flex flex-wrap gap-2 px-1">
+            <div className="relative z-10 mb-2 flex flex-wrap gap-2 px-1">
               {composerImages.map((img) => (
                 <div
                   key={img.id}
@@ -214,12 +232,12 @@ export function Composer({
             value={messageInput}
             onPaste={handlePaste}
             onChange={(event) => onMessageInputChange(event.target.value)}
-            className="max-h-[132px] min-h-[36px] w-full resize-none bg-transparent px-1 py-0.5 text-[13px] leading-relaxed text-loop-200 outline-none placeholder:text-loop-500 disabled:cursor-not-allowed disabled:opacity-50"
+            className="relative z-10 max-h-[132px] min-h-[36px] w-full resize-none bg-transparent px-1 py-0.5 text-[13px] leading-relaxed text-loop-200 outline-none placeholder:text-loop-500 disabled:cursor-not-allowed disabled:opacity-50"
             placeholder={canCompose ? 'Ask for follow-up changes...' : 'Select a workspace to start chatting'}
             disabled={!canCompose}
           />
 
-          <div className="mt-1.5 flex items-center justify-between px-0.5">
+          <div className="relative z-10 mt-1.5 flex items-center justify-between px-0.5">
             <div className="flex items-center gap-1.5">
               <input
                 type="file"

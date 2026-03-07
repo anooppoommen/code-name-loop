@@ -7,10 +7,15 @@ import { ActivityFrame, ActivityItem } from './activity-feed/ActivityItem';
 import { textTargetForEvent } from './activity-feed/textTarget';
 import type { ToolReplyActions } from './tool-cards';
 import { CombinedPatchViewer } from './CombinedPatchViewer';
+import type { ApplyPatchResult } from '../hooks/useConversations';
 import type { ActivityEvent } from '../types/ui';
+import type { PatchFile } from '../utils/patches';
 import { useEventStore } from '../stores/eventStore';
 import { useGroupStore } from '../stores/groupStore';
+import { usePatchRevertStore } from '../stores/patchRevertStore';
 import { buildRenderGroups, visibleEventsForGroup } from '../utils/activityRenderGroups';
+import { buildAssistantPatchContext } from '../utils/patchActivityState';
+import { buildPatchRevertKey } from '../utils/patchRevertKey';
 
 interface ActivityFeedProps extends ToolReplyActions {
   conversationId: string;
@@ -18,6 +23,13 @@ interface ActivityFeedProps extends ToolReplyActions {
   currentStatus: string;
   hideLifecycle: boolean;
   isLoadingHistory: boolean;
+  applyPatchToWorkspace: (
+    conversationId: string,
+    files: PatchFile[],
+    message: string,
+    baseCheckpointId?: string,
+    patchId?: string,
+  ) => Promise<ApplyPatchResult | null>;
   onRetryMessage: (messageId: string) => Promise<void>;
   onEditMessage: (messageId: string, text: string, images: { mimeType: string; dataUrl: string }[]) => void;
 }
@@ -35,6 +47,7 @@ export const ActivityFeed = memo(function ActivityFeed({
   currentStatus,
   hideLifecycle,
   isLoadingHistory,
+  applyPatchToWorkspace,
   canCompose,
   isSending,
   onUseToolReply,
@@ -48,15 +61,22 @@ export const ActivityFeed = memo(function ActivityFeed({
   );
   const eventsById = useEventStore((state) => state.events);
 
-  const events = useMemo(() => {
+  const timelineEvents = useMemo(() => {
     const next: ActivityEvent[] = [];
     for (const group of groups) {
-      for (const event of visibleEventsForGroup(group, eventsById, hideLifecycle)) {
+      for (const event of visibleEventsForGroup(group, eventsById, false)) {
         next.push(event);
       }
     }
     return next;
-  }, [eventsById, groups, hideLifecycle]);
+  }, [eventsById, groups]);
+
+  const events = useMemo(() => {
+    if (!hideLifecycle) {
+      return timelineEvents;
+    }
+    return timelineEvents.filter((event) => event.kind !== 'lifecycle');
+  }, [hideLifecycle, timelineEvents]);
 
   const groupedEvents = useMemo(
     () => buildRenderGroups(groups, eventsById, hideLifecycle, isSending),
@@ -253,7 +273,7 @@ export const ActivityFeed = memo(function ActivityFeed({
 
       return changed ? next : prev;
     });
-  }, [events]);
+  }, [timelineEvents]);
 
   useEffect(() => {
     const streaming = events.filter(
@@ -371,37 +391,15 @@ export const ActivityFeed = memo(function ActivityFeed({
     return null;
   }, [events]);
 
-  const assistantPatches = useMemo(() => {
-    const patchesByAssistant = new Map<string, string[]>();
-    let currentPatches: string[] = [];
+  const assistantPatchContext = useMemo(() => buildAssistantPatchContext(timelineEvents), [timelineEvents]);
+  const syncPatchRevertAuthoritative = usePatchRevertStore((state) => state.syncAuthoritative);
 
-    for (const event of events) {
-      if (event.kind === 'user') {
-        currentPatches = [];
-        continue;
-      }
-
-      if (event.kind === 'tool') {
-        const toolName = event.tool?.name || '';
-        if ((toolName === 'apply_patch' || toolName.endsWith(':apply_patch')) && event.tool?.success !== false) {
-          const patchText = event.tool?.command || event.body;
-          if (patchText) {
-            currentPatches.push(patchText);
-          }
-        }
-        continue;
-      }
-
-      if (event.kind === 'assistant') {
-        if (currentPatches.length > 0) {
-          patchesByAssistant.set(event.id, [...currentPatches]);
-        }
-        currentPatches = [];
-      }
+  useEffect(() => {
+    for (const context of assistantPatchContext.values()) {
+      const patchKey = buildPatchRevertKey(conversationId, context.patchId, context.patches);
+      syncPatchRevertAuthoritative(patchKey, context.revertedPaths);
     }
-
-    return patchesByAssistant;
-  }, [events]);
+  }, [assistantPatchContext, conversationId, syncPatchRevertAuthoritative]);
 
   const renderEventItem = useCallback((event: ActivityEvent) => {
     const isFinalAgent = event.id === finalAgentEventId;
@@ -426,20 +424,34 @@ export const ActivityFeed = memo(function ActivityFeed({
           onRetryMessage={onRetryMessage}
           onEditMessage={onEditMessage}
         />
-        {event.kind === 'assistant' && assistantPatches.has(event.id) ? (
+        {event.kind === 'assistant' && assistantPatchContext.has(event.id) ? (
           <ActivityFrame
             className="px-2 pb-3 pt-1"
             left={<div className="flex h-8 w-8 shrink-0 items-center justify-center" />}
             contentClassName="min-w-0"
           >
-            <CombinedPatchViewer patches={assistantPatches.get(event.id) || []} />
+            <CombinedPatchViewer
+              patchKey={buildPatchRevertKey(
+                conversationId,
+                assistantPatchContext.get(event.id)?.patchId,
+                assistantPatchContext.get(event.id)?.patches || [],
+              )}
+              patchId={assistantPatchContext.get(event.id)?.patchId}
+              patches={assistantPatchContext.get(event.id)?.patches || []}
+              checkpointId={assistantPatchContext.get(event.id)?.checkpointId}
+              revertedPaths={assistantPatchContext.get(event.id)?.revertedPaths}
+              conversationId={conversationId}
+              applyPatchToWorkspace={applyPatchToWorkspace}
+            />
           </ActivityFrame>
         ) : null}
       </motion.div>
     );
   }, [
-    assistantPatches,
+    assistantPatchContext,
+    applyPatchToWorkspace,
     canCompose,
+    conversationId,
     finalAgentEventId,
     isSending,
     onEditMessage,

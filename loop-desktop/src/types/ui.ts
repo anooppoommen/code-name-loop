@@ -35,6 +35,10 @@ export interface ActivityEvent {
     thinkingLevel?: string;
   };
   checkpointId?: string;
+  checkpointReason?: string;
+  baseCheckpointId?: string;
+  patchId?: string;
+  filePaths?: string[];
   timestamp: number;
   streaming?: boolean;
   tool?: ToolActivityMeta;

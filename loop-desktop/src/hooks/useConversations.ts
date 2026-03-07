@@ -3,6 +3,7 @@ import type { LoopStreamPacket } from '../electron';
 import { attachReplyStream, getActiveReplyStream, requestJson } from '../lib/loopClient';
 import type { ActivityEvent, CheckpointSummary, ConversationSummary } from '../types/ui';
 import { type ActivityInput, historyRowsToActivities } from '../utils/activityTimeline';
+import type { PatchFile } from '../utils/patches';
 import {
     asRecord,
     buildConversationTitle,
@@ -20,6 +21,50 @@ import type { NoticeTone, PendingCommandApproval, StreamHandle } from './useLoop
 interface ConversationPageCursor {
     id: string;
     updatedAt: string;
+}
+
+interface WorkspaceChangeApiPayload {
+    kind: string;
+    text: string;
+    reason?: string;
+    patch_id?: string;
+    checkpoint_id?: string;
+    base_checkpoint_id?: string;
+    file_count?: number;
+    file_paths?: string[];
+}
+
+export interface ApplyPatchResult {
+    workspaceChange: WorkspaceChangeApiPayload | null;
+}
+
+function parseWorkspaceChangeApiPayload(payload: unknown): WorkspaceChangeApiPayload | null {
+    const record = asRecord(payload);
+    if (!record) {
+        return null;
+    }
+
+    const kind = getString(record, ['kind']);
+    const text = getString(record, ['text']);
+    if (!kind || !text) {
+        return null;
+    }
+
+    const rawPaths = getField(record, ['file_paths']);
+    const filePaths = Array.isArray(rawPaths)
+        ? rawPaths.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+        : undefined;
+
+    return {
+        kind,
+        text,
+        reason: getString(record, ['reason']) || undefined,
+        patch_id: getString(record, ['patch_id']) || undefined,
+        checkpoint_id: getString(record, ['checkpoint_id']) || undefined,
+        base_checkpoint_id: getString(record, ['base_checkpoint_id']) || undefined,
+        file_count: typeof record.file_count === 'number' ? record.file_count : undefined,
+        file_paths: filePaths && filePaths.length > 0 ? filePaths : undefined,
+    };
 }
 
 function compareConversationSummaries(a: ConversationSummary, b: ConversationSummary): number {
@@ -85,6 +130,13 @@ export interface UseConversationsReturn {
     createCheckpoint: (label?: string) => Promise<void>;
     restoreCheckpoint: (checkpointId: string) => Promise<void>;
     undoLatestCheckpoint: () => Promise<void>;
+    applyPatchToWorkspace: (
+        conversationId: string,
+        files: PatchFile[],
+        message: string,
+        baseCheckpointId?: string,
+        patchId?: string,
+    ) => Promise<ApplyPatchResult | null>;
     isRestoringCheckpoint: boolean;
     isLoadingSelectedConversation: boolean;
 }
@@ -521,11 +573,38 @@ export function useConversations(
 
     const restoreCheckpoint = useCallback(async (checkpointId: string): Promise<void> => {
         const checkpointID = checkpointId.trim();
-        if (!selectedConversationId || !checkpointID || isRestoringCheckpoint || isSending) {
+        if (!selectedConversationId) {
+            console.warn('[loop-ui] skipping checkpoint restore: no selected conversation', { checkpointId: checkpointID });
+            pushNotice('error', 'Unable to restore checkpoint: no conversation is selected.');
+            return;
+        }
+        if (!checkpointID) {
+            console.warn('[loop-ui] skipping checkpoint restore: empty checkpoint id', { conversationId: selectedConversationId });
+            pushNotice('error', 'Unable to restore checkpoint: checkpoint id is missing.');
+            return;
+        }
+        if (isRestoringCheckpoint) {
+            console.warn('[loop-ui] skipping checkpoint restore: restore already in progress', {
+                conversationId: selectedConversationId,
+                checkpointId: checkpointID,
+            });
+            pushNotice('info', 'A checkpoint restore is already in progress.');
+            return;
+        }
+        if (isSending) {
+            console.warn('[loop-ui] skipping checkpoint restore: conversation is sending', {
+                conversationId: selectedConversationId,
+                checkpointId: checkpointID,
+            });
+            pushNotice('info', 'Wait for the current response to finish before restoring a checkpoint.');
             return;
         }
 
         setIsRestoringCheckpoint(true);
+        console.info('[loop-ui] requesting checkpoint restore', {
+            conversationId: selectedConversationId,
+            checkpointId: checkpointID,
+        });
         const response = await requestJson<unknown>({
             baseUrl: backendUrl,
             endpointPath: `/conversations/${encodeURIComponent(selectedConversationId)}/checkpoints/${encodeURIComponent(checkpointID)}/restore`,
@@ -554,11 +633,30 @@ export function useConversations(
     ]);
 
     const undoLatestCheckpoint = useCallback(async (): Promise<void> => {
-        if (!selectedConversationId || isRestoringCheckpoint || isSending) {
+        if (!selectedConversationId) {
+            console.warn('[loop-ui] skipping undo latest checkpoint: no selected conversation');
+            pushNotice('error', 'Unable to undo: no conversation is selected.');
+            return;
+        }
+        if (isRestoringCheckpoint) {
+            console.warn('[loop-ui] skipping undo latest checkpoint: restore already in progress', {
+                conversationId: selectedConversationId,
+            });
+            pushNotice('info', 'A checkpoint restore is already in progress.');
+            return;
+        }
+        if (isSending) {
+            console.warn('[loop-ui] skipping undo latest checkpoint: conversation is sending', {
+                conversationId: selectedConversationId,
+            });
+            pushNotice('info', 'Wait for the current response to finish before undoing.');
             return;
         }
 
         setIsRestoringCheckpoint(true);
+        console.info('[loop-ui] requesting undo latest checkpoint', {
+            conversationId: selectedConversationId,
+        });
         const response = await requestJson<unknown>({
             baseUrl: backendUrl,
             endpointPath: `/conversations/${encodeURIComponent(selectedConversationId)}/undo`,
@@ -610,6 +708,77 @@ export function useConversations(
         });
     }, [clearConversationView, loadConversationHistory, selectedConversationId]);
 
+    const applyPatchToWorkspace = useCallback(async (
+        conversationId: string,
+        files: PatchFile[],
+        message: string,
+        baseCheckpointId?: string,
+        patchId?: string,
+    ): Promise<ApplyPatchResult | null> => {
+        if (!conversationId) {
+            console.warn('[loop-ui] skipping apply patch: no conversation selected', {
+                fileCount: files.length,
+                baseCheckpointId: baseCheckpointId?.trim() || '',
+                patchId: patchId?.trim() || '',
+            });
+            pushNotice('error', 'Unable to revert changes: no conversation is selected.');
+            return null;
+        }
+        if (files.length === 0) {
+            console.warn('[loop-ui] skipping apply patch: no files selected', {
+                conversationId,
+                baseCheckpointId: baseCheckpointId?.trim() || '',
+                patchId: patchId?.trim() || '',
+            });
+            pushNotice('info', 'Select at least one file to revert.');
+            return null;
+        }
+        console.info('[loop-ui] requesting workspace revert', {
+            conversationId,
+            fileCount: files.length,
+            baseCheckpointId: baseCheckpointId?.trim() || '',
+            patchId: patchId?.trim() || '',
+        });
+        const response = await requestJson<unknown>({
+            baseUrl: backendUrl,
+            endpointPath: `/conversations/${encodeURIComponent(conversationId)}/apply-patch`,
+            method: 'POST',
+            body: {
+                files,
+                message,
+                baseCheckpointId: baseCheckpointId?.trim() || undefined,
+                patchId: patchId?.trim() || undefined,
+            },
+        });
+
+        if (!response.ok) {
+            pushNotice('error', `Failed to apply patch: ${stringifyResponseError(response.data, response.error)}`);
+            return null;
+        }
+
+        const responseRecord = asRecord(response.data);
+        const workspaceChange = parseWorkspaceChangeApiPayload(getField(responseRecord, ['workspace_change', 'workspaceChange']));
+        if (workspaceChange?.kind === 'workspace_changes_applied') {
+            pushActivity({
+                kind: 'lifecycle',
+                title: workspaceChange.reason === 'manual_revert' ? 'Selected changes reverted' : 'Workspace changes applied',
+                body: workspaceChange.text,
+                checkpointId: workspaceChange.checkpoint_id,
+                checkpointReason: workspaceChange.reason,
+                baseCheckpointId: workspaceChange.base_checkpoint_id,
+                patchId: workspaceChange.patch_id,
+                filePaths: workspaceChange.file_paths,
+            }, conversationId);
+        }
+        
+        pushNotice('info', 'Successfully reverted changes.');
+        void Promise.all([
+            loadConversationHistory(conversationId),
+            refreshCheckpointsForConversation(conversationId),
+        ]);
+        return { workspaceChange };
+    }, [backendUrl, loadConversationHistory, pushActivity, pushNotice, refreshCheckpointsForConversation]);
+
     return {
         conversationsByWorkspace,
         setConversationsByWorkspace,
@@ -634,6 +803,7 @@ export function useConversations(
         createCheckpoint,
         restoreCheckpoint,
         undoLatestCheckpoint,
+        applyPatchToWorkspace,
         isRestoringCheckpoint,
         isLoadingSelectedConversation,
     };
