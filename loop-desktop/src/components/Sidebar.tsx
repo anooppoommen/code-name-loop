@@ -14,6 +14,7 @@ interface SidebarProps {
   showMascot: boolean;
   onShowMascotChange: (value: boolean) => void;
   workspaces: WorkspaceSummary[];
+  isLoadingWorkspaces: boolean;
   selectedWorkspaceId: string;
   expandedWorkspaceIds: Record<string, boolean>;
   onToggleWorkspace: (workspaceId: string) => void;
@@ -40,6 +41,7 @@ export function Sidebar({
   showMascot,
   onShowMascotChange,
   workspaces,
+  isLoadingWorkspaces,
   selectedWorkspaceId,
   expandedWorkspaceIds,
   onToggleWorkspace,
@@ -65,6 +67,7 @@ export function Sidebar({
 
       <WorkspaceSection
         workspaces={workspaces}
+        isLoadingWorkspaces={isLoadingWorkspaces}
         selectedWorkspaceId={selectedWorkspaceId}
         expandedWorkspaceIds={expandedWorkspaceIds}
         conversationsByWorkspace={conversationsByWorkspace}

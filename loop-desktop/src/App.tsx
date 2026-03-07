@@ -297,6 +297,7 @@ export default function App() {
                 showMascot={app.showMascot}
                 onShowMascotChange={app.setShowMascot}
                 workspaces={app.workspaces}
+                isLoadingWorkspaces={app.isLoadingWorkspaces}
                 selectedWorkspaceId={app.selectedWorkspaceId}
                 expandedWorkspaceIds={expandedWorkspaceIds}
                 onToggleWorkspace={toggleWorkspace}
@@ -337,6 +338,15 @@ export default function App() {
             isProfiling={isProfiling}
             onToggleProfiling={toggleProfiling}
           />
+          {app.isLoadingWorkspaces && app.workspaces.length === 0 ? (
+            <div className="flex flex-1 items-center justify-center">
+              <div className="flex flex-col items-center gap-4 text-loop-500">
+                <div className="h-8 w-8 animate-spin rounded-full border-2 border-loop-500/20 border-t-loop-500" />
+                <p className="text-sm font-medium">Loading workspaces...</p>
+              </div>
+            </div>
+          ) : (
+          <>
           <AnimatePresence initial={false}>
             {app.isSending && app.showMascot ? (
               <motion.div
@@ -422,6 +432,8 @@ export default function App() {
             workspaceId={app.selectedWorkspaceId}
             conversationId={app.selectedConversationId}
           />
+          </>
+          )}
         </main>
       </div>
     </KeyboardShortcut>

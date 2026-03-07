@@ -3,6 +3,7 @@ import { WorkspaceItem } from './WorkspaceItem';
 
 interface WorkspaceSectionProps {
   workspaces: WorkspaceSummary[];
+  isLoadingWorkspaces: boolean;
   selectedWorkspaceId: string;
   expandedWorkspaceIds: Record<string, boolean>;
   conversationsByWorkspace: Record<string, ConversationSummary[]>;
@@ -20,6 +21,7 @@ interface WorkspaceSectionProps {
 
 export function WorkspaceSection({
   workspaces,
+  isLoadingWorkspaces,
   selectedWorkspaceId,
   expandedWorkspaceIds,
   conversationsByWorkspace,
@@ -44,6 +46,11 @@ export function WorkspaceSection({
         className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto pt-1"
         style={{ overflowAnchor: 'none', scrollbarGutter: 'stable' }}
       >
+        {workspaces.length === 0 && isLoadingWorkspaces && (
+          <div className="px-3 py-2 text-[12px] text-loop-500">
+            Loading workspaces...
+          </div>
+        )}
         {workspaces.map((workspace) => (
           <WorkspaceItem
             key={workspace.id}
