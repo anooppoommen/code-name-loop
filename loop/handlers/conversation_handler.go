@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 
 	"loop/agent"
+	"loop/agent/systeminstruction"
 	"loop/agent/tools"
 	"loop/checkpoints"
 	"loop/gitcheckpoints"
@@ -53,6 +54,33 @@ func NewConversationHandler(s store.Store, client agent.ModelClient, pm *tools.P
 	}
 }
 
+func applyDefaultSystemPromptToConversation(conv *models.Conversation) {
+	if conv == nil {
+		return
+	}
+	variant := systeminstruction.DefaultVariant()
+	if strings.TrimSpace(conv.SystemPromptID) == "" {
+		conv.SystemPromptID = variant.ID
+	}
+	if strings.TrimSpace(conv.SystemPromptName) == "" {
+		conv.SystemPromptName = variant.Name
+	}
+}
+
+func withCurrentSystemPromptMetadata(metadata map[string]any) map[string]any {
+	if metadata == nil {
+		metadata = map[string]any{}
+	}
+	variant := systeminstruction.DefaultVariant()
+	if id := strings.TrimSpace(variant.ID); id != "" {
+		metadata["system_prompt_id"] = id
+	}
+	if name := strings.TrimSpace(variant.Name); name != "" {
+		metadata["system_prompt_name"] = name
+	}
+	return metadata
+}
+
 // RegisterRoutes registers conversation routes on the given mux.
 func (h *ConversationHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /conversations", h.Create)
@@ -86,6 +114,8 @@ func (h *ConversationHandler) Create(w http.ResponseWriter, r *http.Request) {
 		utils.WriteError(w, http.StatusBadRequest, "conversation id is required")
 		return
 	}
+
+	applyDefaultSystemPromptToConversation(&conv)
 
 	if err := h.store.Conversations().Create(r.Context(), &conv); err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint") {
@@ -942,7 +972,7 @@ func (h *ConversationHandler) Reply(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	userMetadata := map[string]any{}
+	userMetadata := withCurrentSystemPromptMetadata(map[string]any{})
 	if modelName := strings.TrimSpace(resolveModelName(replyClient)); modelName != "" {
 		userMetadata["model"] = modelName
 	}

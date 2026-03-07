@@ -10,6 +10,7 @@ import (
 	"google.golang.org/genai"
 
 	"loop/agent"
+	"loop/agent/systeminstruction"
 	"loop/models"
 	"loop/store"
 )
@@ -142,10 +143,20 @@ Use async mode when you can do other work while the thread runs, then call await
 		}
 
 		// ── Create child conversation ─────────────────────────────────────────
+		systemPromptID := parentConv.SystemPromptID
+		systemPromptName := parentConv.SystemPromptName
+		if systemPromptID == "" && systemPromptName == "" {
+			variant := systeminstruction.DefaultVariant()
+			systemPromptID = variant.ID
+			systemPromptName = variant.Name
+		}
+
 		childConv := &models.Conversation{
 			ID:                   models.ConversationID(uuid.New().String()),
 			WorkspaceID:          parentConv.WorkspaceID,
 			Title:                args.Title,
+			SystemPromptID:       systemPromptID,
+			SystemPromptName:     systemPromptName,
 			ParentConversationID: parentConv.ID,
 			AnchorMessageID:      anchorMsgID,
 			ThreadMode:           mode,

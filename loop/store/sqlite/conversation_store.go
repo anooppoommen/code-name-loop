@@ -22,14 +22,16 @@ func (s *sqliteConversationStore) Create(ctx context.Context, conv *models.Conve
 
 	_, err := s.writeDB.ExecContext(ctx,
 		`INSERT INTO conversations
-		 (id, workspace_id, title, parent_conversation_id, anchor_message_id,
+		 (id, workspace_id, title, system_prompt_id, system_prompt_name, parent_conversation_id, anchor_message_id,
 		  root_message_id, head_message_id,
 		  thread_mode, thread_status, context_strategy, result_message,
 		  created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		string(conv.ID),
 		string(conv.WorkspaceID),
 		conv.Title,
+		conv.SystemPromptID,
+		conv.SystemPromptName,
 		string(conv.ParentConversationID),
 		string(conv.AnchorMessageID),
 		string(conv.RootMessageID),
@@ -50,13 +52,13 @@ func (s *sqliteConversationStore) Create(ctx context.Context, conv *models.Conve
 func (s *sqliteConversationStore) Get(ctx context.Context, id models.ConversationID) (*models.Conversation, error) {
 	conv := &models.Conversation{}
 	err := s.readDB.QueryRowContext(ctx,
-		`SELECT id, workspace_id, title, parent_conversation_id, anchor_message_id,
+		`SELECT id, workspace_id, title, system_prompt_id, system_prompt_name, parent_conversation_id, anchor_message_id,
 		        root_message_id, head_message_id,
 		        thread_mode, thread_status, context_strategy, result_message,
 		        created_at, updated_at
 		 FROM conversations WHERE id = ?`, string(id),
 	).Scan(
-		&conv.ID, &conv.WorkspaceID, &conv.Title,
+		&conv.ID, &conv.WorkspaceID, &conv.Title, &conv.SystemPromptID, &conv.SystemPromptName,
 		&conv.ParentConversationID, &conv.AnchorMessageID,
 		&conv.RootMessageID, &conv.HeadMessageID,
 		&conv.ThreadMode, &conv.ThreadStatus, &conv.ContextStrategy, &conv.ResultMessage,
@@ -73,7 +75,7 @@ func (s *sqliteConversationStore) Get(ctx context.Context, id models.Conversatio
 
 func (s *sqliteConversationStore) ListByWorkspace(ctx context.Context, wsID models.WorkspaceID) ([]*models.Conversation, error) {
 	rows, err := s.readDB.QueryContext(ctx,
-		`SELECT id, workspace_id, title, parent_conversation_id, anchor_message_id,
+		`SELECT id, workspace_id, title, system_prompt_id, system_prompt_name, parent_conversation_id, anchor_message_id,
 		        root_message_id, head_message_id,
 		        thread_mode, thread_status, context_strategy, result_message,
 		        created_at, updated_at
@@ -87,7 +89,7 @@ func (s *sqliteConversationStore) ListByWorkspace(ctx context.Context, wsID mode
 }
 
 func (s *sqliteConversationStore) ListByWorkspacePaged(ctx context.Context, wsID models.WorkspaceID, limit int, before *store.ConversationListCursor) ([]*models.Conversation, error) {
-	query := `SELECT id, workspace_id, title, parent_conversation_id, anchor_message_id,
+	query := `SELECT id, workspace_id, title, system_prompt_id, system_prompt_name, parent_conversation_id, anchor_message_id,
 		        root_message_id, head_message_id,
 		        thread_mode, thread_status, context_strategy, result_message,
 		        created_at, updated_at
@@ -112,7 +114,7 @@ func (s *sqliteConversationStore) ListByWorkspacePaged(ctx context.Context, wsID
 
 func (s *sqliteConversationStore) ListThreads(ctx context.Context, parentConvID models.ConversationID) ([]*models.Conversation, error) {
 	rows, err := s.readDB.QueryContext(ctx,
-		`SELECT id, workspace_id, title, parent_conversation_id, anchor_message_id,
+		`SELECT id, workspace_id, title, system_prompt_id, system_prompt_name, parent_conversation_id, anchor_message_id,
 		        root_message_id, head_message_id,
 		        thread_mode, thread_status, context_strategy, result_message,
 		        created_at, updated_at
@@ -130,12 +132,14 @@ func (s *sqliteConversationStore) Update(ctx context.Context, conv *models.Conve
 
 	res, err := s.writeDB.ExecContext(ctx,
 		`UPDATE conversations
-		 SET title = ?, parent_conversation_id = ?, anchor_message_id = ?,
+		 SET title = ?, system_prompt_id = ?, system_prompt_name = ?, parent_conversation_id = ?, anchor_message_id = ?,
 		     root_message_id = ?, head_message_id = ?,
 		     thread_mode = ?, thread_status = ?, context_strategy = ?, result_message = ?,
 		     updated_at = ?
 		 WHERE id = ?`,
 		conv.Title,
+		conv.SystemPromptID,
+		conv.SystemPromptName,
 		string(conv.ParentConversationID),
 		string(conv.AnchorMessageID),
 		string(conv.RootMessageID),
@@ -176,7 +180,7 @@ func scanConversations(rows *sql.Rows) ([]*models.Conversation, error) {
 	for rows.Next() {
 		conv := &models.Conversation{}
 		if err := rows.Scan(
-			&conv.ID, &conv.WorkspaceID, &conv.Title,
+			&conv.ID, &conv.WorkspaceID, &conv.Title, &conv.SystemPromptID, &conv.SystemPromptName,
 			&conv.ParentConversationID, &conv.AnchorMessageID,
 			&conv.RootMessageID, &conv.HeadMessageID,
 			&conv.ThreadMode, &conv.ThreadStatus, &conv.ContextStrategy, &conv.ResultMessage,

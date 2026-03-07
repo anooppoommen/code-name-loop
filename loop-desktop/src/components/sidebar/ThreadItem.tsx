@@ -7,6 +7,30 @@ import { formatRelativeTime } from '../../utils/parsers';
 
 const SPINNER_FRAMES = ['⣾', '⣷', '⣯', '⣟', '⡿', '⢿', '⣻', '⣽'];
 
+function promptBadgeLabel(conversation: ConversationSummary): string {
+  const id = conversation.systemPromptId?.trim();
+  if (id) {
+    const versionMatch = id.match(/\.v(\d+)$/i);
+    if (versionMatch) {
+      return `V${versionMatch[1]}`;
+    }
+
+    const segments = id.split('.').filter(Boolean);
+    const last = segments[segments.length - 1];
+    if (last) {
+      return last.toUpperCase();
+    }
+  }
+
+  const name = conversation.systemPromptName?.trim();
+  if (!name) {
+    return '';
+  }
+
+  const parts = name.split(/\s+/).filter(Boolean);
+  return parts[parts.length - 1]?.toUpperCase() ?? '';
+}
+
 function BrailleSpinner() {
   const [frame, setFrame] = useState(0);
 
@@ -43,6 +67,8 @@ export function ThreadItem({
   onDelete,
   onRename,
 }: ThreadItemProps) {
+  const promptLabel = promptBadgeLabel(conversation);
+  const promptTitle = conversation.systemPromptName || conversation.systemPromptId || '';
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(conversation.title);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -146,11 +172,21 @@ export function ThreadItem({
           ) : (
             <>
               <span className="truncate leading-tight">{conversation.title}</span>
-              {conversation.updatedAt && (
-                <span className="shrink-0 whitespace-nowrap text-[10px] text-loop-500 opacity-60 transition-opacity group-hover:opacity-0">
-                  {formatRelativeTime(conversation.updatedAt)}
-                </span>
-              )}
+              <div className="flex shrink-0 items-center gap-1.5">
+                {promptLabel && (
+                  <span
+                    className="rounded-full border border-loop-600/70 bg-loop-800/90 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.14em] text-loop-300"
+                    title={promptTitle}
+                  >
+                    {promptLabel}
+                  </span>
+                )}
+                {conversation.updatedAt && (
+                  <span className="whitespace-nowrap text-[10px] text-loop-500 opacity-60 transition-opacity group-hover:opacity-0">
+                    {formatRelativeTime(conversation.updatedAt)}
+                  </span>
+                )}
+              </div>
             </>
           )}
         </div>

@@ -250,6 +250,7 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 		if thinking, err := ParseThinkingLevel(strings.TrimSpace(s.ThinkingLevel)); err == nil {
 			metadata["thinking_level"] = strings.ToLower(string(thinking))
 		}
+		metadata = s.withSystemPromptMetadata(metadata)
 
 		msg := &models.Message{
 			ID:             models.MessageID(uuid.New().String()),
@@ -535,6 +536,7 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 		agentMsg.ConversationID = s.Conversation.ID
 		agentMsg.SentBy = models.SentByAgent
 		agentMsg.State = models.MessageStateCompleted
+		agentMsg.Metadata = s.withSystemPromptMetadata(agentMsg.Metadata)
 
 		if err := s.Store.Messages().Append(ctx, agentMsg); err != nil {
 			emitError(err, iteration, 0)
@@ -1121,7 +1123,10 @@ type Session struct {
 	Workspace    *models.Workspace
 	Conversation *models.Conversation
 	SystemPrompt string
-	Tools        []*ToolDef
+	// SystemPromptID/SystemPromptName identify the prompt variant backing SystemPrompt.
+	SystemPromptID   string
+	SystemPromptName string
+	Tools            []*ToolDef
 	// IncludeThoughts controls whether thought parts are requested from the model.
 	IncludeThoughts bool
 	// ThinkingLevel is the user-selected level for this session/turn.
@@ -1156,12 +1161,15 @@ func NewSession(
 	tools []*ToolDef,
 	depth int,
 ) *Session {
+	variant := systeminstruction.DefaultVariant()
 	return &Session{
 		Store:                 store,
 		Client:                client,
 		Workspace:             workspace,
 		Conversation:          conversation,
 		SystemPrompt:          systeminstruction.Get(),
+		SystemPromptID:        variant.ID,
+		SystemPromptName:      variant.Name,
 		Tools:                 tools,
 		IncludeThoughts:       true,
 		ThinkingLevel:         "medium",
@@ -1209,6 +1217,73 @@ func (s *Session) modelRetryTick(delay time.Duration) time.Duration {
 		return delay
 	}
 	return tick
+}
+
+func (s *Session) systemPromptIdentity() (string, string) {
+	if s == nil {
+		return "", ""
+	}
+	id := strings.TrimSpace(s.SystemPromptID)
+	name := strings.TrimSpace(s.SystemPromptName)
+	if id != "" || name != "" {
+		return id, name
+	}
+	variant := systeminstruction.DefaultVariant()
+	return strings.TrimSpace(variant.ID), strings.TrimSpace(variant.Name)
+}
+
+func (s *Session) withSystemPromptMetadata(metadata map[string]any) map[string]any {
+	id, name := s.systemPromptIdentity()
+	if metadata == nil {
+		metadata = map[string]any{}
+	}
+	if id != "" {
+		metadata["system_prompt_id"] = id
+	}
+	if name != "" {
+		metadata["system_prompt_name"] = name
+	}
+	return metadata
+}
+
+func (s *Session) ensureConversationPromptMetadata(ctx context.Context) {
+	if s == nil || s.Store == nil || s.Conversation == nil {
+		return
+	}
+
+	id, name := s.systemPromptIdentity()
+	if s.Conversation.SystemPromptID == id && s.Conversation.SystemPromptName == name {
+		return
+	}
+
+	persistCtx := ctx
+	if persistCtx == nil || persistCtx.Err() != nil {
+		detachedCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		persistCtx = detachedCtx
+	}
+
+	conv := s.Conversation
+	current, err := s.Store.Conversations().Get(persistCtx, conv.ID)
+	if err == nil && current != nil {
+		conv = current
+	} else if err != nil {
+		log.Printf("[session] load conversation for prompt metadata conv=%s: %v", s.Conversation.ID, err)
+	}
+
+	if conv.SystemPromptID == id && conv.SystemPromptName == name {
+		s.Conversation = conv
+		return
+	}
+
+	conv.SystemPromptID = id
+	conv.SystemPromptName = name
+	if err := s.Store.Conversations().Update(persistCtx, conv); err != nil {
+		log.Printf("[session] update conversation prompt metadata conv=%s: %v", s.Conversation.ID, err)
+		return
+	}
+
+	s.Conversation = conv
 }
 
 // emitUIEvent persists a single UIEvent to the store.
@@ -1302,6 +1377,8 @@ func (s *Session) createCheckpointForUserMessage(ctx context.Context, userMsg *m
 //
 // The returned context.CancelFunc can be used to cancel the turn.
 func (s *Session) startTurn(ctx context.Context) (<-chan TurnEvent, context.CancelFunc, error) {
+	s.ensureConversationPromptMetadata(ctx)
+
 	// Abort any previously running turn.
 	s.mu.Lock()
 	if s.activeTurnCancel != nil {
@@ -1331,8 +1408,10 @@ func (s *Session) StartTurn(ctx context.Context) (<-chan TurnEvent, context.Canc
 }
 
 func (s *Session) HandleUserMessage(ctx context.Context, parts []models.MessagePart) (<-chan TurnEvent, context.CancelFunc, error) {
+	s.ensureConversationPromptMetadata(ctx)
+
 	// Create and persist the user message.
-	metadata := map[string]any{}
+	metadata := s.withSystemPromptMetadata(map[string]any{})
 	if model := strings.TrimSpace(resolveModelName(s.Client)); model != "" {
 		metadata["model"] = model
 	}

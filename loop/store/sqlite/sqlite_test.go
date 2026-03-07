@@ -226,9 +226,11 @@ func TestConversationCreateAndGet(t *testing.T) {
 	}
 
 	conv := &models.Conversation{
-		ID:          "conv-1",
-		WorkspaceID: "ws-conv",
-		Title:       "First Conversation",
+		ID:               "conv-1",
+		WorkspaceID:      "ws-conv",
+		Title:            "First Conversation",
+		SystemPromptID:   "gemini-coding-strict-optimized.v7",
+		SystemPromptName: "Gemini Coding Strict Optimized V7",
 	}
 	if err := s.Conversations().Create(ctx, conv); err != nil {
 		t.Fatalf("Create: %v", err)
@@ -240,6 +242,12 @@ func TestConversationCreateAndGet(t *testing.T) {
 	}
 	if got.Title != "First Conversation" {
 		t.Errorf("Title = %q, want %q", got.Title, "First Conversation")
+	}
+	if got.SystemPromptID != "gemini-coding-strict-optimized.v7" {
+		t.Errorf("SystemPromptID = %q", got.SystemPromptID)
+	}
+	if got.SystemPromptName != "Gemini Coding Strict Optimized V7" {
+		t.Errorf("SystemPromptName = %q", got.SystemPromptName)
 	}
 	if got.IsThread() {
 		t.Error("root conversation should not be a thread")

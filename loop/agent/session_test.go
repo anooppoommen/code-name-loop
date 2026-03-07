@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"loop/agent"
+	"loop/agent/systeminstruction"
 	agenttools "loop/agent/tools"
 	"loop/gitcheckpoints"
 	"loop/models"
@@ -264,6 +265,7 @@ func TestSessionPersistsUserMessageModelAndThinkingLevel(t *testing.T) {
 	s := newTestStore(t)
 	ws, conv := seedConversation(t, s)
 	ctx := context.Background()
+	variant := systeminstruction.DefaultVariant()
 
 	mock := &mockModelClient{
 		responses: [][]agent.TurnEvent{makeTextResponse("done")},
@@ -297,6 +299,31 @@ func TestSessionPersistsUserMessageModelAndThinkingLevel(t *testing.T) {
 	}
 	if got, _ := userMsg.Metadata["thinking_level"].(string); got != "high" {
 		t.Fatalf("user metadata thinking_level=%q", got)
+	}
+	if got, _ := userMsg.Metadata["system_prompt_id"].(string); got != variant.ID {
+		t.Fatalf("user metadata system_prompt_id=%q", got)
+	}
+	if got, _ := userMsg.Metadata["system_prompt_name"].(string); got != variant.Name {
+		t.Fatalf("user metadata system_prompt_name=%q", got)
+	}
+
+	agentMsg := msgs[len(msgs)-1]
+	if agentMsg.SentBy != models.SentByAgent {
+		t.Fatalf("last message sent_by=%s, want agent", agentMsg.SentBy)
+	}
+	if got, _ := agentMsg.Metadata["system_prompt_id"].(string); got != variant.ID {
+		t.Fatalf("agent metadata system_prompt_id=%q", got)
+	}
+
+	updatedConv, err := s.Conversations().Get(ctx, conv.ID)
+	if err != nil {
+		t.Fatalf("get conversation: %v", err)
+	}
+	if updatedConv.SystemPromptID != variant.ID {
+		t.Fatalf("conversation system_prompt_id=%q", updatedConv.SystemPromptID)
+	}
+	if updatedConv.SystemPromptName != variant.Name {
+		t.Fatalf("conversation system_prompt_name=%q", updatedConv.SystemPromptName)
 	}
 }
 

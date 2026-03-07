@@ -61,6 +61,12 @@ type Conversation struct {
 
 	Title string
 
+	// SystemPromptID/SystemPromptName track the latest prompt variant used
+	// for turns in this conversation. Per-turn provenance also lives on
+	// message metadata so conversations can span prompt upgrades safely.
+	SystemPromptID   string
+	SystemPromptName string
+
 	// Threading anchors (empty for root conversations).
 	ParentConversationID ConversationID
 	AnchorMessageID      MessageID

@@ -30,6 +30,10 @@ func migrate(db *sql.DB) error {
 		return err
 	}
 
+	if err := migrateConversationPromptFields(db); err != nil {
+		return err
+	}
+
 	// Timeline ordering migration adds shared ordering fields and backfills
 	// deterministic values for existing rows.
 	if err := migrateTimelineOrdering(db); err != nil {
@@ -73,6 +77,8 @@ CREATE TABLE IF NOT EXISTS conversations (
     id                      TEXT PRIMARY KEY,
     workspace_id            TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
     title                   TEXT NOT NULL DEFAULT '',
+    system_prompt_id        TEXT NOT NULL DEFAULT '',
+    system_prompt_name      TEXT NOT NULL DEFAULT '',
     parent_conversation_id  TEXT NOT NULL DEFAULT '',
     anchor_message_id       TEXT NOT NULL DEFAULT '',
     root_message_id         TEXT NOT NULL DEFAULT '',
@@ -196,6 +202,19 @@ func migrateThreadFields(db *sql.DB) error {
 			if !isDuplicateColumn(err) {
 				return fmt.Errorf("thread fields migration: %w", err)
 			}
+		}
+	}
+	return nil
+}
+
+func migrateConversationPromptFields(db *sql.DB) error {
+	alters := []string{
+		`ALTER TABLE conversations ADD COLUMN system_prompt_id TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE conversations ADD COLUMN system_prompt_name TEXT NOT NULL DEFAULT ''`,
+	}
+	for _, stmt := range alters {
+		if _, err := db.Exec(stmt); err != nil && !isDuplicateColumn(err) {
+			return fmt.Errorf("conversation prompt fields migration: %w", err)
 		}
 	}
 	return nil

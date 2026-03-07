@@ -55,6 +55,8 @@ export interface ConversationSummary {
   id: string;
   title: string;
   isThread: boolean;
+  systemPromptId?: string;
+  systemPromptName?: string;
   updatedAt: string;
 }
 
