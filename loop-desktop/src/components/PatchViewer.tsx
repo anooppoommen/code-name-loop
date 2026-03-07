@@ -3,6 +3,7 @@ import { ChevronDown, ChevronRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { parsePatchData } from '../utils/patches';
 import type { PatchFile } from '../utils/patches';
+import { COLLAPSIBLE_SPRING } from './activity-feed/ActivityMotion';
 import { getPatchFileIcon } from './patchViewerFileIcon';
 
 export function PatchViewer({ patchText }: { patchText: string }) {
@@ -73,7 +74,7 @@ export function FilePatchView({ file, statusBadgeLabel }: { file: PatchFile; sta
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: 'auto', opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2, ease: 'easeInOut' }}
+            transition={COLLAPSIBLE_SPRING}
             className="border-t border-loop-600/60 bg-loop-800 overflow-x-auto text-[12px] font-mono whitespace-pre flex flex-col"
           >
             {file.hunks.length === 0 ? (

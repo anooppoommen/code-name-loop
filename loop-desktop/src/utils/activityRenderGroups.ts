@@ -6,7 +6,6 @@ export interface RenderGroup {
   id: string;
   events: ActivityEvent[];
   defaultExpanded?: boolean;
-  scrollAnchorId?: string;
 }
 
 export function visibleEventsForGroup(
@@ -39,7 +38,6 @@ export function buildRenderGroups(
       type: 'single',
       id: `${group.id}:head`,
       events: [events[0]],
-      scrollAnchorId: group.headId,
     });
 
     if (events.length === 1) {
@@ -62,7 +60,6 @@ export function buildRenderGroups(
           id: `${group.id}:intermediate`,
           events: intermediate,
           defaultExpanded: isActiveGroup,
-          scrollAnchorId: group.headId,
         });
       }
       continue;
@@ -75,7 +72,6 @@ export function buildRenderGroups(
         id: `${group.id}:intermediate`,
         events: intermediate,
         defaultExpanded: isActiveGroup,
-        scrollAnchorId: group.headId,
       });
     }
 
@@ -83,7 +79,6 @@ export function buildRenderGroups(
       type: 'single',
       id: `${group.id}:terminal`,
       events: [events[terminalIndex]],
-      scrollAnchorId: group.headId,
     });
 
     for (let index = terminalIndex + 1; index < events.length; index += 1) {
@@ -91,7 +86,6 @@ export function buildRenderGroups(
         type: 'single',
         id: `${group.id}:trailing:${events[index].id}`,
         events: [events[index]],
-        scrollAnchorId: group.headId,
       });
     }
   }

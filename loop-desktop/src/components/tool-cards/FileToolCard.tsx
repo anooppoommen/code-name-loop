@@ -2,6 +2,7 @@ import { AlertTriangle, Check, ChevronDown, Loader2, Copy } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { memo, useState } from 'react';
 import type { FileToolPayload } from './types';
+import { COLLAPSIBLE_SPRING } from '../activity-feed/ActivityMotion';
 
 const GEIST_MONO_STACK = '"Geist Mono","Geist",ui-monospace,SFMono-Regular,Menlo,monospace';
 
@@ -143,7 +144,7 @@ export const FileToolCard = memo(function FileToolCard({ payload }: { payload: F
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: 'auto', opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2, ease: 'easeInOut' }}
+            transition={COLLAPSIBLE_SPRING}
             className="group/output relative overflow-hidden rounded-lg border border-loop-800/90 bg-loop-900/35 mt-2"
           >
             <button

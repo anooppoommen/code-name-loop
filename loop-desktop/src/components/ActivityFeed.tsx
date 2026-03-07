@@ -1,9 +1,15 @@
-import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
+import { useReducedMotion } from 'framer-motion';
 import { ArrowDown } from 'lucide-react';
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ReactElement, RefObject } from 'react';
 import { ActivityIntermediateGroup } from './activity-feed/ActivityIntermediateGroup';
 import { ActivityFrame, ActivityItem } from './activity-feed/ActivityItem';
+import {
+  ACTIVITY_EASE_CSS,
+  ActivityAppendGrow,
+  ActivityPresence,
+  ActivityReveal,
+} from './activity-feed/ActivityMotion';
 import type { ToolReplyActions } from './tool-cards';
 import { CombinedPatchViewer } from './CombinedPatchViewer';
 import type { ApplyPatchResult } from '../hooks/useConversations';
@@ -35,15 +41,13 @@ interface ActivityFeedProps extends ToolReplyActions {
 }
 
 const BOTTOM_THRESHOLD_PX = 24;
+const BOTTOM_SETTLE_MS = 1200;
 const EMPTY_GROUPS: ReturnType<typeof useGroupStore.getState>['groupsByConversation'][string] = [];
 const EMPTY_EVENTS: ActivityEvent[] = [];
-const FEED_ENTRY_EASE = [0.22, 1, 0.36, 1] as const;
-const FEED_ENTRY_TRANSITION = { duration: 0.25, ease: FEED_ENTRY_EASE } as const;
-const FEED_REVEAL_TRANSITION = { duration: 0.2, ease: 'easeInOut' } as const;
-const MOTION_EVENT_COUNT_LIMIT = 24;
+const EMPTY_EVENT_ID_SET = new Set<string>();
 
 interface ActivityFeedEventsProps {
-  animateEntries: boolean;
+  allowInteractiveMotion: boolean;
   eventsLength: number;
   groupedEvents: ReturnType<typeof buildRenderGroups>;
   isSending: boolean;
@@ -51,13 +55,13 @@ interface ActivityFeedEventsProps {
 }
 
 const ActivityFeedEvents = memo(function ActivityFeedEvents({
-  animateEntries,
+  allowInteractiveMotion,
   eventsLength,
   groupedEvents,
   isSending,
   renderEventItem,
 }: ActivityFeedEventsProps) {
-  const content = (
+  return (
     <>
       {eventsLength === 0 && !isSending ? (
         <p className="m-0 px-4 py-3 text-sm text-loop-500">
@@ -69,66 +73,30 @@ const ActivityFeedEvents = memo(function ActivityFeedEvents({
           return renderEventItem(group.events[0]);
         }
 
-        const intermediate = (
+        return (
           <ActivityIntermediateGroup
+            key={group.id}
             events={group.events}
             defaultExpanded={group.defaultExpanded ?? false}
-            disableInitialMotion={!animateEntries}
-            animate={animateEntries}
-            scrollAnchorId={group.scrollAnchorId ?? group.events[0]?.id ?? ''}
+            disableInitialMotion
+            animate={allowInteractiveMotion}
             renderEventItem={renderEventItem}
           />
-        );
-
-        if (!animateEntries) {
-          return <div key={group.id}>{intermediate}</div>;
-        }
-
-        return (
-          <motion.div
-            key={group.id}
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0 }}
-            transition={FEED_ENTRY_TRANSITION}
-          >
-            {intermediate}
-          </motion.div>
         );
       })}
     </>
   );
-
-  if (!animateEntries) {
-    return content;
-  }
-
-  return <AnimatePresence initial={false}>{content}</AnimatePresence>;
 });
 
-const ActivitySendingStatus = memo(function ActivitySendingStatus({
-  currentStatus,
-  entryAnimationsEnabled,
-  prefersReducedMotion,
-}: {
-  currentStatus: string;
-  entryAnimationsEnabled: boolean;
-  prefersReducedMotion: boolean;
-}) {
+const ActivitySendingStatus = memo(function ActivitySendingStatus({ currentStatus }: { currentStatus: string }) {
   return (
-    <motion.div
-      key="activity-status"
-      initial={prefersReducedMotion || !entryAnimationsEnabled ? false : { opacity: 0, y: 12 }}
-      animate={prefersReducedMotion || !entryAnimationsEnabled ? undefined : { opacity: 1, y: 0 }}
-      exit={prefersReducedMotion || !entryAnimationsEnabled ? undefined : { opacity: 0 }}
-      transition={FEED_ENTRY_TRANSITION}
+    <ActivityFrame
+      className="group px-2 py-2"
     >
-      <ActivityFrame className="group px-2 py-2">
-        <span className="animate-googleStatus pb-1 text-left text-[11px] font-medium bg-[linear-gradient(110deg,transparent_25%,rgba(255,255,255,0.7)_50%,transparent_75%)] bg-[length:200%_auto] bg-clip-text text-transparent drop-shadow-sm">
-          {currentStatus || 'Thinking...'}
-        </span>
-      </ActivityFrame>
-    </motion.div>
+      <span className="animate-googleStatus pb-1 text-left text-[11px] font-medium bg-[linear-gradient(110deg,transparent_25%,rgba(255,255,255,0.7)_50%,transparent_75%)] bg-[length:200%_auto] bg-clip-text text-transparent drop-shadow-sm">
+        {currentStatus || 'Thinking...'}
+      </span>
+    </ActivityFrame>
   );
 });
 
@@ -194,13 +162,11 @@ export const ActivityFeed = memo(function ActivityFeed({
     () => buildRenderGroups(groups, eventsById, hideLifecycle, isSending),
     [eventsById, groups, hideLifecycle, isSending],
   );
+  const renderedEventIds = useMemo(() => events.map((event) => event.id), [events]);
   const showHistoryLoadingState = isLoadingHistory && !isSending && events.length === 0;
 
   const [isAtBottom, setIsAtBottom] = useState(true);
-  const [entryAnimationsEnabled, setEntryAnimationsEnabled] = useState(false);
-  const animateEntries = !prefersReducedMotion
-    && entryAnimationsEnabled
-    && groupedEvents.length <= MOTION_EVENT_COUNT_LIMIT;
+  const allowInteractiveMotion = !prefersReducedMotion;
 
   const programmaticScrollRef = useRef(false);
   const stickyBottomRef = useRef(true);
@@ -210,6 +176,43 @@ export const ActivityFeed = memo(function ActivityFeed({
   const scrollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const settleScrollFrameRef = useRef<number | null>(null);
   const settleScrollPassesRef = useRef(0);
+  const resizeScrollFrameRef = useRef<number | null>(null);
+  const previousRenderedEventIdsRef = useRef<string[]>([]);
+  const bottomLockUntilRef = useRef(0);
+  const settleTimeoutsRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const [settlingEventIds, setSettlingEventIds] = useState<Set<string>>(() => new Set());
+
+  const settleEvent = useCallback((eventId: string, durationMs = BOTTOM_SETTLE_MS) => {
+    if (!eventId) {
+      return;
+    }
+
+    setSettlingEventIds((current) => {
+      if (current.has(eventId)) {
+        return current;
+      }
+      const next = new Set(current);
+      next.add(eventId);
+      return next;
+    });
+
+    const existingTimeout = settleTimeoutsRef.current[eventId];
+    if (existingTimeout) {
+      clearTimeout(existingTimeout);
+    }
+
+    settleTimeoutsRef.current[eventId] = setTimeout(() => {
+      delete settleTimeoutsRef.current[eventId];
+      setSettlingEventIds((current) => {
+        if (!current.has(eventId)) {
+          return current;
+        }
+        const next = new Set(current);
+        next.delete(eventId);
+        return next;
+      });
+    }, durationMs);
+  }, []);
   const scrollToBottom = useCallback(
     (behavior: ScrollBehavior = 'auto'): void => {
       const node = containerRef.current;
@@ -228,7 +231,7 @@ export const ActivityFeed = memo(function ActivityFeed({
 
       const performScroll = (nextBehavior: ScrollBehavior): void => {
         node.scrollTo({
-          top: Math.max(0, node.scrollHeight - node.clientHeight),
+          top: 0,
           behavior: nextBehavior,
         });
       };
@@ -273,7 +276,7 @@ export const ActivityFeed = memo(function ActivityFeed({
     }
 
     const getIsNearBottom = (): boolean =>
-      node.scrollHeight - (node.scrollTop + node.clientHeight) <= BOTTOM_THRESHOLD_PX;
+      Math.abs(node.scrollTop) <= BOTTOM_THRESHOLD_PX;
 
     const onScroll = (): void => {
       if (programmaticScrollRef.current) {
@@ -295,22 +298,16 @@ export const ActivityFeed = memo(function ActivityFeed({
 
   useEffect(() => {
     setIsAtBottom(true);
-    setEntryAnimationsEnabled(false);
     stickyBottomRef.current = true;
     pendingInitialSnapRef.current = true;
-  }, [conversationId]);
-
-  useEffect(() => {
-    if (entryAnimationsEnabled || events.length > 0 || isSending) {
-      return;
+    previousRenderedEventIdsRef.current = [];
+    bottomLockUntilRef.current = 0;
+    for (const timeout of Object.values(settleTimeoutsRef.current)) {
+      clearTimeout(timeout);
     }
-
-    const frameId = window.requestAnimationFrame(() => {
-      setEntryAnimationsEnabled(true);
-    });
-
-    return () => window.cancelAnimationFrame(frameId);
-  }, [conversationId, entryAnimationsEnabled, events.length, isSending]);
+    settleTimeoutsRef.current = {};
+    setSettlingEventIds(new Set());
+  }, [conversationId]);
 
   useLayoutEffect(() => {
     if (!pendingInitialSnapRef.current) {
@@ -336,27 +333,48 @@ export const ActivityFeed = memo(function ActivityFeed({
     return () => window.cancelAnimationFrame(frameId);
   }, [events.length, isSending, scrollToBottom, showHistoryLoadingState]);
 
-  useLayoutEffect(() => {
-    if (entryAnimationsEnabled || events.length === 0) {
-      return;
+  const finalAgentEventId = useMemo(() => {
+    for (let index = events.length - 1; index >= 0; index -= 1) {
+      if (events[index].kind === 'assistant') {
+        return events[index].id;
+      }
     }
-
-    const frameId = window.requestAnimationFrame(() => {
-      setEntryAnimationsEnabled(true);
-    });
-
-    return () => window.cancelAnimationFrame(frameId);
-  }, [entryAnimationsEnabled, events.length]);
+    return null;
+  }, [events]);
 
   const previousIsSendingRef = useRef(isSending);
   useEffect(() => {
     const prevIsSending = previousIsSendingRef.current;
+    let frameId: number | null = null;
+    let settleFrameId: number | null = null;
+
     if (isSending && !prevIsSending) {
-      scrollToBottom('smooth');
+      bottomLockUntilRef.current = Date.now() + BOTTOM_SETTLE_MS;
+      scrollToBottom('auto');
       pendingInitialSnapRef.current = false;
     }
+    if (!isSending && prevIsSending) {
+      bottomLockUntilRef.current = Date.now() + BOTTOM_SETTLE_MS;
+      if (finalAgentEventId) {
+        settleEvent(finalAgentEventId);
+      }
+      frameId = window.requestAnimationFrame(() => {
+        scrollToBottom('auto');
+        settleFrameId = window.requestAnimationFrame(() => {
+          scrollToBottom('auto');
+        });
+      });
+    }
     previousIsSendingRef.current = isSending;
-  }, [isSending, scrollToBottom]);
+    return () => {
+      if (frameId !== null) {
+        window.cancelAnimationFrame(frameId);
+      }
+      if (settleFrameId !== null) {
+        window.cancelAnimationFrame(settleFrameId);
+      }
+    };
+  }, [finalAgentEventId, isSending, scrollToBottom, settleEvent]);
 
   useEffect(() => {
     const scrollNode = containerRef.current;
@@ -366,44 +384,89 @@ export const ActivityFeed = memo(function ActivityFeed({
     }
 
     const ro = new ResizeObserver(() => {
-      if (!stickyBottomRef.current) {
+      if (resizeScrollFrameRef.current !== null) {
         return;
       }
 
-      scrollToBottom('auto');
+      resizeScrollFrameRef.current = window.requestAnimationFrame(() => {
+        resizeScrollFrameRef.current = null;
+        const manualAnchorHoldUntil = Number(scrollNode.dataset.activityManualAnchorUntil ?? '0');
+        if (manualAnchorHoldUntil > Date.now()) {
+          return;
+        }
+
+        const bottomLocked = stickyBottomRef.current || Date.now() < bottomLockUntilRef.current;
+        if (!bottomLocked) {
+          return;
+        }
+
+        programmaticScrollRef.current = true;
+        scrollNode.scrollTop = 0;
+        window.requestAnimationFrame(() => {
+          programmaticScrollRef.current = false;
+        });
+      });
     });
 
     ro.observe(contentNode);
-    return () => ro.disconnect();
+    return () => {
+      ro.disconnect();
+      if (resizeScrollFrameRef.current !== null) {
+        window.cancelAnimationFrame(resizeScrollFrameRef.current);
+        resizeScrollFrameRef.current = null;
+      }
+    };
   }, [containerRef, scrollToBottom]);
 
+  const appendedEventIds = useMemo(() => {
+    if (!allowInteractiveMotion || showHistoryLoadingState) {
+      return EMPTY_EVENT_ID_SET;
+    }
+
+    const previousIds = previousRenderedEventIdsRef.current;
+    if (
+      previousIds.length === 0
+      || renderedEventIds.length <= previousIds.length
+      || !previousIds.every((id, index) => renderedEventIds[index] === id)
+    ) {
+      return EMPTY_EVENT_ID_SET;
+    }
+
+    return new Set(renderedEventIds.slice(previousIds.length));
+  }, [allowInteractiveMotion, renderedEventIds, showHistoryLoadingState]);
+
   useLayoutEffect(() => {
-    if (!stickyBottomRef.current || events.length === 0) {
+    const bottomLocked = stickyBottomRef.current || Date.now() < bottomLockUntilRef.current;
+    if (!bottomLocked || events.length === 0 || appendedEventIds.size > 0) {
       return;
     }
 
     scrollToBottom('auto');
-  }, [events.length, groupedEvents, scrollToBottom]);
+  }, [appendedEventIds, events.length, scrollToBottom]);
+
+  useLayoutEffect(() => {
+    if (showHistoryLoadingState) {
+      return;
+    }
+    previousRenderedEventIdsRef.current = renderedEventIds;
+  }, [renderedEventIds, showHistoryLoadingState]);
 
   useEffect(() => {
     return () => {
+      for (const timeout of Object.values(settleTimeoutsRef.current)) {
+        clearTimeout(timeout);
+      }
       if (scrollTimeoutRef.current) {
         clearTimeout(scrollTimeoutRef.current);
       }
       if (settleScrollFrameRef.current !== null) {
         window.cancelAnimationFrame(settleScrollFrameRef.current);
       }
+      if (resizeScrollFrameRef.current !== null) {
+        window.cancelAnimationFrame(resizeScrollFrameRef.current);
+      }
     };
   }, []);
-
-  const finalAgentEventId = useMemo(() => {
-    for (let index = events.length - 1; index >= 0; index -= 1) {
-      if (events[index].kind === 'assistant') {
-        return events[index].id;
-      }
-    }
-    return null;
-  }, [events]);
 
   const assistantPatchContext = useMemo(() => buildAssistantPatchContext(timelineEvents), [timelineEvents]);
   const syncPatchRevertAuthoritative = usePatchRevertStore((state) => state.syncAuthoritative);
@@ -417,52 +480,14 @@ export const ActivityFeed = memo(function ActivityFeed({
 
   const renderEventItem = useCallback((event: ActivityEvent) => {
     const isFinalAgent = event.id === finalAgentEventId;
-    if (!animateEntries) {
-      return (
-        <div key={event.id} data-activity-event-id={event.id}>
-          <ActivityItem
-            event={event}
-            isFinalAgent={isFinalAgent}
-            canCompose={canCompose}
-            isSending={isSending}
-            onUseToolReply={onUseToolReply}
-            onSendToolReply={onSendToolReply}
-            onRetryMessage={onRetryMessage}
-            onEditMessage={onEditMessage}
-          />
-          {event.kind === 'assistant' && assistantPatchContext.has(event.id) ? (
-            <ActivityFrame
-              className="px-2 pb-3 pt-1"
-              left={<div className="flex h-8 w-8 shrink-0 items-center justify-center" />}
-              contentClassName="min-w-0"
-            >
-              <CombinedPatchViewer
-                patchKey={buildPatchRevertKey(
-                  conversationId,
-                  assistantPatchContext.get(event.id)?.patchId,
-                  assistantPatchContext.get(event.id)?.patches || [],
-                )}
-                patchId={assistantPatchContext.get(event.id)?.patchId}
-                patches={assistantPatchContext.get(event.id)?.patches || []}
-                checkpointId={assistantPatchContext.get(event.id)?.checkpointId}
-                revertedPaths={assistantPatchContext.get(event.id)?.revertedPaths}
-                conversationId={conversationId}
-                applyPatchToWorkspace={applyPatchToWorkspace}
-              />
-            </ActivityFrame>
-          ) : null}
-        </div>
-      );
-    }
-
+    const shouldTrackLiveHeight = Boolean(event.streaming) || settlingEventIds.has(event.id);
     return (
-      <motion.div
+      <ActivityAppendGrow
         key={event.id}
+        animate={allowInteractiveMotion && (appendedEventIds.has(event.id) || shouldTrackLiveHeight)}
+        watch={shouldTrackLiveHeight}
+        fade={!event.streaming}
         data-activity-event-id={event.id}
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        exit={{ opacity: 0 }}
-        transition={FEED_ENTRY_TRANSITION}
       >
         <ActivityItem
           event={event}
@@ -495,10 +520,12 @@ export const ActivityFeed = memo(function ActivityFeed({
             />
           </ActivityFrame>
         ) : null}
-      </motion.div>
+      </ActivityAppendGrow>
     );
   }, [
+    allowInteractiveMotion,
     assistantPatchContext,
+    appendedEventIds,
     applyPatchToWorkspace,
     canCompose,
     conversationId,
@@ -508,67 +535,52 @@ export const ActivityFeed = memo(function ActivityFeed({
     onRetryMessage,
     onSendToolReply,
     onUseToolReply,
-    animateEntries,
+    settlingEventIds,
   ]);
 
   return (
     <section className="relative flex h-full min-h-0 flex-col bg-transparent">
-      <motion.div
+      <div
         ref={containerRef}
         data-activity-scroll-container="true"
-        className="flex-1 overflow-y-auto px-4 py-3"
-        style={{ scrollbarGutter: 'stable both-edges' }}
+        className="flex flex-1 flex-col-reverse overflow-y-auto px-4 py-3"
+        style={{ scrollbarGutter: 'stable both-edges', overflowAnchor: isAtBottom ? 'none' : 'auto' }}
       >
-        <AnimatePresence initial={false}>
+        <ActivityPresence mode="wait">
           {showHistoryLoadingState ? (
-            <motion.div
+            <ActivityReveal
               key="history-loading"
-              initial={prefersReducedMotion ? false : { opacity: 0 }}
-              animate={prefersReducedMotion ? undefined : { opacity: 1 }}
-              exit={prefersReducedMotion ? undefined : { opacity: 0 }}
-              transition={FEED_REVEAL_TRANSITION}
               className="mx-auto flex h-full w-full max-w-[720px] items-start px-4 py-3"
             >
               <p className="m-0 text-sm text-loop-500">Loading activity…</p>
-            </motion.div>
+            </ActivityReveal>
           ) : (
-            <motion.div
+            <ActivityReveal
               key={`history-content:${conversationId}`}
-              initial={prefersReducedMotion ? false : { opacity: 0 }}
-              animate={prefersReducedMotion ? undefined : { opacity: 1 }}
-              exit={prefersReducedMotion ? undefined : { opacity: 0 }}
-              transition={FEED_REVEAL_TRANSITION}
             >
               <div ref={feedContentRef} className="mx-auto flex min-h-full w-full max-w-[720px] flex-col justify-end">
                 <div className="flex flex-col justify-end">
                   <ActivityFeedEvents
-                    animateEntries={animateEntries}
+                    allowInteractiveMotion={allowInteractiveMotion}
                     eventsLength={events.length}
                     groupedEvents={groupedEvents}
                     isSending={isSending}
                     renderEventItem={renderEventItem}
                   />
-                  <AnimatePresence initial={false}>
-                    {isSending ? (
-                      <ActivitySendingStatus
-                        currentStatus={currentStatus}
-                        entryAnimationsEnabled={entryAnimationsEnabled}
-                        prefersReducedMotion={prefersReducedMotion}
-                      />
-                    ) : null}
-                  </AnimatePresence>
+                  {isSending ? <ActivitySendingStatus currentStatus={currentStatus} /> : null}
                 </div>
               </div>
-            </motion.div>
+            </ActivityReveal>
           )}
-        </AnimatePresence>
-      </motion.div>
+        </ActivityPresence>
+      </div>
       {!isAtBottom && events.length > 0 ? (
         <button
           type="button"
-          className={`absolute left-1/2 z-10 -translate-x-1/2 inline-flex items-center gap-1.5 rounded-full border border-loop-700 bg-loop-900/95 px-3 py-1.5 text-xs font-medium text-loop-200 shadow-lg shadow-black/30 backdrop-blur transition-colors hover:border-loop-500 hover:bg-loop-800 ${isSending ? 'bottom-8' : 'bottom-4'}`}
+          className={`absolute left-1/2 z-10 -translate-x-1/2 inline-flex items-center gap-1.5 rounded-full border border-loop-700 bg-loop-900/95 px-3 py-1.5 text-xs font-medium text-loop-200 shadow-lg shadow-black/30 backdrop-blur transition-[background-color,border-color,transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:border-loop-400 hover:bg-loop-800 hover:shadow-black/45 ${isSending ? 'bottom-8' : 'bottom-4'}`}
           onClick={() => scrollToBottom('smooth')}
           aria-label="Scroll to bottom"
+          style={{ transitionTimingFunction: ACTIVITY_EASE_CSS }}
         >
           <ArrowDown size={14} />
           Latest

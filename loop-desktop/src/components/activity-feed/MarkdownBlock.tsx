@@ -1,6 +1,7 @@
-import { memo } from 'react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import DOMPurify from 'dompurify';
+import { marked } from 'marked';
+import morphdom from 'morphdom';
+import { memo, useEffect, useMemo, useRef } from 'react';
 
 export interface MarkdownBlockProps {
   text: string;
@@ -8,97 +9,116 @@ export interface MarkdownBlockProps {
   dense?: boolean;
 }
 
+const MARKDOWN_CACHE_LIMIT = 200;
+const markdownCache = new Map<string, string>();
+
+marked.setOptions({
+  gfm: true,
+  breaks: false,
+});
+
+function touchCache(key: string, value: string) {
+  markdownCache.delete(key);
+  markdownCache.set(key, value);
+
+  if (markdownCache.size <= MARKDOWN_CACHE_LIMIT) {
+    return;
+  }
+
+  const oldest = markdownCache.keys().next().value;
+  if (oldest) {
+    markdownCache.delete(oldest);
+  }
+}
+
+function escapeHtml(text: string) {
+  return text
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+function fallback(text: string) {
+  return escapeHtml(text).replace(/\r\n?/g, '\n').replace(/\n/g, '<br>');
+}
+
+function renderMarkdown(text: string) {
+  const cached = markdownCache.get(text);
+  if (cached) {
+    touchCache(text, cached);
+    return cached;
+  }
+
+  let parsed = '';
+  try {
+    parsed = marked.parse(text) as string;
+  } catch {
+    parsed = fallback(text);
+  }
+
+  const safe = DOMPurify.sanitize(parsed, {
+    USE_PROFILES: { html: true },
+    SANITIZE_NAMED_PROPS: true,
+    FORBID_TAGS: ['style'],
+    FORBID_CONTENTS: ['style', 'script'],
+  });
+  touchCache(text, safe);
+  return safe;
+}
+
+function decorate(container: HTMLDivElement) {
+  container.querySelectorAll<HTMLAnchorElement>('a[href]').forEach((anchor) => {
+    anchor.target = '_blank';
+    anchor.rel = 'noreferrer noopener';
+  });
+}
+
 export default memo(function MarkdownBlock({
   text,
   compact = false,
   dense = false,
 }: MarkdownBlockProps) {
-  const rootTextClass = dense
-    ? 'm-0 break-words text-[14px] font-normal leading-user-message text-loop-200'
+  const rootRef = useRef<HTMLDivElement>(null);
+  const html = useMemo(() => renderMarkdown(text), [text]);
+  const baseClass = dense
+    ? 'text-[14px] font-normal leading-user-message text-loop-200'
     : compact
-      ? 'm-0 break-words text-[13px] font-normal leading-relaxed text-loop-300'
-      : 'm-0 break-words text-[15px] leading-relaxed';
+      ? 'text-[13px] font-normal leading-relaxed text-loop-300'
+      : 'text-[15px] leading-relaxed';
   const paragraphClass = dense
-    ? 'm-0 mb-1.5 leading-user-message last:mb-0'
+    ? '[&_p]:m-0 [&_p:not(:last-child)]:mb-1.5 [&_p]:leading-user-message'
     : compact
-      ? 'm-0 mb-2 leading-6 last:mb-0'
-      : 'm-0 mb-3 leading-7 last:mb-0';
+      ? '[&_p]:m-0 [&_p:not(:last-child)]:mb-2 [&_p]:leading-6'
+      : '[&_p]:m-0 [&_p:not(:last-child)]:mb-3 [&_p]:leading-7';
   const listClass = compact
-    ? 'm-0 mb-2 list-disc space-y-1 pl-6 marker:text-loop-500'
-    : 'm-0 mb-3 list-disc space-y-1 pl-6 marker:text-loop-500';
-  const orderedListClass = compact
-    ? 'm-0 mb-2 list-decimal space-y-1 pl-6 marker:text-loop-500'
-    : 'm-0 mb-3 list-decimal space-y-1 pl-6 marker:text-loop-500';
+    ? '[&_ul]:mb-2 [&_ul]:list-disc [&_ul]:space-y-1 [&_ul]:pl-6 [&_ol]:mb-2 [&_ol]:list-decimal [&_ol]:space-y-1 [&_ol]:pl-6'
+    : '[&_ul]:mb-3 [&_ul]:list-disc [&_ul]:space-y-1 [&_ul]:pl-6 [&_ol]:mb-3 [&_ol]:list-decimal [&_ol]:space-y-1 [&_ol]:pl-6';
   const inlineCodeClass = compact
-    ? 'rounded bg-loop-800/95 px-1.5 py-0.5 font-mono text-[11px] text-loop-200'
-    : 'rounded bg-loop-800/95 px-1.5 py-0.5 font-mono text-[12px] text-loop-100';
+    ? '[&_code]:rounded [&_code]:bg-loop-800/95 [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[11px] [&_code]:text-loop-200'
+    : '[&_code]:rounded [&_code]:bg-loop-800/95 [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[12px] [&_code]:text-loop-100';
   const preClass = compact
-    ? 'mb-2 mt-2 overflow-x-auto rounded-lg border border-loop-800 bg-loop-950/85 p-3 text-[11px] leading-relaxed text-loop-300'
-    : 'mb-3 mt-2 overflow-x-auto rounded-lg border border-loop-800 bg-loop-950/85 p-3 text-[12px] leading-relaxed text-loop-200';
+    ? '[&_pre]:mb-2 [&_pre]:mt-2 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:border [&_pre]:border-loop-800 [&_pre]:bg-loop-950/85 [&_pre]:p-3 [&_pre]:text-[11px] [&_pre]:leading-relaxed [&_pre]:text-loop-300 [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_pre_code]:text-[11px] [&_pre_code]:text-loop-200'
+    : '[&_pre]:mb-3 [&_pre]:mt-2 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:border [&_pre]:border-loop-800 [&_pre]:bg-loop-950/85 [&_pre]:p-3 [&_pre]:text-[12px] [&_pre]:leading-relaxed [&_pre]:text-loop-200 [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_pre_code]:text-[12px] [&_pre_code]:text-loop-100';
+  const headingClass = '[&_h1]:mb-3 [&_h1]:mt-0 [&_h1]:text-2xl [&_h1]:font-bold [&_h1]:tracking-tight [&_h1]:text-loop-100 [&_h2]:mb-3 [&_h2]:mt-4 [&_h2]:text-xl [&_h2]:font-semibold [&_h2]:tracking-tight [&_h2]:text-loop-100 [&_h3]:mb-2 [&_h3]:mt-4 [&_h3]:text-lg [&_h3]:font-semibold [&_h3]:text-loop-100 [&_h4]:mb-2 [&_h4]:mt-3 [&_h4]:text-base [&_h4]:font-semibold [&_h4]:text-loop-200';
+  const miscClass = '[&_a]:font-medium [&_a]:text-loop-200 [&_a]:underline [&_a]:decoration-loop-400/60 [&_a]:underline-offset-2 [&_a]:transition-colors hover:[&_a]:text-loop-100 [&_blockquote]:mb-3 [&_blockquote]:border-l-2 [&_blockquote]:border-loop-600/80 [&_blockquote]:pl-4 [&_blockquote]:italic [&_blockquote]:text-loop-300 [&_hr]:my-4 [&_hr]:border-0 [&_hr]:border-t [&_hr]:border-loop-700/80 [&_table]:mb-3 [&_table]:w-full [&_table]:border-collapse [&_table]:text-sm [&_table]:overflow-hidden [&_thead]:bg-loop-800/70 [&_thead]:text-loop-200 [&_tr]:border-t [&_tr]:border-loop-800 first:[&_tr]:border-t-0 [&_th]:px-3 [&_th]:py-2 [&_th]:text-left [&_th]:font-semibold [&_td]:px-3 [&_td]:py-2 [&_td]:align-top [&_td]:text-loop-300';
 
-  return (
-    <div className={rootTextClass}>
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        components={{
-          h1: ({ children }) => (
-            <h1 className="mb-3 mt-0 text-2xl font-bold tracking-tight text-loop-100">{children}</h1>
-          ),
-          h2: ({ children }) => (
-            <h2 className="mb-3 mt-4 text-xl font-semibold tracking-tight text-loop-100">{children}</h2>
-          ),
-          h3: ({ children }) => (
-            <h3 className="mb-2 mt-4 text-lg font-semibold text-loop-100">{children}</h3>
-          ),
-          h4: ({ children }) => (
-            <h4 className="mb-2 mt-3 text-base font-semibold text-loop-200">{children}</h4>
-          ),
-          p: ({ children }) => <p className={paragraphClass}>{children}</p>,
-          ul: ({ children }) => <ul className={listClass}>{children}</ul>,
-          ol: ({ children }) => <ol className={orderedListClass}>{children}</ol>,
-          li: ({ children }) => <li className="[&>p]:mb-0">{children}</li>,
-          a: ({ children, href }) => (
-            <a
-              className="font-medium text-loop-200 underline decoration-loop-400/60 underline-offset-2 transition-colors hover:text-loop-100"
-              href={href}
-              target="_blank"
-              rel="noreferrer"
-            >
-              {children}
-            </a>
-          ),
-          blockquote: ({ children }) => (
-            <blockquote className="mb-3 border-l-2 border-loop-600/80 pl-4 italic text-loop-300">
-              {children}
-            </blockquote>
-          ),
-          hr: () => <hr className="my-4 border-0 border-t border-loop-700/80" />,
-          table: ({ children }) => (
-            <div className="mb-3 overflow-x-auto rounded-lg border border-loop-800">
-              <table className="w-full border-collapse text-sm">{children}</table>
-            </div>
-          ),
-          thead: ({ children }) => <thead className="bg-loop-800/70 text-loop-200">{children}</thead>,
-          tbody: ({ children }) => <tbody className="bg-loop-900/35">{children}</tbody>,
-          tr: ({ children }) => <tr className="border-t border-loop-800 first:border-t-0">{children}</tr>,
-          th: ({ children }) => <th className="px-3 py-2 text-left font-semibold">{children}</th>,
-          td: ({ children }) => <td className="px-3 py-2 align-top text-loop-300">{children}</td>,
-          code: ({ children, className }) => {
-            const isCodeBlock = Boolean(className && className.startsWith('language-'));
-            if (isCodeBlock) {
-              return (
-                <code className={compact ? 'font-mono text-[11px] text-loop-200' : 'font-mono text-[12px] text-loop-100'}>
-                  {children}
-                </code>
-              );
-            }
-            return <code className={inlineCodeClass}>{children}</code>;
-          },
-          pre: ({ children }) => <pre className={preClass}>{children}</pre>,
-        }}
-      >
-        {text}
-      </ReactMarkdown>
-    </div>
-  );
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) {
+      return;
+    }
+
+    const next = document.createElement('div');
+    next.innerHTML = html;
+    decorate(next);
+
+    morphdom(root, next, {
+      childrenOnly: true,
+      onBeforeElUpdated: (fromEl: Element, toEl: Element) => !fromEl.isEqualNode(toEl),
+    });
+  }, [html]);
+
+  return <div ref={rootRef} className={[baseClass, 'break-words', paragraphClass, listClass, inlineCodeClass, preClass, headingClass, miscClass].join(' ')} />;
 });

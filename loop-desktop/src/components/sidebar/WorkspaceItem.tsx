@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { useState } from 'react';
 import { Folder, FolderOpen, Trash2 } from 'lucide-react';
 import type { ConversationSummary, WorkspaceSummary } from '../../types/ui';
+import { COLLAPSIBLE_SPRING } from '../activity-feed/ActivityMotion';
 import { ThreadItem } from './ThreadItem';
 
 interface WorkspaceItemProps {
@@ -78,7 +79,7 @@ export function WorkspaceItem({
             initial={{ height: 0, opacity: 0 }}
             animate={{ height: 'auto', opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.18, ease: 'easeInOut' }}
+            transition={COLLAPSIBLE_SPRING}
             className="overflow-hidden"
           >
             <div className="flex flex-col gap-0.5">

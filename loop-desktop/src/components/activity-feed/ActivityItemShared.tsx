@@ -1,11 +1,10 @@
 import { Check, Copy, X } from 'lucide-react';
-import { AnimatePresence, motion } from 'framer-motion';
-import { Suspense, lazy, memo, useEffect, useRef, useState } from 'react';
+import { motion, useReducedMotion } from 'framer-motion';
+import { memo, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { ActivityEvent } from '../../types/ui';
-import type { MarkdownBlockProps } from './MarkdownBlock';
-
-const LazyMarkdownBlock = lazy(() => import('./MarkdownBlock'));
+import { ACTIVITY_EASE_CSS, ActivityCollapsible, ActivityPresence, popoverMotion } from './ActivityMotion';
+import MarkdownRenderer, { type MarkdownBlockProps } from './MarkdownBlock';
 
 export interface ActivityFrameProps {
   children: ReactNode;
@@ -44,6 +43,7 @@ export function CopyDropdown({
   getMarkdown: () => string;
   getText: () => string;
 }) {
+  const reduced = Boolean(useReducedMotion());
   const [isOpen, setIsOpen] = useState(false);
   const [copiedMode, setCopiedMode] = useState<'text' | 'markdown' | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -75,37 +75,37 @@ export function CopyDropdown({
         type="button"
         aria-label="Copy options"
         title="Copy options"
-        className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-loop-800/70 text-loop-300 transition hover:bg-loop-700 hover:text-loop-100 disabled:cursor-not-allowed disabled:opacity-40"
+        className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-loop-800/70 text-loop-300 transition-[background-color,color,transform] duration-200 hover:-translate-y-0.5 hover:bg-loop-700 hover:text-loop-100 disabled:cursor-not-allowed disabled:opacity-40"
         onClick={() => setIsOpen(!isOpen)}
+        style={{ transitionTimingFunction: ACTIVITY_EASE_CSS }}
       >
         {copiedMode ? <Check size={13} /> : <Copy size={13} />}
       </button>
-      <AnimatePresence>
+      <ActivityPresence>
         {isOpen ? (
           <motion.div
-            initial={{ opacity: 0, y: 4, scale: 0.96 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 4, scale: 0.96 }}
-            transition={{ duration: 0.16 }}
+            {...popoverMotion(!reduced)}
             className="absolute right-0 top-full z-50 mt-1 flex w-40 flex-col rounded-md border border-loop-700 bg-loop-800 p-1 shadow-lg"
           >
             <button
-              className="flex items-center gap-2 rounded px-2 py-1.5 text-xs text-loop-200 hover:bg-loop-700 hover:text-loop-100"
+              className="flex items-center gap-2 rounded px-2 py-1.5 text-xs text-loop-200 transition-[background-color,color] duration-200 hover:bg-loop-700 hover:text-loop-100"
               onClick={() => handleCopy('text')}
+              style={{ transitionTimingFunction: ACTIVITY_EASE_CSS }}
             >
               {copiedMode === 'text' ? <Check size={12} /> : <Copy size={12} />}
               Copy as text
             </button>
             <button
-              className="flex items-center gap-2 rounded px-2 py-1.5 text-xs text-loop-200 hover:bg-loop-700 hover:text-loop-100"
+              className="flex items-center gap-2 rounded px-2 py-1.5 text-xs text-loop-200 transition-[background-color,color] duration-200 hover:bg-loop-700 hover:text-loop-100"
               onClick={() => handleCopy('markdown')}
+              style={{ transitionTimingFunction: ACTIVITY_EASE_CSS }}
             >
               {copiedMode === 'markdown' ? <Check size={12} /> : <Copy size={12} />}
               Copy as markdown
             </button>
           </motion.div>
         ) : null}
-      </AnimatePresence>
+      </ActivityPresence>
     </div>
   );
 }
@@ -167,6 +167,7 @@ export function ActivityImageLightbox({
           e.stopPropagation();
           onClose();
         }}
+        style={{ transitionTimingFunction: ACTIVITY_EASE_CSS }}
       >
         <X size={20} />
       </button>
@@ -204,26 +205,32 @@ export const ThoughtMessage = memo(function ThoughtMessage({
     }
   }, [isStreaming]);
 
+  const expanded = isStreaming || isExpanded || !isOverflowing;
+  const collapsedHeight = isOverflowing ? 64 : 0;
+
   return (
     <div className="max-w-[620px] text-loop-300">
-      <motion.div
-        initial={false}
-        animate={{ height: isStreaming ? 'auto' : (isExpanded ? 'auto' : (isOverflowing ? 64 : 'auto')) }}
-        transition={isStreaming ? { duration: 0 } : { duration: 0.3, ease: 'easeInOut' }}
+      <ActivityCollapsible
+        open={expanded}
+        collapsedHeight={collapsedHeight}
+        animate
+        watch={isStreaming}
+        fade={false}
         className="relative overflow-hidden"
       >
         <div ref={contentRef}>
-          {isStreaming ? <PlainTextBlock text={renderedText} compact /> : <MarkdownBlock text={renderedText} compact />}
+          <MarkdownBlock text={renderedText} compact />
           {isStreaming ? <span className="animate-pulse text-loop-500">▍</span> : null}
         </div>
-        {!isExpanded && isOverflowing ? (
+        {!expanded && isOverflowing ? (
           <div className="pointer-events-none absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-loop-900 to-transparent" />
         ) : null}
-      </motion.div>
+      </ActivityCollapsible>
       {isOverflowing ? (
         <button
           onClick={() => setIsExpanded(!isExpanded)}
-          className="mt-1 text-[11px] font-medium text-loop-500 transition-colors hover:text-loop-300"
+          className="mt-1 text-[11px] font-medium text-loop-500 transition-colors duration-200 hover:text-loop-300"
+          style={{ transitionTimingFunction: ACTIVITY_EASE_CSS }}
         >
           {isExpanded ? 'Show less' : 'Show more'}
         </button>
@@ -233,29 +240,7 @@ export const ThoughtMessage = memo(function ThoughtMessage({
 });
 
 export const MarkdownBlock = memo(function MarkdownBlock(props: MarkdownBlockProps) {
-  const { text, compact = false, dense = false } = props;
-  const rootTextClass = dense
-    ? 'm-0 break-words text-[14px] font-normal leading-user-message text-loop-200'
-    : compact
-      ? 'm-0 break-words text-[13px] font-normal leading-relaxed text-loop-300'
-      : 'm-0 break-words text-[15px] leading-relaxed';
-  const paragraphClass = dense
-    ? 'm-0 mb-1.5 leading-user-message last:mb-0'
-    : compact
-      ? 'm-0 mb-2 leading-6 last:mb-0'
-      : 'm-0 mb-3 leading-7 last:mb-0';
-
-  return (
-    <Suspense
-      fallback={
-        <div className={rootTextClass}>
-          <p className={paragraphClass}>{text}</p>
-        </div>
-      }
-    >
-      <LazyMarkdownBlock {...props} />
-    </Suspense>
-  );
+  return <MarkdownRenderer {...props} />;
 });
 
 export const PlainTextBlock = memo(function PlainTextBlock({

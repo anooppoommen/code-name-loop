@@ -1,7 +1,8 @@
 import { AlertTriangle, Check, ChevronDown, Loader2, Copy } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { memo, useMemo, useState } from 'react';
+import { memo, useDeferredValue, useEffect, useMemo, useState } from 'react';
 import type { CommandToolPayload } from './types';
+import { COLLAPSIBLE_SPRING, useThrottledText } from '../activity-feed/ActivityMotion';
 
 const GEIST_MONO_STACK = '"Geist Mono","Geist",ui-monospace,SFMono-Regular,Menlo,monospace';
 
@@ -9,6 +10,10 @@ export const CommandToolCard = memo(function CommandToolCard({ payload }: { payl
   const [expanded, setExpanded] = useState(true);
   const [copiedCommand, setCopiedCommand] = useState(false);
   const [copiedOutput, setCopiedOutput] = useState(false);
+  const throttledLiveOutput = useThrottledText(payload.output, payload.status === 'running' || payload.status === 'waiting');
+  const deferredOutput = useDeferredValue(payload.output);
+  const liveOutput = useDeferredValue(throttledLiveOutput);
+  const isLive = payload.status === 'running' || payload.status === 'waiting';
 
   const handleCopyCommand = () => {
     navigator.clipboard.writeText(payload.command);
@@ -22,9 +27,11 @@ export const CommandToolCard = memo(function CommandToolCard({ payload }: { payl
     setTimeout(() => setCopiedOutput(false), 2000);
   };
 
-  const hasOutput = payload.output.trim().length > 0;
+  const activeOutput = isLive ? liveOutput : deferredOutput;
+  const hasOutput = activeOutput.trim().length > 0;
   const hasErrorDetail = payload.status === 'error' && payload.error.trim().length > 0;
   const hasDetails = hasOutput || hasErrorDetail;
+  const outputPreviewLines = useMemo(() => buildLiveOutputPreviewLines(liveOutput), [liveOutput]);
   const statusLabel = useMemo(() => {
     if (payload.status === 'waiting') {
       return 'Waiting for permission';
@@ -47,6 +54,20 @@ export const CommandToolCard = memo(function CommandToolCard({ payload }: { payl
     }
     return timestamp.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   }, [payload.executedAt]);
+
+  useEffect(() => {
+    if (isLive) {
+      setExpanded(false);
+      return;
+    }
+
+    if (!hasDetails) {
+      setExpanded(false);
+      return;
+    }
+
+    setExpanded(deferredOutput.length <= 4000);
+  }, [deferredOutput.length, hasDetails, isLive]);
 
   return (
     <div className="mt-2 overflow-hidden rounded-xl bg-loop-700">
@@ -82,7 +103,7 @@ export const CommandToolCard = memo(function CommandToolCard({ payload }: { payl
           >
             {copiedCommand ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
           </button>
-          {hasDetails ? (
+          {hasDetails && !isLive ? (
             <button
               type="button"
               className="inline-flex shrink-0 items-center justify-center rounded-md p-1.5 text-loop-300 transition-colors hover:bg-loop-600/50 hover:text-loop-100"
@@ -94,42 +115,57 @@ export const CommandToolCard = memo(function CommandToolCard({ payload }: { payl
         </div>
       </div>
 
-      <AnimatePresence initial={false}>
-        {expanded && hasDetails ? (
-          <motion.div
-            key="command-details"
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.2, ease: 'easeInOut' }}
-            className="group/output relative overflow-hidden"
-          >
-            <button
-              type="button"
-              className="absolute right-2 top-2 z-10 inline-flex items-center justify-center rounded-md bg-loop-700/80 p-1.5 text-loop-300 opacity-0 backdrop-blur transition-all hover:bg-loop-600 hover:text-loop-100 group-hover/output:opacity-100"
-              title="Copy output"
-              onClick={handleCopyOutput}
-            >
-              {copiedOutput ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
-            </button>
-
-            {hasOutput ? (
+      {isLive ? (
+        hasOutput ? (
+          <div className="border-t border-loop-600/50 px-4 py-2">
+            <div className="h-[88px] overflow-hidden">
               <pre
-                className="max-h-80 overflow-auto whitespace-pre-wrap px-4 pb-2 text-[11px] leading-relaxed text-loop-200 scrollbar-thin"
+                className="m-0 whitespace-pre-wrap text-[11px] leading-[22px] text-loop-300"
                 style={{ fontFamily: GEIST_MONO_STACK }}
               >
-                {payload.output}
+                {outputPreviewLines.join('\n')}
               </pre>
-            ) : null}
+            </div>
+          </div>
+        ) : null
+      ) : (
+        <AnimatePresence initial={false}>
+          {expanded && hasDetails ? (
+            <motion.div
+              key="command-details"
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={COLLAPSIBLE_SPRING}
+              className="group/output relative overflow-hidden"
+            >
+              <button
+                type="button"
+                className="absolute right-2 top-2 z-10 inline-flex items-center justify-center rounded-md bg-loop-700/80 p-1.5 text-loop-300 opacity-0 backdrop-blur transition-all hover:bg-loop-600 hover:text-loop-100 group-hover/output:opacity-100"
+                title="Copy output"
+                onClick={handleCopyOutput}
+              >
+                {copiedOutput ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
+              </button>
 
-            {hasErrorDetail ? (
-              <div className="px-4 pb-2 text-[12px] leading-relaxed text-red-300">
-                {payload.error}
-              </div>
-            ) : null}
-          </motion.div>
-        ) : null}
-      </AnimatePresence>
+              {hasOutput ? (
+                <pre
+                  className="max-h-80 overflow-auto whitespace-pre-wrap px-4 pb-2 text-[11px] leading-relaxed text-loop-200 scrollbar-thin"
+                  style={{ fontFamily: GEIST_MONO_STACK }}
+                >
+                  {payload.output}
+                </pre>
+              ) : null}
+
+              {hasErrorDetail ? (
+                <div className="px-4 pb-2 text-[12px] leading-relaxed text-red-300">
+                  {payload.error}
+                </div>
+              ) : null}
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
+      )}
 
       <div className="flex items-center justify-between gap-2 bg-loop-700 px-4 pb-3 pt-2 text-xs">
         <span className="text-[11px] text-loop-300">
@@ -163,3 +199,17 @@ export const CommandToolCard = memo(function CommandToolCard({ payload }: { payl
     </div>
   );
 });
+
+function buildLiveOutputPreviewLines(output: string): string[] {
+  const trimmed = output.trimEnd();
+  if (!trimmed) {
+    return [];
+  }
+
+  const lines = trimmed
+    .split(/\r\n|\n|\r/g)
+    .map((line) => line.trimEnd())
+    .filter((line) => line.length > 0);
+
+  return lines.slice(-4);
+}
