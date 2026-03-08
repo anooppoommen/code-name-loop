@@ -3,6 +3,33 @@ import type { ReactNode } from 'react';
 import { KeyboardStackContext, resolveShortcutHandler } from './keyboardStackCore';
 import type { KeyboardLayerRecord, KeyboardStackContextValue, RegisterKeyboardLayerOptions } from './keyboardStackCore';
 
+function sortLayers(layers: KeyboardLayerRecord[]): KeyboardLayerRecord[] {
+  return [...layers].sort((a, b) => {
+    if (a.priority === b.priority) {
+      return b.order - a.order;
+    }
+    return b.priority - a.priority;
+  });
+}
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  const tagName = target.tagName;
+  return (
+    target.isContentEditable ||
+    tagName === 'INPUT' ||
+    tagName === 'TEXTAREA' ||
+    tagName === 'SELECT'
+  );
+}
+
+function isPlainTypingKey(event: KeyboardEvent): boolean {
+  return !event.ctrlKey && !event.metaKey && !event.altKey && (event.key.length === 1 || event.key === 'Dead');
+}
+
 export function KeyboardStackProvider({ children }: { children: ReactNode }) {
   const layersRef = useRef<KeyboardLayerRecord[]>([]);
   const nextIDRef = useRef(1);
@@ -19,23 +46,20 @@ export function KeyboardStackProvider({ children }: { children: ReactNode }) {
     nextIDRef.current += 1;
     nextOrderRef.current += 1;
 
-    layersRef.current = [...layersRef.current, layer];
+    layersRef.current = sortLayers([...layersRef.current, layer]);
 
     return () => {
-      layersRef.current = layersRef.current.filter((item) => item.id !== layer.id);
+      layersRef.current = sortLayers(layersRef.current.filter((item) => item.id !== layer.id));
     };
   }, []);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      const stack = [...layersRef.current].sort((a, b) => {
-        if (a.priority === b.priority) {
-          return b.order - a.order;
-        }
-        return b.priority - a.priority;
-      });
+      if (isEditableTarget(event.target) && isPlainTypingKey(event)) {
+        return;
+      }
 
-      for (const layer of stack) {
+      for (const layer of layersRef.current) {
         if (!layer.enabledRef.current) {
           continue;
         }

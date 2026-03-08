@@ -95,15 +95,7 @@ export interface LoopDesktopController {
   activities: ActivityEvent[];
   feedScrollRef: RefObject<HTMLDivElement | null>;
 
-  queuedMessages: QueuedMessage[];
-  queueMessage: () => void;
-  removeQueuedMessage: (id: string) => void;
-  reorderQueuedMessage: (id: string, direction: 'up' | 'down') => void;
   steerQueuedMessage: (id: string) => Promise<void>;
-  messageInput: string;
-  setMessageInput: (value: string) => void;
-  composerImages: ComposerImage[];
-  setComposerImages: Dispatch<SetStateAction<ComposerImage[]>>;
   canCompose: boolean;
   isSending: boolean;
   sendingConversations: Record<string, boolean>;

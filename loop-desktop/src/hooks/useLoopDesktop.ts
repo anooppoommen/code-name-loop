@@ -10,13 +10,13 @@ import type {
 
 import { useActivities } from './useActivities';
 import { useCommandApprovals } from './useCommandApprovals';
-import { useComposer } from './useComposer';
 import { useConversations } from './useConversations';
 import { useLocalStorage } from './useLocalStorage';
 import { useModelSettings } from './useModelSettings';
 import { useNotices } from './useNotices';
 import { useSshTunnel } from './useSshTunnel';
 import { useWorkspaces } from './useWorkspaces';
+import { useComposerDraftStore } from '../stores/composerDraftStore';
 
 export type {
   CommandApprovalDecision,
@@ -68,9 +68,6 @@ export function useLoopDesktop(): LoopDesktopController {
   // ── Model Settings ─────────────────────────────────────
   const modelSettings = useModelSettings(selectedConversationId);
 
-  // ── Composer ───────────────────────────────────────────
-  const composer = useComposer(selectedConversationId);
-
   // ── Workspaces ─────────────────────────────────────────
   const workspacesHook = useWorkspaces(
     backendUrl,
@@ -121,7 +118,7 @@ export function useLoopDesktop(): LoopDesktopController {
     isSending,
     commandApprovals.pendingCommandApprovalsRef,
     modelSettings.setThinkingLevelsByConversation as React.Dispatch<React.SetStateAction<Record<string, unknown>>>,
-    composer.setEditingMessageByConversation,
+    useComposerDraftStore.getState().clearEditingMessage,
     activitiesHook.setCurrentStatus,
   );
 
@@ -261,18 +258,10 @@ export function useLoopDesktop(): LoopDesktopController {
       }
       activitiesHook.pushActivity({ kind: 'lifecycle', title: 'Turn started' }, conversationId);
       if (clearComposer) {
-        composer.setMessageInput('');
-        composer.setComposerImages([]);
+        useComposerDraftStore.getState().clearComposerDraft(curSelectedConversationId);
       }
       if (isEdit) {
-        composer.setEditingMessageByConversation((prev) => {
-          if (!(conversationId in prev)) {
-            return prev;
-          }
-          const next = { ...prev };
-          delete next[conversationId];
-          return next;
-        });
+        useComposerDraftStore.getState().clearEditingMessage(conversationId);
       }
       const requestedStreamID = crypto.randomUUID();
       activitiesHook.activeStreamsRef.current[conversationId] = {
@@ -338,7 +327,6 @@ export function useLoopDesktop(): LoopDesktopController {
       modelSettings,
       conversationsHook,
       activitiesHook,
-      composer,
     ],
   );
 
@@ -347,16 +335,9 @@ export function useLoopDesktop(): LoopDesktopController {
     if (!targetMessageId || !selectedConversationId || isSending) {
       return;
     }
-    composer.setEditingMessageByConversation((prev) => {
-      if (!(selectedConversationId in prev)) {
-        return prev;
-      }
-      const next = { ...prev };
-      delete next[selectedConversationId];
-      return next;
-    });
+    useComposerDraftStore.getState().clearEditingMessage(selectedConversationId);
     await sendMessageText('', [], false, true, { retryMessageId: targetMessageId });
-  }, [isSending, selectedConversationId, sendMessageText, composer]);
+  }, [isSending, selectedConversationId, sendMessageText]);
 
   const editMessageInComposer = useCallback((messageId: string, text: string, images: { mimeType: string; dataUrl: string }[]): void => {
     const targetMessageId = messageId.trim();
@@ -364,9 +345,11 @@ export function useLoopDesktop(): LoopDesktopController {
       return;
     }
 
-    composer.setEditingMessageByConversation((prev) => ({ ...prev, [selectedConversationId]: targetMessageId }));
-    composer.setMessageInput(text);
-    composer.setComposerImages(
+    const drafts = useComposerDraftStore.getState();
+    drafts.setEditingMessage(selectedConversationId, targetMessageId);
+    drafts.setMessageInput(selectedConversationId, text);
+    drafts.setComposerImages(
+      selectedConversationId,
       images.map((img) => ({
         id: crypto.randomUUID(),
         mimeType: img.mimeType,
@@ -374,16 +357,17 @@ export function useLoopDesktop(): LoopDesktopController {
         data: dataUrlToBase64(img.dataUrl),
       })),
     );
-  }, [selectedConversationId, composer]);
+  }, [selectedConversationId]);
 
   const steerQueuedMessage = useCallback(async (id: string) => {
     if (!selectedConversationId) {
       return;
     }
-    const msg = composer.queuedMessagesMap[selectedConversationId]?.find((m) => m.id === id);
+    const drafts = useComposerDraftStore.getState();
+    const msg = drafts.queuedMessagesMap[selectedConversationId]?.find((message) => message.id === id);
     if (!msg) return;
 
-    composer.removeQueuedMessage(id);
+    drafts.removeQueuedMessage(selectedConversationId, id);
 
     const stream = activitiesHook.activeStreamsRef.current[selectedConversationId];
     if (stream) {
@@ -395,55 +379,57 @@ export function useLoopDesktop(): LoopDesktopController {
 
     activitiesHook.setSendingConversations((prev) => ({ ...prev, [selectedConversationId]: false }));
     await sendMessageText(msg.text, msg.images, false, true);
-  }, [composer, selectedConversationId, activitiesHook, sendMessageText]);
+  }, [selectedConversationId, activitiesHook, sendMessageText]);
 
   const sendMessage = useCallback(async (options?: { worktreePath?: string }): Promise<void> => {
-    if (composer.editingMessageId) {
-      await sendMessageText(composer.messageInput, composer.composerImages, true, false, { editMessageId: composer.editingMessageId, worktreePath: options?.worktreePath });
+    const drafts = useComposerDraftStore.getState();
+    const editingMessageId = drafts.editingMessageByConversation[selectedConversationId] || '';
+    const messageInput = drafts.composerInputs[selectedConversationId] || '';
+    const composerImages = drafts.composerImagesMap[selectedConversationId] || [];
+
+    if (editingMessageId) {
+      await sendMessageText(messageInput, composerImages, true, false, { editMessageId: editingMessageId, worktreePath: options?.worktreePath });
       return;
     }
-    await sendMessageText(composer.messageInput, composer.composerImages, true, false, { worktreePath: options?.worktreePath });
-  }, [composer.composerImages, composer.editingMessageId, composer.messageInput, sendMessageText]);
+    await sendMessageText(messageInput, composerImages, true, false, { worktreePath: options?.worktreePath });
+  }, [selectedConversationId, sendMessageText]);
 
   // Clear editing state if the target message is no longer in activities
   useEffect(() => {
-    if (!selectedConversationId || !composer.editingMessageId) {
+    if (!selectedConversationId) {
       return;
     }
-    const exists = activitiesHook.activities.some((event) => (event.messageId || event.id) === composer.editingMessageId);
+    const editingMessageId = useComposerDraftStore.getState().editingMessageByConversation[selectedConversationId] || '';
+    if (!editingMessageId) {
+      return;
+    }
+    const exists = activitiesHook.activities.some((event) => (event.messageId || event.id) === editingMessageId);
     if (exists) {
       return;
     }
-    composer.setEditingMessageByConversation((prev) => {
-      if (!(selectedConversationId in prev)) {
-        return prev;
-      }
-      const next = { ...prev };
-      delete next[selectedConversationId];
-      return next;
-    });
-  }, [activitiesHook.activities, composer.editingMessageId, selectedConversationId, composer]);
+    useComposerDraftStore.getState().clearEditingMessage(selectedConversationId);
+  }, [activitiesHook.activities, selectedConversationId]);
 
   // Auto-process queue when not sending
   useEffect(() => {
     const hasActiveSelectedStream = !!(selectedConversationId && activitiesHook.activeStreamsRef.current[selectedConversationId]);
-    if (!isSending && !hasActiveSelectedStream && composer.queuedMessages.length > 0 && selectedConversationId) {
-      const nextMsg = composer.queuedMessages[0];
-      composer.setQueuedMessagesMap(prevMap => {
-        const prev = prevMap[selectedConversationId] || [];
-        return { ...prevMap, [selectedConversationId]: prev.slice(1) };
-      });
+    const nextMsg =
+      selectedConversationId
+        ? useComposerDraftStore.getState().queuedMessagesMap[selectedConversationId]?.[0]
+        : null;
+    if (!isSending && !hasActiveSelectedStream && nextMsg && selectedConversationId) {
+      useComposerDraftStore.getState().dequeueQueuedMessage(selectedConversationId);
       void sendMessageText(nextMsg.text, nextMsg.images, false);
     }
-  }, [isSending, composer.queuedMessages, selectedConversationId, sendMessageText, activitiesHook.activeStreamsRef, composer]);
+  }, [isSending, selectedConversationId, sendMessageText, activitiesHook.activeStreamsRef]);
 
   const applyToolResponseSuggestion = useCallback((text: string): void => {
     const trimmed = text.trim();
     if (!trimmed) {
       return;
     }
-    composer.setMessageInput(trimmed);
-  }, [composer]);
+    useComposerDraftStore.getState().setMessageInput(selectedConversationId, trimmed);
+  }, [selectedConversationId]);
 
   const sendToolResponseSuggestion = useCallback(async (text: string): Promise<void> => {
     const trimmed = text.trim();
@@ -455,12 +441,12 @@ export function useLoopDesktop(): LoopDesktopController {
     const isSelectedConversationSending = !!(selectedConversationId && activitiesHook.sendingConversations[selectedConversationId]);
 
     if (hasActiveSelectedStream || isSelectedConversationSending) {
-      composer.enqueueConversationMessage(selectedConversationId, trimmed, []);
+      useComposerDraftStore.getState().enqueueConversationMessage(selectedConversationId, trimmed, []);
       return;
     }
 
     await sendMessageText(trimmed, [], false);
-  }, [composer, selectedConversationId, sendMessageText, activitiesHook]);
+  }, [selectedConversationId, sendMessageText, activitiesHook]);
 
   const cancelStream = useCallback(async (): Promise<void> => {
     const stream = activitiesHook.activeStreamsRef.current[selectedConversationId];
@@ -549,15 +535,7 @@ export function useLoopDesktop(): LoopDesktopController {
     activities: activitiesHook.visibleActivities,
     feedScrollRef: activitiesHook.feedScrollRef,
 
-    queuedMessages: composer.queuedMessages,
-    queueMessage: composer.queueMessage,
-    removeQueuedMessage: composer.removeQueuedMessage,
-    reorderQueuedMessage: composer.reorderQueuedMessage,
     steerQueuedMessage,
-    messageInput: composer.messageInput,
-    setMessageInput: composer.setMessageInput,
-    composerImages: composer.composerImages,
-    setComposerImages: composer.setComposerImages,
     canCompose: workspacesHook.selectedWorkspaceId !== '',
     isSending,
     sendingConversations: activitiesHook.sendingConversations,

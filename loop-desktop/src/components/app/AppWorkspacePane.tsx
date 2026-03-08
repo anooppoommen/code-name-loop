@@ -1,13 +1,13 @@
-import { memo, type ComponentProps, type ReactNode } from 'react';
+import { memo, type ComponentProps } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { AppHeader } from '../AppHeader';
-import { Composer } from '../Composer';
 import { ComposerEnvironmentBar } from '../ComposerEnvironmentBar';
-import { NewThreadView } from '../NewThreadView';
 import { Powerline } from '../Powerline';
-import { QueuedMessages } from '../QueuedMessages';
 import { WorkingRobotFlare } from '../activity-feed/WorkingRobotFlare';
+import { AppConversationRegion } from './AppConversationRegion';
 import { AppActivityPane } from './AppActivityPane';
+import { NewThreadView } from '../NewThreadView';
+import { AppComposerDock } from './AppComposerDock';
 
 interface AppWorkspacePaneProps {
   workspaceName: string;
@@ -25,9 +25,7 @@ interface AppWorkspacePaneProps {
   selectedConversationId: string;
   activityPaneProps: ComponentProps<typeof AppActivityPane>;
   newThreadProps: ComponentProps<typeof NewThreadView>;
-  queuedMessagesProps: ComponentProps<typeof QueuedMessages>;
-  approvalSheet: ReactNode;
-  composerProps: ComponentProps<typeof Composer>;
+  composerDockProps: Omit<ComponentProps<typeof AppComposerDock>, 'conversationId' | 'environmentBarProps'>;
   environmentBarProps: ComponentProps<typeof ComposerEnvironmentBar>;
   powerlineProps: ComponentProps<typeof Powerline>;
 }
@@ -48,9 +46,7 @@ export const AppWorkspacePane = memo(function AppWorkspacePane({
   selectedConversationId,
   activityPaneProps,
   newThreadProps,
-  queuedMessagesProps,
-  approvalSheet,
-  composerProps,
+  composerDockProps,
   environmentBarProps,
   powerlineProps,
 }: AppWorkspacePaneProps) {
@@ -92,37 +88,17 @@ export const AppWorkspacePane = memo(function AppWorkspacePane({
 
           <div className="min-h-0 flex-1 overflow-hidden">
             <div className="flex h-full w-full min-h-0 flex-col">
-              <div className="min-h-0 flex-1 overflow-hidden">
-                <AnimatePresence initial={false} mode="wait">
-                  {selectedConversationId ? (
-                    <AppActivityPane {...activityPaneProps} />
-                  ) : (
-                    <motion.div
-                      key="new-thread-view"
-                      initial={{ opacity: 0, y: 12 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -12 }}
-                      transition={{ duration: 0.24 }}
-                      className="h-full"
-                    >
-                      <NewThreadView {...newThreadProps} />
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
+              <AppConversationRegion
+                selectedConversationId={selectedConversationId}
+                activityPaneProps={activityPaneProps}
+                newThreadProps={newThreadProps}
+              />
 
-              <div className="relative mx-auto w-full max-w-[720px] shrink-0">
-                <QueuedMessages {...queuedMessagesProps} />
-                <div className="relative z-10">
-                  <AnimatePresence initial={false} mode="wait">
-                    {approvalSheet}
-                  </AnimatePresence>
-                  <div className="relative z-20">
-                    <Composer {...composerProps} />
-                    <ComposerEnvironmentBar {...environmentBarProps} />
-                  </div>
-                </div>
-              </div>
+              <AppComposerDock
+                {...composerDockProps}
+                conversationId={selectedConversationId}
+                environmentBarProps={environmentBarProps}
+              />
             </div>
           </div>
 

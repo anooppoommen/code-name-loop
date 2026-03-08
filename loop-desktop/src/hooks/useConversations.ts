@@ -161,7 +161,7 @@ export function useConversations(
     isSending: boolean,
     pendingCommandApprovalsRef: React.RefObject<PendingCommandApproval[]>,
     setThinkingLevelsByConversation: React.Dispatch<React.SetStateAction<Record<string, unknown>>>,
-    setEditingMessageByConversation: React.Dispatch<React.SetStateAction<Record<string, string>>>,
+    clearEditingMessage: (conversationId: string) => void,
     setCurrentStatus: (value: string) => void,
 ): UseConversationsReturn {
     const [conversationsByWorkspace, setConversationsByWorkspace] = useState<Record<string, ConversationSummary[]>>({});
@@ -455,14 +455,7 @@ export function useConversations(
                 delete next[conversationId];
                 return next;
             });
-            setEditingMessageByConversation((prev) => {
-                if (!(conversationId in prev)) {
-                    return prev;
-                }
-                const next = { ...prev };
-                delete next[conversationId];
-                return next;
-            });
+            clearEditingMessage(conversationId);
             pushNotice('success', `Deleted conversation "${displayName}".`);
             await refreshConversationsByWorkspace(selectedWorkspaceId, selectedConversationId === '' && !wasSelected);
         },
@@ -476,7 +469,7 @@ export function useConversations(
             selectedWorkspaceId,
             setSelectedConversationId,
             setThinkingLevelsByConversation,
-            setEditingMessageByConversation,
+            clearEditingMessage,
         ],
     );
 

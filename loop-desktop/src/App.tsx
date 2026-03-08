@@ -537,14 +537,8 @@ export default function App() {
               gitStatus.status?.isInitialized && gitStatus.status.hasCommits,
             ),
           }}
-          queuedMessagesProps={{
-            messages: app.queuedMessages,
-            onReorder: app.reorderQueuedMessage,
-            onRemove: app.removeQueuedMessage,
-            onSteer: app.steerQueuedMessage,
-          }}
-          approvalSheet={
-            app.pendingCommandApproval ? (
+          composerDockProps={{
+            approvalSheet: app.pendingCommandApproval ? (
               <CommandApprovalSheet
                 approval={app.pendingCommandApproval}
                 pendingCount={app.pendingCommandApprovalCount}
@@ -553,23 +547,18 @@ export default function App() {
                   void app.resolveCommandApproval(decision, message);
                 }}
               />
-            ) : null
-          }
-          composerProps={{
-            messageInput: app.messageInput,
-            onMessageInputChange: app.setMessageInput,
-            isSending: app.isSending,
-            canCompose: app.canCompose,
-            thinkingLevel: app.thinkingLevel,
-            onThinkingLevelChange: app.setThinkingLevel,
-            composerModel: app.composerModel,
-            onComposerModelChange: app.setComposerModel,
-            onSubmit: handleComposerSubmit,
-            onStop: app.cancelStream,
-            onQueue: app.queueMessage,
-            conversationId: app.selectedConversationId,
-            composerImages: app.composerImages,
-            setComposerImages: app.setComposerImages,
+            ) : null,
+            onSteerQueuedMessage: app.steerQueuedMessage,
+            composerProps: {
+              isSending: app.isSending,
+              canCompose: app.canCompose,
+              thinkingLevel: app.thinkingLevel,
+              onThinkingLevelChange: app.setThinkingLevel,
+              composerModel: app.composerModel,
+              onComposerModelChange: app.setComposerModel,
+              onSubmit: handleComposerSubmit,
+              onStop: app.cancelStream,
+            },
           }}
           environmentBarProps={{
             gitStatus,
