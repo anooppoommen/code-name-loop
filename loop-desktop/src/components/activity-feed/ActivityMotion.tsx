@@ -334,8 +334,11 @@ const ActivityMeasuredBox = memo(function ActivityMeasuredBox({
   const rootRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const initializedRef = useRef(false);
-  const animRootRef = useRef<any>(null);
-  const animBodyRef = useRef<any>(null);
+  // Track the height value we are currently animating toward so we can skip
+  // redundant re-animations (avoids snap when ResizeObserver fires on every token)
+  const springTargetRef = useRef<number>(-1);
+  const animRootRef = useRef<ReturnType<typeof animate> | null>(null);
+  const animBodyRef = useRef<ReturnType<typeof animate> | null>(null);
   const cleanupObserverRef = useRef<(() => void) | undefined>(undefined);
 
   useLayoutEffect(() => {
@@ -364,10 +367,13 @@ const ActivityMeasuredBox = memo(function ActivityMeasuredBox({
     const applyInstant = () => {
       root.style.height = open ? "auto" : `${collapsedHeight}px`;
       root.style.overflow = open ? "visible" : "clip";
+      root.style.willChange = "";
+      root.style.contain = "";
       resetBody();
       if (!open && collapsedHeight === 0) {
         body.style.opacity = "0";
       }
+      springTargetRef.current = open ? -1 : collapsedHeight;
       initializedRef.current = true;
     };
 
@@ -394,8 +400,17 @@ const ActivityMeasuredBox = memo(function ActivityMeasuredBox({
     const isCollapsing = !open;
     const isExpanding = open;
 
+    // Only animate if the delta is meaningful
+    if (Math.abs(targetHeight - startHeight) < 1 && initializedRef.current) {
+      applyInstant();
+      return;
+    }
+
     root.style.height = `${startHeight}px`;
-    root.style.overflow = "hidden";
+    // Use "clip" instead of "hidden" — clip does NOT affect layout/scrollbars
+    root.style.overflow = "clip";
+    root.style.willChange = "height";
+    root.style.contain = "layout style";
 
     if (cleanupObserverRef.current) {
       cleanupObserverRef.current();
@@ -408,31 +423,36 @@ const ActivityMeasuredBox = memo(function ActivityMeasuredBox({
         if (resizeFrameId !== null) return;
         resizeFrameId = window.requestAnimationFrame(() => {
           resizeFrameId = null;
-          const current = Math.ceil(root.getBoundingClientRect().height);
-          const next = Math.max(
-            Math.ceil(body.getBoundingClientRect().height),
-            1,
-          );
-          if (Math.abs(next - current) <= 1) {
+          if (!root || !body) return;
+          const next = Math.max(Math.ceil(body.getBoundingClientRect().height), 1);
+
+          // Skip if we're already animating toward this height (prevents jank on every token)
+          if (Math.abs(next - springTargetRef.current) <= 1) {
             return;
           }
 
+          springTargetRef.current = next;
           animRootRef.current?.stop();
-          root.style.height = `${current}px`;
-          root.style.overflow = "hidden";
+
+          // Don't reset root.style.height here — the browser already has the
+          // current animated pixel value and we want the spring to continue from it.
+          root.style.overflow = "clip";
+          root.style.willChange = "height";
+          root.style.contain = "layout style";
+
           const resizeAnim = animate(root, { height: next }, GROW_SPRING);
           animRootRef.current = resizeAnim;
 
-          // @ts-ignore
-          Promise.resolve(resizeAnim)
-            .then(() => {
-              if (animRootRef.current !== resizeAnim) return;
-              if (!open) return;
-              root.style.height = "auto";
-              root.style.overflow = "visible";
-              animRootRef.current = null;
-            })
-            .catch(() => { });
+          resizeAnim.then(() => {
+            if (animRootRef.current !== resizeAnim) return;
+            if (!open) return;
+            // Keep clip while watch is active so subsequent resizes animate too
+            root.style.height = `${next}px`;
+            root.style.overflow = "clip";
+            root.style.willChange = "";
+            root.style.contain = "";
+            animRootRef.current = null;
+          }).catch(() => { });
         });
       });
       observer.observe(body);
@@ -467,30 +487,37 @@ const ActivityMeasuredBox = memo(function ActivityMeasuredBox({
       resetBody();
     }
 
+    springTargetRef.current = targetHeight;
     const rootAnim = animate(root, { height: targetHeight }, spring);
     animRootRef.current = rootAnim;
 
-    // @ts-ignore
-    Promise.resolve(rootAnim)
-      .then(() => {
-        if (animRootRef.current !== rootAnim) return;
-        if (open) {
+    rootAnim.then(() => {
+      if (animRootRef.current !== rootAnim) return;
+      root.style.willChange = "";
+      root.style.contain = "";
+      if (open) {
+        if (watch) {
+          // Keep fixed height (not auto) while watching so that ResizeObserver
+          // can animate subsequent changes instead of jumping
+          root.style.height = `${targetHeight}px`;
+          root.style.overflow = "clip";
+        } else {
           root.style.height = "auto";
           root.style.overflow = "visible";
-          resetBody();
-        } else {
-          root.style.height = `${collapsedHeight}px`;
-          root.style.overflow = "clip";
-          if (collapsedHeight === 0) {
-            body.style.opacity = "0";
-          } else {
-            resetBody();
-          }
         }
-        initializedRef.current = true;
-        animRootRef.current = null;
-      })
-      .catch(() => { });
+        resetBody();
+      } else {
+        root.style.height = `${collapsedHeight}px`;
+        root.style.overflow = "clip";
+        if (collapsedHeight === 0) {
+          body.style.opacity = "0";
+        } else {
+          resetBody();
+        }
+      }
+      initializedRef.current = true;
+      animRootRef.current = null;
+    }).catch(() => { });
 
     return () => {
       animRootRef.current?.stop();
@@ -507,6 +534,18 @@ const ActivityMeasuredBox = memo(function ActivityMeasuredBox({
     reduced,
     watch,
   ]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      animRootRef.current?.stop();
+      animBodyRef.current?.stop();
+      if (cleanupObserverRef.current) {
+        cleanupObserverRef.current();
+        cleanupObserverRef.current = undefined;
+      }
+    };
+  }, []);
 
   return (
     <div ref={rootRef} className={className} style={style} {...props}>

@@ -168,7 +168,7 @@ export const ActivityFeed = memo(function ActivityFeed({
   const [isAtBottom, setIsAtBottom] = useState(true);
   const allowInteractiveMotion = !prefersReducedMotion;
 
-  const programmaticScrollRef = useRef(false);
+  const programmaticUntilRef = useRef(0);
   const stickyBottomRef = useRef(true);
   const pendingInitialSnapRef = useRef(false);
   const feedContentRef = useRef<HTMLDivElement>(null);
@@ -182,6 +182,13 @@ export const ActivityFeed = memo(function ActivityFeed({
   const bottomLockUntilRef = useRef(0);
   const settleTimeoutsRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const [settlingEventIds, setSettlingEventIds] = useState<Set<string>>(() => new Set());
+
+  // Marks a scroll as programmatic for a grace period so the onScroll handler
+  // ignores it. Using a timestamp prevents the boolean from being cleared too
+  // early (the previous 2-frame approach raced with ResizeObserver events).
+  const markProgrammatic = useCallback(() => {
+    programmaticUntilRef.current = Date.now() + 150;
+  }, []);
 
   const settleEvent = useCallback((eventId: string, durationMs = BOTTOM_SETTLE_MS) => {
     if (!eventId) {
@@ -231,13 +238,18 @@ export const ActivityFeed = memo(function ActivityFeed({
       }
 
       const performScroll = (nextBehavior: ScrollBehavior): void => {
+        // Epsilon check: skip if we're already at the bottom to avoid triggering
+        // unnecessary scroll events that can flip stickyBottomRef to false.
+        if (Math.abs(node.scrollTop) <= 0.5 && nextBehavior === 'auto') {
+          return;
+        }
         node.scrollTo({
           top: 0,
           behavior: nextBehavior,
         });
       };
 
-      programmaticScrollRef.current = true;
+      markProgrammatic();
       stickyBottomRef.current = true;
       setIsAtBottom((current) => (current ? current : true));
 
@@ -257,17 +269,13 @@ export const ActivityFeed = memo(function ActivityFeed({
         settleScrollFrameRef.current = window.requestAnimationFrame(settleAfterAnimation);
 
         scrollTimeoutRef.current = setTimeout(() => {
-          programmaticScrollRef.current = false;
           scrollTimeoutRef.current = null;
-        }, 700); // Let the smooth follow finish before user scroll events take over again.
+        }, 700);
       } else {
         performScroll('auto');
-        window.requestAnimationFrame(() => {
-          programmaticScrollRef.current = false;
-        });
       }
     },
-    [containerRef],
+    [containerRef, markProgrammatic],
   );
 
   useEffect(() => {
@@ -280,7 +288,8 @@ export const ActivityFeed = memo(function ActivityFeed({
       Math.abs(node.scrollTop) <= BOTTOM_THRESHOLD_PX;
 
     const onScroll = (): void => {
-      if (programmaticScrollRef.current) {
+      // Ignore scroll events that we triggered programmatically.
+      if (Date.now() < programmaticUntilRef.current) {
         return;
       }
 
@@ -304,6 +313,7 @@ export const ActivityFeed = memo(function ActivityFeed({
     previousRenderedEventIdsRef.current = [];
     animatedEventIdsRef.current = new Set();
     bottomLockUntilRef.current = 0;
+    programmaticUntilRef.current = 0;
     for (const timeout of Object.values(settleTimeoutsRef.current)) {
       clearTimeout(timeout);
     }
@@ -402,11 +412,15 @@ export const ActivityFeed = memo(function ActivityFeed({
           return;
         }
 
-        programmaticScrollRef.current = true;
+        // Epsilon check: don't fire a scroll if we're already at the bottom.
+        // Without this check, a no-op scroll still fires the "scroll" event
+        // which can flip stickyBottomRef to false via the onScroll handler.
+        if (Math.abs(scrollNode.scrollTop) <= 0.5) {
+          return;
+        }
+
+        markProgrammatic();
         scrollNode.scrollTop = 0;
-        window.requestAnimationFrame(() => {
-          programmaticScrollRef.current = false;
-        });
       });
     });
 
@@ -418,7 +432,7 @@ export const ActivityFeed = memo(function ActivityFeed({
         resizeScrollFrameRef.current = null;
       }
     };
-  }, [containerRef, scrollToBottom]);
+  }, [containerRef, markProgrammatic]);
 
   const appendedEventIds = useMemo(() => {
     if (!allowInteractiveMotion || showHistoryLoadingState) {
@@ -487,13 +501,19 @@ export const ActivityFeed = memo(function ActivityFeed({
 
   const renderEventItem = useCallback((event: ActivityEvent) => {
     const isFinalAgent = event.id === finalAgentEventId;
-    const shouldTrackLiveHeight = Boolean(event.streaming) || settlingEventIds.has(event.id);
+    // shouldTrackLiveHeight: true when the item's content can change dynamically.
+    // - event.streaming: assistant text events updating live
+    // - settlingEventIds: recently-completed events still in settling window
+    // - appendedEventIds + isSending: newly-added tool/thought events this turn
+    //   (their content may update even though event.streaming is false for tool events)
+    const isRecentlyAppended = isSending && appendedEventIds.has(event.id);
+    const shouldTrackLiveHeight = Boolean(event.streaming) || settlingEventIds.has(event.id) || isRecentlyAppended;
     return (
       <ActivityAppendGrow
         key={event.id}
         animate={allowInteractiveMotion && (appendedEventIds.has(event.id) || shouldTrackLiveHeight)}
         watch={shouldTrackLiveHeight}
-        fade={!event.streaming}
+        fade={event.kind === 'assistant' && !event.streaming}
         data-activity-event-id={event.id}
       >
         <ActivityItem

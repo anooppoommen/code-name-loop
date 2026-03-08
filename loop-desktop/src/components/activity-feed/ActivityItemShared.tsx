@@ -1,6 +1,6 @@
 import { Check, Copy, X } from 'lucide-react';
 import { motion, useReducedMotion } from 'framer-motion';
-import { memo, useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { ActivityEvent } from '../../types/ui';
 import { ACTIVITY_EASE_CSS, ActivityCollapsible, ActivityPresence, popoverMotion } from './ActivityMotion';
@@ -189,24 +189,38 @@ export const ThoughtMessage = memo(function ThoughtMessage({
   renderedText: string;
   isStreaming: boolean;
 }) {
-  const [isExpanded, setIsExpanded] = useState(isStreaming);
-  const [isOverflowing, setIsOverflowing] = useState(renderedText.length > 150);
+  const [isExpanded, setIsExpanded] = useState(true);
+  // Track whether the FINAL (non-streaming) content overflows the collapsed height.
+  // We initialize conservatively: if text is long it probably overflows.
+  const [isOverflowing, setIsOverflowing] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
+  // Keep expanded while streaming so that watch=true can do smooth grow.
+  // Only detect overflow BEFORE PAINT (useLayoutEffect) to avoid the
+  // post-paint reclassify jump that occurs with useEffect.
+  useLayoutEffect(() => {
+    // Never change overflow state while streaming — let it grow naturally.
+    if (isStreaming) {
+      setIsOverflowing(false);
+      return;
+    }
     if (contentRef.current) {
       setIsOverflowing(contentRef.current.scrollHeight > 64);
     }
-  }, [renderedText]);
+  }, [isStreaming, renderedText]);
 
-  useEffect(() => {
+  // When streaming starts, always expand.
+  useLayoutEffect(() => {
     if (isStreaming) {
       setIsExpanded(true);
     }
   }, [isStreaming]);
 
+  // While streaming: always open, no collapsedHeight, watch=true for smooth growth.
+  // After streaming ends: respect collapsed state if content overflows.
   const expanded = isStreaming || isExpanded || !isOverflowing;
-  const collapsedHeight = isOverflowing ? 64 : 0;
+  // Never apply a collapsed height while streaming — content must always be fully visible.
+  const collapsedHeight = isStreaming ? 0 : (isOverflowing ? 64 : 0);
 
   return (
     <div className="max-w-[620px] text-loop-300">

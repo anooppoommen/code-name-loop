@@ -7,7 +7,7 @@ import { COLLAPSIBLE_SPRING, useThrottledText } from '../activity-feed/ActivityM
 const GEIST_MONO_STACK = '"Geist Mono","Geist",ui-monospace,SFMono-Regular,Menlo,monospace';
 
 export const CommandToolCard = memo(function CommandToolCard({ payload }: { payload: CommandToolPayload }) {
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useState(false);
   const [copiedCommand, setCopiedCommand] = useState(false);
   const [copiedOutput, setCopiedOutput] = useState(false);
   const throttledLiveOutput = useThrottledText(payload.output, payload.status === 'running' || payload.status === 'waiting');
@@ -56,18 +56,27 @@ export const CommandToolCard = memo(function CommandToolCard({ payload }: { payl
   }, [payload.executedAt]);
 
   useEffect(() => {
+    // Keep collapsed while live (rolling preview is shown instead).
     if (isLive) {
       setExpanded(false);
       return;
     }
 
+    // No details to show — ensure closed.
     if (!hasDetails) {
       setExpanded(false);
       return;
     }
 
-    setExpanded(deferredOutput.length <= 4000);
-  }, [deferredOutput.length, hasDetails, isLive]);
+    // Auto-open on error so the user sees what went wrong.
+    if (payload.status === 'error') {
+      setExpanded(true);
+      return;
+    }
+
+    // For successful/completed runs keep closed by default — user can expand.
+    // (Don't setExpanded(false) here so a user-initiated open is preserved.)
+  }, [deferredOutput.length, hasDetails, isLive, payload.status]);
 
   return (
     <div className="mt-2 overflow-hidden rounded-xl bg-loop-700">
@@ -115,20 +124,21 @@ export const CommandToolCard = memo(function CommandToolCard({ payload }: { payl
         </div>
       </div>
 
-      {isLive ? (
+      {/* Compact preview: shown while live OR while completed+collapsed.
+          This keeps the card height stable across the running→completed transition
+          so content below never drops down (no "up then down" jank). */}
+      {(isLive || (!expanded && hasOutput)) ? (
         hasOutput ? (
           <div className="border-t border-loop-600/50 px-4 py-2">
-            <div className="h-[88px] overflow-hidden">
-              <pre
-                className="m-0 whitespace-pre-wrap text-[11px] leading-[22px] text-loop-300"
-                style={{ fontFamily: GEIST_MONO_STACK }}
-              >
-                {outputPreviewLines.join('\n')}
-              </pre>
-            </div>
+            <pre
+              className="m-0 max-h-[72px] overflow-hidden whitespace-pre-wrap text-[11px] leading-[22px] text-loop-300"
+              style={{ fontFamily: GEIST_MONO_STACK }}
+            >
+              {outputPreviewLines.join('\n')}
+            </pre>
           </div>
         ) : null
-      ) : (
+      ) : !isLive ? (
         <AnimatePresence initial={false}>
           {expanded && hasDetails ? (
             <motion.div
@@ -165,7 +175,8 @@ export const CommandToolCard = memo(function CommandToolCard({ payload }: { payl
             </motion.div>
           ) : null}
         </AnimatePresence>
-      )}
+      ) : null}
+
 
       <div className="flex items-center justify-between gap-2 bg-loop-700 px-4 pb-3 pt-2 text-xs">
         <span className="text-[11px] text-loop-300">

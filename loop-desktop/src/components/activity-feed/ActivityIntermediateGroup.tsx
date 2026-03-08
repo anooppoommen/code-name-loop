@@ -69,25 +69,22 @@ export const ActivityIntermediateGroup = memo(
     const handleToggle = useCallback(() => {
       setIsExpanded((current) => {
         const nextExpanded = !current;
-        if (nextExpanded) {
-          expandAnchorTopRef.current =
-            toggleButtonRef.current?.getBoundingClientRect().top ?? null;
-        } else {
-          expandAnchorTopRef.current = null;
-        }
+        // Record the button position BEFORE the state change so we can
+        // preserve it during both expansion AND collapse animations.
+        expandAnchorTopRef.current =
+          toggleButtonRef.current?.getBoundingClientRect().top ?? null;
         return nextExpanded;
       });
     }, []);
 
     useLayoutEffect(() => {
-      if (!isExpanded) {
-        if (preserveAnchorFrameRef.current !== null) {
-          window.cancelAnimationFrame(preserveAnchorFrameRef.current);
-          preserveAnchorFrameRef.current = null;
-        }
-        return;
+      // Cancel any in-flight anchor frame first.
+      if (preserveAnchorFrameRef.current !== null) {
+        window.cancelAnimationFrame(preserveAnchorFrameRef.current);
+        preserveAnchorFrameRef.current = null;
       }
 
+      // Anchor is set for both expand and collapse in handleToggle.
       const anchorTop = expandAnchorTopRef.current;
       const toggleButton = toggleButtonRef.current;
       const scrollContainer = getScrollContainer();
@@ -95,6 +92,8 @@ export const ActivityIntermediateGroup = memo(
         return;
       }
 
+      // Hold off the feed's ResizeObserver auto-scroll while we
+      // manually keep the toggle button in the same visual position.
       const preserveUntil = Date.now() + 340;
       holdManualAnchor(340);
 
