@@ -19,6 +19,7 @@ import { ConnectionSettings } from "./components/ConnectionSettings";
 import { useGitStatus } from "./hooks/useGitStatus";
 import { ComposerEnvironmentBar } from "./components/ComposerEnvironmentBar";
 import { NewThreadView } from "./components/NewThreadView";
+import { useReactScan } from "./hooks/useReactScan";
 import {
   buildConversationWorktreeBranchName,
   resolveDraftBaseBranch,
@@ -45,6 +46,7 @@ interface MemoryAwarePerformance extends Performance {
 
 export default function App() {
   const app = useLoopDesktop();
+  useReactScan(app.reactScanEnabled);
   const gitStatus = useGitStatus(app.backendUrl, app.selectedWorkspaceId, app.pushNotice);
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(() => {
@@ -409,6 +411,8 @@ export default function App() {
                 onHideLifecycleChange={app.setHideLifecycle}
                 showMascot={app.showMascot}
                 onShowMascotChange={app.setShowMascot}
+                reactScanEnabled={app.reactScanEnabled}
+                onReactScanEnabledChange={app.setReactScanEnabled}
                 workspaces={app.workspaces}
                 isLoadingWorkspaces={app.isLoadingWorkspaces}
                 selectedWorkspaceId={app.selectedWorkspaceId}

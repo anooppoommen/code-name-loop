@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import type { ComposerModel, ThinkingLevel } from '../types/ui';
 import { STORAGE_KEY } from './useLoopDesktop.constants';
 import { normalizeComposerModel, normalizeThinkingLevel } from './useLoopDesktop.helpers';
@@ -17,6 +17,8 @@ export interface LocalStorageState {
     setHideLifecycle: (value: boolean) => void;
     showMascot: boolean;
     setShowMascot: (value: boolean) => void;
+    reactScanEnabled: boolean;
+    setReactScanEnabled: (value: boolean) => void;
     draftThinkingLevel: ThinkingLevel;
     setDraftThinkingLevel: (value: ThinkingLevel) => void;
     thinkingLevelsByConversation: Record<string, ThinkingLevel>;
@@ -30,9 +32,12 @@ export interface LocalStorageState {
 }
 
 export function useLocalStorage(state: LocalStorageState): void {
+    const lastPersistedRef = useRef<string | null>(null);
+
     // Hydrate from localStorage on mount
     useEffect(() => {
         const raw = localStorage.getItem(STORAGE_KEY);
+        lastPersistedRef.current = raw;
         if (!raw) {
             return;
         }
@@ -45,6 +50,7 @@ export function useLocalStorage(state: LocalStorageState): void {
                 workspacePath?: string;
                 hideLifecycle?: boolean;
                 showMascot?: boolean;
+                reactScanEnabled?: boolean;
                 draftThinkingLevel?: ThinkingLevel;
                 thinkingLevelsByConversation?: Record<string, unknown>;
                 draftComposerModel?: ComposerModel;
@@ -69,6 +75,9 @@ export function useLocalStorage(state: LocalStorageState): void {
             }
             if (typeof parsed.showMascot === 'boolean') {
                 state.setShowMascot(parsed.showMascot);
+            }
+            if (typeof parsed.reactScanEnabled === 'boolean') {
+                state.setReactScanEnabled(parsed.reactScanEnabled);
             }
             if (parsed.draftThinkingLevel) {
                 state.setDraftThinkingLevel(normalizeThinkingLevel(parsed.draftThinkingLevel));
@@ -107,22 +116,54 @@ export function useLocalStorage(state: LocalStorageState): void {
 
     // Persist to localStorage on state changes
     useEffect(() => {
-        localStorage.setItem(
-            STORAGE_KEY,
-            JSON.stringify({
-                backendUrl: state.backendUrl,
-                selectedWorkspaceId: state.selectedWorkspaceId,
-                selectedConversationId: state.selectedConversationId,
-                workspacePath: state.workspacePath,
-                hideLifecycle: state.hideLifecycle,
-                showMascot: state.showMascot,
-                draftThinkingLevel: state.draftThinkingLevel,
-                thinkingLevelsByConversation: state.thinkingLevelsByConversation,
-                draftComposerModel: state.draftComposerModel,
-                composerModelsByConversation: state.composerModelsByConversation,
-                sshTunnelConfig: state.sshTunnelConfig,
-            }),
-        );
+        const payload = {
+            backendUrl: state.backendUrl,
+            selectedWorkspaceId: state.selectedWorkspaceId,
+            selectedConversationId: state.selectedConversationId,
+            workspacePath: state.workspacePath,
+            hideLifecycle: state.hideLifecycle,
+            showMascot: state.showMascot,
+            reactScanEnabled: state.reactScanEnabled,
+            draftThinkingLevel: state.draftThinkingLevel,
+            thinkingLevelsByConversation: state.thinkingLevelsByConversation,
+            draftComposerModel: state.draftComposerModel,
+            composerModelsByConversation: state.composerModelsByConversation,
+            sshTunnelConfig: state.sshTunnelConfig,
+        };
+
+        let cancelled = false;
+        let timeoutId: number | null = null;
+        let idleId: number | null = null;
+
+        const persist = () => {
+            if (cancelled) {
+                return;
+            }
+
+            const serialized = JSON.stringify(payload);
+            if (serialized === lastPersistedRef.current) {
+                return;
+            }
+
+            localStorage.setItem(STORAGE_KEY, serialized);
+            lastPersistedRef.current = serialized;
+        };
+
+        if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+            idleId = window.requestIdleCallback(persist, { timeout: 500 });
+        } else {
+            timeoutId = globalThis.setTimeout(persist, 0);
+        }
+
+        return () => {
+            cancelled = true;
+            if (idleId !== null && typeof window !== 'undefined' && 'cancelIdleCallback' in window) {
+                window.cancelIdleCallback(idleId);
+            }
+            if (timeoutId !== null) {
+                window.clearTimeout(timeoutId);
+            }
+        };
     }, [
         state.backendUrl,
         state.selectedWorkspaceId,
@@ -130,6 +171,7 @@ export function useLocalStorage(state: LocalStorageState): void {
         state.workspacePath,
         state.hideLifecycle,
         state.showMascot,
+        state.reactScanEnabled,
         state.draftThinkingLevel,
         state.thinkingLevelsByConversation,
         state.draftComposerModel,

@@ -13,6 +13,8 @@ interface SidebarProps {
   onHideLifecycleChange: (value: boolean) => void;
   showMascot: boolean;
   onShowMascotChange: (value: boolean) => void;
+  reactScanEnabled: boolean;
+  onReactScanEnabledChange: (value: boolean) => void;
   workspaces: WorkspaceSummary[];
   isLoadingWorkspaces: boolean;
   selectedWorkspaceId: string;
@@ -40,6 +42,8 @@ export function Sidebar({
   onHideLifecycleChange,
   showMascot,
   onShowMascotChange,
+  reactScanEnabled,
+  onReactScanEnabledChange,
   workspaces,
   isLoadingWorkspaces,
   selectedWorkspaceId,
@@ -90,6 +94,8 @@ export function Sidebar({
         onHideLifecycleChange={onHideLifecycleChange}
         showMascot={showMascot}
         onShowMascotChange={onShowMascotChange}
+        reactScanEnabled={reactScanEnabled}
+        onReactScanEnabledChange={onReactScanEnabledChange}
       />
     </aside>
   );

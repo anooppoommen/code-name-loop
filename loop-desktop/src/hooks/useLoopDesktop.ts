@@ -139,6 +139,8 @@ export function useLoopDesktop(): LoopDesktopController {
     setHideLifecycle: activitiesHook.setHideLifecycle,
     showMascot: activitiesHook.showMascot,
     setShowMascot: activitiesHook.setShowMascot,
+    reactScanEnabled: activitiesHook.reactScanEnabled,
+    setReactScanEnabled: activitiesHook.setReactScanEnabled,
     draftThinkingLevel: modelSettings.draftThinkingLevel,
     setDraftThinkingLevel: modelSettings.setDraftThinkingLevel,
     thinkingLevelsByConversation: modelSettings.thinkingLevelsByConversation,
@@ -192,14 +194,24 @@ export function useLoopDesktop(): LoopDesktopController {
       if (!conversationId) {
         return;
       }
-      modelSettings.setThinkingLevelsByConversation((prev) => ({
-        ...prev,
-        [conversationId]: selectedThinkingLevel,
-      }));
-      modelSettings.setComposerModelsByConversation((prev) => ({
-        ...prev,
-        [conversationId]: selectedComposerModel,
-      }));
+      modelSettings.setThinkingLevelsByConversation((prev) => {
+        if (prev[conversationId] === selectedThinkingLevel) {
+          return prev;
+        }
+        return {
+          ...prev,
+          [conversationId]: selectedThinkingLevel,
+        };
+      });
+      modelSettings.setComposerModelsByConversation((prev) => {
+        if (prev[conversationId] === selectedComposerModel) {
+          return prev;
+        }
+        return {
+          ...prev,
+          [conversationId]: selectedComposerModel,
+        };
+      });
 
       notices.clearNotices();
       activitiesHook.setSendingConversations((prev) => ({ ...prev, [conversationId]: true }));
@@ -563,6 +575,8 @@ export function useLoopDesktop(): LoopDesktopController {
     setHideLifecycle: activitiesHook.setHideLifecycle,
     showMascot: activitiesHook.showMascot,
     setShowMascot: activitiesHook.setShowMascot,
+    reactScanEnabled: activitiesHook.reactScanEnabled,
+    setReactScanEnabled: activitiesHook.setReactScanEnabled,
     thinkingLevel: modelSettings.thinkingLevel,
     setThinkingLevel: modelSettings.setThinkingLevel,
     composerModel: modelSettings.composerModel,

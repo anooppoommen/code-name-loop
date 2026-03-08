@@ -44,6 +44,8 @@ export interface UseActivitiesReturn {
   setHideLifecycle: (value: boolean) => void;
   showMascot: boolean;
   setShowMascot: (value: boolean) => void;
+  reactScanEnabled: boolean;
+  setReactScanEnabled: (value: boolean) => void;
   activeStreamsRef: React.RefObject<Record<string, StreamHandle>>;
   sendingConversations: Record<string, boolean>;
   setSendingConversations: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
@@ -62,6 +64,7 @@ export function useActivities(
 ): UseActivitiesReturn {
   const [hideLifecycle, setHideLifecycle] = useState(true);
   const [showMascot, setShowMascot] = useState(false);
+  const [reactScanEnabled, setReactScanEnabled] = useState(false);
   const [currentStatus, setCurrentStatus] = useState<string>('');
   const [sendingConversations, setSendingConversations] = useState<Record<string, boolean>>({});
 
@@ -406,6 +409,8 @@ export function useActivities(
     setHideLifecycle,
     showMascot,
     setShowMascot,
+    reactScanEnabled,
+    setReactScanEnabled,
     activeStreamsRef,
     sendingConversations,
     setSendingConversations,

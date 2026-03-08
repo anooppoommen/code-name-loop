@@ -47,29 +47,45 @@ export function useModelSettings(selectedConversationId: string): UseModelSettin
         (value: ThinkingLevel): void => {
             const normalized = normalizeThinkingLevelForModel(value, composerModel);
             if (!selectedConversationId) {
+                if (draftThinkingLevel === normalized) {
+                    return;
+                }
                 setDraftThinkingLevelRaw(normalized);
                 return;
             }
-            setThinkingLevelsByConversation((prev) => ({
-                ...prev,
-                [selectedConversationId]: normalized,
-            }));
+            setThinkingLevelsByConversation((prev) => {
+                if (prev[selectedConversationId] === normalized) {
+                    return prev;
+                }
+                return {
+                    ...prev,
+                    [selectedConversationId]: normalized,
+                };
+            });
         },
-        [composerModel, selectedConversationId],
+        [composerModel, draftThinkingLevel, selectedConversationId],
     );
 
     const setComposerModel = useCallback(
         (value: ComposerModel): void => {
             const normalized = normalizeComposerModel(value);
             if (!selectedConversationId) {
+                if (draftComposerModel === normalized) {
+                    return;
+                }
                 setDraftComposerModelRaw(normalized);
                 setDraftThinkingLevelRaw((prev) => normalizeThinkingLevelForModel(prev, normalized));
                 return;
             }
-            setComposerModelsByConversation((prev) => ({
-                ...prev,
-                [selectedConversationId]: normalized,
-            }));
+            setComposerModelsByConversation((prev) => {
+                if (prev[selectedConversationId] === normalized) {
+                    return prev;
+                }
+                return {
+                    ...prev,
+                    [selectedConversationId]: normalized,
+                };
+            });
             setThinkingLevelsByConversation((prev) => {
                 const current = prev[selectedConversationId] ?? DEFAULT_THINKING_LEVEL;
                 const adjusted = normalizeThinkingLevelForModel(current, normalized);
@@ -82,7 +98,7 @@ export function useModelSettings(selectedConversationId: string): UseModelSettin
                 };
             });
         },
-        [selectedConversationId],
+        [draftComposerModel, selectedConversationId],
     );
 
     const setDraftThinkingLevel = useCallback((value: ThinkingLevel): void => {

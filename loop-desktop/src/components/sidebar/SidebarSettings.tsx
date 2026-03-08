@@ -8,6 +8,8 @@ interface SidebarSettingsProps {
   onHideLifecycleChange: (value: boolean) => void;
   showMascot: boolean;
   onShowMascotChange: (value: boolean) => void;
+  reactScanEnabled: boolean;
+  onReactScanEnabledChange: (value: boolean) => void;
 }
 
 export function SidebarSettings({
@@ -17,6 +19,8 @@ export function SidebarSettings({
   onHideLifecycleChange,
   showMascot,
   onShowMascotChange,
+  reactScanEnabled,
+  onReactScanEnabledChange,
 }: SidebarSettingsProps) {
   const [showSettings, setShowSettings] = useState(false);
 
@@ -61,6 +65,15 @@ export function SidebarSettings({
               className="cursor-pointer rounded border-loop-700 bg-loop-900 text-blue-500 focus:ring-blue-500/50 focus:ring-offset-loop-900"
             />
             <span className="text-[11px] font-medium uppercase tracking-wider">Show Mascot</span>
+          </label>
+          <label className="flex cursor-pointer items-center gap-2 pt-1 text-loop-400 transition-colors hover:text-loop-300">
+            <input
+              type="checkbox"
+              checked={reactScanEnabled}
+              onChange={(e) => onReactScanEnabledChange(e.target.checked)}
+              className="cursor-pointer rounded border-loop-700 bg-loop-900 text-blue-500 focus:ring-blue-500/50 focus:ring-offset-loop-900"
+            />
+            <span className="text-[11px] font-medium uppercase tracking-wider">Enable React Scan</span>
           </label>
         </div>
       )}

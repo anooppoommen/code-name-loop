@@ -118,6 +118,8 @@ export interface LoopDesktopController {
   setHideLifecycle: (value: boolean) => void;
   showMascot: boolean;
   setShowMascot: (value: boolean) => void;
+  reactScanEnabled: boolean;
+  setReactScanEnabled: (value: boolean) => void;
   thinkingLevel: ThinkingLevel;
   setThinkingLevel: (value: ThinkingLevel) => void;
   composerModel: ComposerModel;

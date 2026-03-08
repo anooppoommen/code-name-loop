@@ -188,9 +188,9 @@ export function Composer({
               void onSubmit();
             }
           }}
-          className={`no-drag relative z-0 flex shrink-0 flex-col rounded-xl border p-2 shadow-sm transition-all ${
+          className={`no-drag relative z-0 flex shrink-0 flex-col rounded-xl border p-2 shadow-sm transition-[border-color,background-color,box-shadow] ${
             isSending
-              ? 'google-running-glow border-loop-700/50 bg-loop-800'
+              ? 'google-running-glow border-loop-600/70 bg-loop-800 shadow-[0_0_0_1px_rgba(59,130,246,0.14)]'
               : 'border-loop-700/50 bg-loop-800 focus-within:border-blue-500/50 focus-within:ring-1 focus-within:ring-blue-500/50'
           }`}
         >
