@@ -115,6 +115,24 @@ func (h *ConversationHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ws, err := h.store.Workspaces().Get(r.Context(), conv.WorkspaceID)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			utils.WriteError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		utils.WriteError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if strings.TrimSpace(conv.WorktreePath) != "" {
+		validatedPath, err := validateWorkspaceWorktreePath(r.Context(), ws, conv.WorktreePath)
+		if err != nil {
+			utils.WriteError(w, http.StatusBadRequest, fmt.Sprintf("invalid worktree path: %v", err))
+			return
+		}
+		conv.WorktreePath = validatedPath
+	}
+
 	applyDefaultSystemPromptToConversation(&conv)
 
 	if err := h.store.Conversations().Create(r.Context(), &conv); err != nil {
@@ -435,12 +453,31 @@ func parseCheckpointLimit(raw string) int {
 	return n
 }
 
+func (h *ConversationHandler) resolveWorkspaceForConversation(ctx context.Context, conv *models.Conversation) (*models.Workspace, error) {
+	ws, err := h.store.Workspaces().Get(ctx, conv.WorkspaceID)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(conv.WorktreePath) == "" {
+		return ws, nil
+	}
+
+	validatedPath, err := validateWorkspaceWorktreePath(ctx, ws, conv.WorktreePath)
+	if err != nil {
+		return nil, fmt.Errorf("invalid conversation worktree path: %w", err)
+	}
+	conv.WorktreePath = validatedPath
+	ws.RootPath = validatedPath
+	ws.CanonicalRootPath = validatedPath
+	return ws, nil
+}
+
 func (h *ConversationHandler) loadConversationAndWorkspace(ctx context.Context, convID models.ConversationID) (*models.Conversation, *models.Workspace, error) {
 	conv, err := h.store.Conversations().Get(ctx, convID)
 	if err != nil {
 		return nil, nil, err
 	}
-	ws, err := h.store.Workspaces().Get(ctx, conv.WorkspaceID)
+	ws, err := h.resolveWorkspaceForConversation(ctx, conv)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -916,7 +953,7 @@ func (h *ConversationHandler) Reply(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Load the workspace.
-	ws, err := h.store.Workspaces().Get(r.Context(), conv.WorkspaceID)
+	ws, err := h.resolveWorkspaceForConversation(r.Context(), conv)
 	if err != nil {
 		utils.WriteError(w, http.StatusInternalServerError, err.Error())
 		return

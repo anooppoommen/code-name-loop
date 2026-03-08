@@ -59,6 +59,7 @@ export interface ConversationSummary {
   isThread: boolean;
   systemPromptId?: string;
   systemPromptName?: string;
+  worktreePath?: string;
   updatedAt: string;
 }
 

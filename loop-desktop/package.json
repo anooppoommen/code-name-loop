@@ -11,7 +11,7 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "test": "npm run test:unit",
-    "test:unit": "node --test test/activity-stores.test.ts test/combined-patch.test.ts",
+    "test:unit": "node --test test/activity-stores.test.ts test/combined-patch.test.ts test/worktree-draft.test.ts test/draft-conversation-submit.test.ts",
     "test:e2e:ssh": "node --test test/ssh-tunnel.test.mjs",
     "preview": "vite preview",
     "start": "npm run build && electron electron/main.cjs"

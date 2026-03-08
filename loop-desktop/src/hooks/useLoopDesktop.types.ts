@@ -125,6 +125,7 @@ export interface LoopDesktopController {
   currentStatus: string;
   setCurrentStatus: (value: string) => void;
 
+  pushNotice: (tone: NoticeTone, message: string) => void;
   dismissNotice: (id: string) => void;
   resolveCommandApproval: (decision: CommandApprovalDecision, message?: string) => Promise<void>;
 
@@ -142,7 +143,7 @@ export interface LoopDesktopController {
   deleteConversation: (conversationId: string) => Promise<void>;
   renameConversation: (conversationId: string, title: string) => Promise<void>;
 
-  sendMessage: () => Promise<void>;
+  sendMessage: (options?: { worktreePath?: string }) => Promise<void>;
   cancelStream: () => Promise<void>;
   createCheckpoint: (label?: string) => Promise<void>;
   restoreCheckpoint: (checkpointId: string) => Promise<void>;

@@ -61,6 +61,8 @@ type Conversation struct {
 
 	Title string
 
+	WorktreePath string // If set, overrides the workspace RootPath for agent execution.
+
 	// SystemPromptID/SystemPromptName track the latest prompt variant used
 	// for turns in this conversation. Per-turn provenance also lives on
 	// message metadata so conversations can span prompt upgrades safely.

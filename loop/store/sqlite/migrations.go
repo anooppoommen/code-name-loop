@@ -40,6 +40,10 @@ func migrate(db *sql.DB) error {
 		return err
 	}
 
+	if err := migrateConversationWorktreeField(db); err != nil {
+		return err
+	}
+
 	return migrateBranchVersioning(db)
 }
 
@@ -215,6 +219,18 @@ func migrateConversationPromptFields(db *sql.DB) error {
 	for _, stmt := range alters {
 		if _, err := db.Exec(stmt); err != nil && !isDuplicateColumn(err) {
 			return fmt.Errorf("conversation prompt fields migration: %w", err)
+		}
+	}
+	return nil
+}
+
+func migrateConversationWorktreeField(db *sql.DB) error {
+	alters := []string{
+		`ALTER TABLE conversations ADD COLUMN worktree_path TEXT NOT NULL DEFAULT ''`,
+	}
+	for _, stmt := range alters {
+		if _, err := db.Exec(stmt); err != nil && !isDuplicateColumn(err) {
+			return fmt.Errorf("conversation worktree field migration: %w", err)
 		}
 	}
 	return nil

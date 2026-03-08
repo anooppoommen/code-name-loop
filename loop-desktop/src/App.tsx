@@ -17,6 +17,13 @@ import { WorkingRobotFlare } from "./components/activity-feed/WorkingRobotFlare"
 import { CommandPalette } from "./components/CommandPalette";
 import { ConnectionSettings } from "./components/ConnectionSettings";
 import { useGitStatus } from "./hooks/useGitStatus";
+import { ComposerEnvironmentBar } from "./components/ComposerEnvironmentBar";
+import { NewThreadView } from "./components/NewThreadView";
+import {
+  buildConversationWorktreeBranchName,
+  resolveDraftBaseBranch,
+} from "./utils/worktreeDraft";
+import { submitDraftConversation } from "./utils/draftConversationSubmit";
 
 const MOBILE_SIDEBAR_BREAKPOINT_PX = 920;
 const COMMAND_APPROVAL_OPTIONS: Array<{
@@ -38,6 +45,7 @@ interface MemoryAwarePerformance extends Performance {
 
 export default function App() {
   const app = useLoopDesktop();
+  const gitStatus = useGitStatus(app.backendUrl, app.selectedWorkspaceId, app.pushNotice);
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(() => {
     if (typeof window !== "undefined") {
@@ -49,6 +57,10 @@ export default function App() {
     Record<string, boolean>
   >({});
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
+  const [draftEnvMode, setDraftEnvMode] = useState<"local" | "worktree">("local");
+  const [draftBaseBranch, setDraftBaseBranch] = useState("");
+  const [isPreparingWorktree, setIsPreparingWorktree] = useState(false);
+  const [worktreeError, setWorktreeError] = useState<string | null>(null);
 
   // Navigation history (jumplist)
   const [, setHistoryState] = useState<{ list: string[]; index: number }>({
@@ -62,8 +74,6 @@ export default function App() {
 
   const [isProfiling, setIsProfiling] = useState(false);
   const profilingLogsRef = useRef<string[]>([]);
-
-  const gitStatus = useGitStatus(app.backendUrl, app.selectedWorkspaceId);
 
   // Track selected conversation history
   useEffect(() => {
@@ -107,6 +117,25 @@ export default function App() {
       return next;
     });
   }, [app.workspaces]);
+
+  useEffect(() => {
+    setDraftBaseBranch((current) =>
+      resolveDraftBaseBranch(current, gitStatus.status),
+    );
+  }, [app.selectedWorkspaceId, gitStatus.status]);
+
+  useEffect(() => {
+    if (!gitStatus.status?.isInitialized || !gitStatus.status.hasCommits) {
+      setDraftEnvMode("local");
+    }
+  }, [gitStatus.status]);
+
+  useEffect(() => {
+    setWorktreeError(null);
+    if (app.selectedConversationId) {
+      setDraftEnvMode("local");
+    }
+  }, [app.selectedConversationId, app.selectedWorkspaceId]);
 
   const appShortcutHandler = useCallback(
     (event: KeyboardEvent): boolean => {
@@ -162,10 +191,51 @@ export default function App() {
         });
         return true;
       }
+      if (key === "w" && event.shiftKey) {
+        if (
+          !app.selectedConversationId &&
+          gitStatus.status?.isInitialized &&
+          gitStatus.status.hasCommits
+        ) {
+          setDraftEnvMode((prev) => (prev === "local" ? "worktree" : "local"));
+        }
+        return true;
+      }
       return false;
     },
-    [app],
+    [app, gitStatus.status],
   );
+
+  const handleComposerSubmit = async () => {
+    setWorktreeError(null);
+    if (!app.selectedConversationId && draftEnvMode === "worktree") {
+      setIsPreparingWorktree(true);
+      try {
+        const result = await submitDraftConversation({
+          selectedConversationId: app.selectedConversationId,
+          draftEnvMode,
+          draftBaseBranch,
+          currentBranch: gitStatus.status?.branch || "",
+          createWorktree: gitStatus.createWorktree,
+          sendMessage: app.sendMessage,
+          makeBranchName: buildConversationWorktreeBranchName,
+        });
+        if (!result.ok) {
+          setWorktreeError(result.error);
+        }
+        return;
+      } catch (e) {
+        console.error(e);
+        setWorktreeError(
+          e instanceof Error ? e.message : "Failed to prepare worktree.",
+        );
+        return;
+      } finally {
+        setIsPreparingWorktree(false);
+      }
+    }
+    await app.sendMessage();
+  };
 
   const startConversationFromPalette = useCallback(
     async (workspaceId: string): Promise<void> => {
@@ -417,22 +487,57 @@ export default function App() {
               <div className="min-h-0 flex-1 overflow-hidden">
                 <div className="flex h-full w-full min-h-0 flex-col">
                   <div className="min-h-0 flex-1 overflow-hidden">
-                    <Profiler id="ActivityFeed" onRender={onRenderCallback}>
-                      <ActivityFeed
-                        conversationId={app.selectedConversationId}
-                        containerRef={app.feedScrollRef}
-                        currentStatus={app.currentStatus}
-                        hideLifecycle={app.hideLifecycle}
-                        isLoadingHistory={app.isLoadingSelectedConversation}
-                        applyPatchToWorkspace={app.applyPatchToWorkspace}
-                        canCompose={app.canCompose}
-                        isSending={app.isSending}
-                        onUseToolReply={app.applyToolResponseSuggestion}
-                        onSendToolReply={app.sendToolResponseSuggestion}
-                        onRetryMessage={app.retryFromMessage}
-                        onEditMessage={app.editMessageInComposer}
-                      />
-                    </Profiler>
+                    <AnimatePresence initial={false} mode="wait">
+                      {app.selectedConversationId ? (
+                        <motion.div
+                          key="activity-feed"
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -10 }}
+                          transition={{ duration: 0.22 }}
+                          className="h-full"
+                        >
+                          <Profiler id="ActivityFeed" onRender={onRenderCallback}>
+                            <ActivityFeed
+                              conversationId={app.selectedConversationId}
+                              containerRef={app.feedScrollRef}
+                              currentStatus={app.currentStatus}
+                              hideLifecycle={app.hideLifecycle}
+                              isLoadingHistory={app.isLoadingSelectedConversation}
+                              applyPatchToWorkspace={app.applyPatchToWorkspace}
+                              canCompose={app.canCompose}
+                              isSending={app.isSending}
+                              onUseToolReply={app.applyToolResponseSuggestion}
+                              onSendToolReply={app.sendToolResponseSuggestion}
+                              onRetryMessage={app.retryFromMessage}
+                              onEditMessage={app.editMessageInComposer}
+                            />
+                          </Profiler>
+                        </motion.div>
+                      ) : (
+                        <motion.div
+                          key="new-thread-view"
+                          initial={{ opacity: 0, y: 12 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0, y: -12 }}
+                          transition={{ duration: 0.24 }}
+                          className="h-full"
+                        >
+                          <NewThreadView
+                            workspaceName={
+                              app.selectedWorkspace?.name ?? "No workspace selected"
+                            }
+                            currentBranch={gitStatus.status?.branch || "main"}
+                            draftBaseBranch={draftBaseBranch}
+                            draftEnvMode={draftEnvMode}
+                            canCreateWorktree={Boolean(
+                              gitStatus.status?.isInitialized &&
+                                gitStatus.status.hasCommits,
+                            )}
+                          />
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                   </div>
 
                   <div className="relative mx-auto w-full max-w-[720px] shrink-0">
@@ -465,44 +570,24 @@ export default function App() {
                           onThinkingLevelChange={app.setThinkingLevel}
                           composerModel={app.composerModel}
                           onComposerModelChange={app.setComposerModel}
-                          onSubmit={app.sendMessage}
+                          onSubmit={handleComposerSubmit}
                           onStop={app.cancelStream}
                           onQueue={app.queueMessage}
                           conversationId={app.selectedConversationId}
                           composerImages={app.composerImages}
                           setComposerImages={app.setComposerImages}
                         />
-                        <div className="mt-3 mb-4 px-4 flex items-center justify-end text-[12px] text-loop-400">
-                          <div className="flex items-center gap-1.5">
-                            {gitStatus.status ? (
-                              gitStatus.status.isInitialized ? (
-                                <GitBranchDropdown gitStatus={gitStatus} />
-                              ) : (
-                                <button
-                                  onClick={() => void gitStatus.initGit()}
-                                  className="flex items-center gap-1.5 transition-colors group text-white/70 hover:text-white mr-1"
-                                >
-                                  <span className="border-b border-dotted border-white/40 group-hover:border-white/80 pb-[1px] leading-none transition-colors">
-                                    Initialize Git
-                                  </span>
-                                  <svg
-                                    className="h-3.5 w-3.5"
-                                    fill="none"
-                                    viewBox="0 0 24 24"
-                                    stroke="currentColor"
-                                    strokeWidth={2}
-                                  >
-                                    <path
-                                      strokeLinecap="round"
-                                      strokeLinejoin="round"
-                                      d="M12 4v16m8-8H4"
-                                    />
-                                  </svg>
-                                </button>
-                              )
-                            ) : null}
-                          </div>
-                        </div>
+                        <ComposerEnvironmentBar
+                          gitStatus={gitStatus}
+                          selectedConversationId={app.selectedConversationId}
+                          selectedConversation={app.selectedConversation}
+                          draftEnvMode={draftEnvMode}
+                          onDraftEnvModeChange={setDraftEnvMode}
+                          draftBaseBranch={draftBaseBranch}
+                          onDraftBaseBranchChange={setDraftBaseBranch}
+                          isPreparingWorktree={isPreparingWorktree}
+                          worktreeError={worktreeError}
+                        />
                       </div>
                     </div>
                   </div>
@@ -519,183 +604,6 @@ export default function App() {
         </main>
       </div>
     </KeyboardShortcut>
-  );
-}
-
-function GitBranchDropdown({ gitStatus }: { gitStatus: any }) {
-  const [isOpen, setIsOpen] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
-  const containerRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (!isOpen) {
-      setSearchQuery("");
-      return;
-    }
-    const handleOutsideClick = (event: MouseEvent) => {
-      if (
-        containerRef.current &&
-        !containerRef.current.contains(event.target as Node)
-      ) {
-        setIsOpen(false);
-      }
-    };
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setIsOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", handleOutsideClick);
-    document.addEventListener("keydown", handleEscape);
-    // Focus input on open
-    setTimeout(() => inputRef.current?.focus(), 50);
-
-    return () => {
-      document.removeEventListener("mousedown", handleOutsideClick);
-      document.removeEventListener("keydown", handleEscape);
-    };
-  }, [isOpen]);
-
-  if (!gitStatus.status) return null;
-
-  const currentBranch = gitStatus.status.branch || "main";
-  const branches = gitStatus.status.branches || [];
-
-  const filteredBranches = branches.filter((b: string) =>
-    b.toLowerCase().includes(searchQuery.toLowerCase()),
-  );
-
-  const exactMatch = branches.some(
-    (b: string) => b.toLowerCase() === searchQuery.toLowerCase(),
-  );
-  const showCreateOption = searchQuery.trim() !== "" && !exactMatch;
-
-  const handleSelect = async (branch: string, create = false) => {
-    if (branch === currentBranch && !create) {
-      setIsOpen(false);
-      return;
-    }
-    await gitStatus.checkoutBranch(branch, create);
-    setIsOpen(false);
-  };
-
-  return (
-    <div className="relative" ref={containerRef}>
-      <button
-        type="button"
-        onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center gap-1.5 transition-colors group text-white/70 hover:text-white mr-1 text-[12px]"
-      >
-        <span className="font-mono border-b border-dotted border-white/40 group-hover:border-white/80 pb-[1px] leading-none transition-colors">
-          {currentBranch}
-        </span>
-        <svg
-          className="h-3.5 w-3.5"
-          fill="none"
-          viewBox="0 0 24 24"
-          stroke="currentColor"
-          strokeWidth={2}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <line x1="6" x2="6" y1="3" y2="15" />
-          <circle cx="18" cy="6" r="3" />
-          <circle cx="6" cy="18" r="3" />
-          <path d="M18 9a9 9 0 0 1-9 9" />
-        </svg>
-      </button>
-
-      <AnimatePresence>
-        {isOpen && (
-          <motion.div
-            initial={{ opacity: 0, y: 10, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 10, scale: 0.98 }}
-            transition={{ duration: 0.15 }}
-            className="absolute right-0 bottom-full mb-2 w-56 rounded-xl border border-loop-700 bg-loop-900 p-1.5 shadow-xl shadow-black/50 z-50 flex flex-col"
-          >
-            <div className="px-1.5 py-1">
-              <input
-                ref={inputRef}
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Find or create a branch..."
-                className="w-full bg-loop-950 border border-loop-800 rounded px-2 py-1 text-[11px] text-loop-200 placeholder-loop-500 focus:outline-none focus:border-blue-500/50 focus:ring-1 focus:ring-blue-500/50"
-              />
-            </div>
-
-            <div className="mt-1 flex-1 overflow-y-auto max-h-48 scrollbar-thin scrollbar-thumb-loop-700 scrollbar-track-transparent">
-              {showCreateOption && (
-                <button
-                  onClick={() => handleSelect(searchQuery.trim(), true)}
-                  className="w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg text-left text-[11px] text-loop-200 hover:bg-blue-500/15 hover:text-blue-200 group"
-                >
-                  <div className="flex flex-col min-w-0">
-                    <span className="truncate">Create branch</span>
-                    <span className="truncate font-mono text-loop-400 group-hover:text-blue-300">
-                      {searchQuery.trim()}
-                    </span>
-                  </div>
-                  <svg
-                    className="h-3 w-3 shrink-0 text-loop-500 group-hover:text-blue-400"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                    strokeWidth={2}
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <line x1="12" y1="5" x2="12" y2="19" />
-                    <line x1="5" y1="12" x2="19" y2="12" />
-                  </svg>
-                </button>
-              )}
-
-              {filteredBranches.length > 0 && showCreateOption && (
-                <div className="h-px bg-loop-800 my-1 mx-1" />
-              )}
-
-              {filteredBranches.map((branch) => {
-                const isActive = branch === currentBranch;
-                return (
-                  <button
-                    key={branch}
-                    onClick={() => handleSelect(branch)}
-                    className={`w-full flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg text-left text-[11px] hover:bg-loop-800 transition-colors ${isActive
-                      ? "text-blue-300 bg-blue-500/10"
-                      : "text-loop-200"
-                      }`}
-                  >
-                    <span className="font-mono truncate">{branch}</span>
-                    {isActive && (
-                      <svg
-                        className="h-3 w-3 shrink-0"
-                        fill="none"
-                        viewBox="0 0 24 24"
-                        stroke="currentColor"
-                        strokeWidth={2}
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <polyline points="20 6 9 17 4 12" />
-                      </svg>
-                    )}
-                  </button>
-                );
-              })}
-
-              {filteredBranches.length === 0 && !showCreateOption && (
-                <div className="px-2 py-3 text-center text-[11px] text-loop-500">
-                  No branches found
-                </div>
-              )}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
   );
 }
 

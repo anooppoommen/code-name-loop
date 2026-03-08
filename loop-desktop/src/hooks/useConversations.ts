@@ -120,10 +120,10 @@ export interface UseConversationsReturn {
     hasMoreConversationsByWorkspace: Record<string, boolean>;
     refreshCheckpointsForConversation: (conversationId: string) => Promise<CheckpointSummary[]>;
     loadConversationHistory: (conversationId: string) => Promise<void>;
-    createConversation: (seedText: string) => Promise<string | null>;
+    createConversation: (seedText: string, options?: { worktreePath?: string }) => Promise<string | null>;
     deleteConversation: (conversationId: string) => Promise<void>;
     renameConversation: (conversationId: string, title: string) => Promise<void>;
-    ensureConversationId: (seedText: string) => Promise<string | null>;
+    ensureConversationId: (seedText: string, options?: { worktreePath?: string }) => Promise<string | null>;
     selectConversation: (conversationId: string) => void;
     newConversation: () => Promise<void>;
     refreshConversations: () => Promise<void>;
@@ -374,8 +374,9 @@ export function useConversations(
     );
 
     const createConversation = useCallback(
-        async (seedText: string): Promise<string | null> => {
-            if (!selectedWorkspaceId) {
+        async (seedText: string, options?: { worktreePath?: string }): Promise<string | null> => {
+            const targetWorkspaceId = selectedWorkspaceId;
+            if (!targetWorkspaceId) {
                 pushNotice('info', 'Pick or create a workspace first.');
                 return null;
             }
@@ -387,8 +388,9 @@ export function useConversations(
                 method: 'POST',
                 body: {
                     ID: conversationId,
-                    WorkspaceID: selectedWorkspaceId,
+                    WorkspaceID: targetWorkspaceId,
                     Title: buildConversationTitle(seedText),
+                    WorktreePath: options?.worktreePath || '',
                 },
             });
 
@@ -397,7 +399,7 @@ export function useConversations(
                 return null;
             }
 
-            await refreshConversationsByWorkspace(selectedWorkspaceId, true);
+            await refreshConversationsByWorkspace(targetWorkspaceId, true);
             return conversationId;
         },
         [backendUrl, pushNotice, refreshConversationsByWorkspace, selectedWorkspaceId],
@@ -511,12 +513,12 @@ export function useConversations(
     );
 
     const ensureConversationId = useCallback(
-        async (seedText: string): Promise<string | null> => {
+        async (seedText: string, options?: { worktreePath?: string }): Promise<string | null> => {
             if (selectedConversationId) {
                 return selectedConversationId;
             }
 
-            const conversationId = await createConversation(seedText);
+            const conversationId = await createConversation(seedText, options);
             if (!conversationId) {
                 return null;
             }

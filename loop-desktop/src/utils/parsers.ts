@@ -63,6 +63,7 @@ export function parseConversation(input: unknown): ConversationSummary | null {
     isThread: parentConversationID !== '',
     systemPromptId: getString(record, ['SystemPromptID', 'systemPromptId', 'system_prompt_id']) || undefined,
     systemPromptName: getString(record, ['SystemPromptName', 'systemPromptName', 'system_prompt_name']) || undefined,
+    worktreePath: getString(record, ['WorktreePath', 'worktreePath', 'worktree_path']) || undefined,
     updatedAt: getString(record, ['UpdatedAt', 'updatedAt', 'updated_at']),
   };
 }

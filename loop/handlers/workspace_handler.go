@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -36,6 +37,7 @@ func (h *WorkspaceHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /workspaces/{id}/git", h.GitStatus)
 	mux.HandleFunc("POST /workspaces/{id}/git/init", h.GitInit)
 	mux.HandleFunc("POST /workspaces/{id}/git/checkout", h.GitCheckout)
+	mux.HandleFunc("POST /workspaces/{id}/git/worktree", h.GitCreateWorktree)
 }
 
 func (h *WorkspaceHandler) Stats(w http.ResponseWriter, r *http.Request) {
@@ -210,7 +212,13 @@ func (h *WorkspaceHandler) GitStatus(w http.ResponseWriter, r *http.Request) {
 
 	branch := ""
 	branches := []string{}
+	worktrees := []map[string]string{}
+	hasCommits := false
 	if isInit {
+		headCmd := exec.CommandContext(r.Context(), "git", "rev-parse", "--verify", "HEAD")
+		headCmd.Dir = ws.RootPath
+		hasCommits = headCmd.Run() == nil
+
 		bCmd := exec.CommandContext(r.Context(), "git", "branch", "--show-current")
 		bCmd.Dir = ws.RootPath
 		out, _ := bCmd.Output()
@@ -236,12 +244,31 @@ func (h *WorkspaceHandler) GitStatus(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+
+		wtCmd := exec.CommandContext(r.Context(), "git", "worktree", "list", "--porcelain")
+		wtCmd.Dir = ws.RootPath
+		if wOut, wErr := wtCmd.Output(); wErr == nil {
+			var currentPath string
+			for _, line := range strings.Split(string(wOut), "\n") {
+				if strings.HasPrefix(line, "worktree ") {
+					currentPath = strings.TrimPrefix(line, "worktree ")
+				} else if strings.HasPrefix(line, "branch refs/heads/") && currentPath != "" {
+					b := strings.TrimPrefix(line, "branch refs/heads/")
+					worktrees = append(worktrees, map[string]string{
+						"path":   currentPath,
+						"branch": b,
+					})
+				}
+			}
+		}
 	}
 
 	utils.WriteJSON(w, http.StatusOK, map[string]any{
 		"is_initialized": isInit,
+		"has_commits":    hasCommits,
 		"branch":         branch,
 		"branches":       branches,
+		"worktrees":      worktrees,
 	})
 }
 
@@ -278,6 +305,107 @@ func (h *WorkspaceHandler) GitCheckout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusOK)
+}
+
+var homeDir string
+
+type gitWorktreeRequest struct {
+	Path   string `json:"path"`
+	Branch string `json:"branch"`
+	Base   string `json:"base"`
+}
+
+func defaultWorktreePath(workspaceRoot, branch string) string {
+	if homeDir == "" {
+		homeDir, _ = os.UserHomeDir()
+	}
+	if homeDir == "" {
+		homeDir = "/tmp"
+	}
+
+	sanitizedBranch := strings.NewReplacer("/", "-", "\\", "-", " ", "-").Replace(branch)
+	repoName := filepath.Base(filepath.Clean(workspaceRoot))
+	return filepath.Join(homeDir, ".gemini-loop", "worktrees", repoName, sanitizedBranch)
+}
+
+func normalizeWorktreePath(workspaceRoot, requestedPath string) (string, error) {
+	trimmed := strings.TrimSpace(requestedPath)
+	if trimmed == "" {
+		return "", nil
+	}
+	if filepath.IsAbs(trimmed) {
+		return filepath.Clean(trimmed), nil
+	}
+	return filepath.Abs(filepath.Join(workspaceRoot, trimmed))
+}
+
+func gitBranchNameValid(ctx context.Context, repoPath, branch string) bool {
+	cmd := exec.CommandContext(ctx, "git", "check-ref-format", "--branch", branch)
+	cmd.Dir = repoPath
+	return cmd.Run() == nil
+}
+
+func (h *WorkspaceHandler) GitCreateWorktree(w http.ResponseWriter, r *http.Request) {
+	id := models.WorkspaceID(r.PathValue("id"))
+	ws, err := h.store.Workspaces().Get(r.Context(), id)
+	if err != nil {
+		utils.WriteError(w, http.StatusNotFound, "workspace not found")
+		return
+	}
+
+	var req gitWorktreeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		utils.WriteError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	req.Branch = strings.TrimSpace(req.Branch)
+	req.Base = strings.TrimSpace(req.Base)
+	if req.Branch == "" {
+		utils.WriteError(w, http.StatusBadRequest, "branch is required")
+		return
+	}
+	if !gitBranchNameValid(r.Context(), ws.RootPath, req.Branch) {
+		utils.WriteError(w, http.StatusBadRequest, "invalid branch name")
+		return
+	}
+
+	resolvedPath, err := normalizeWorktreePath(ws.RootPath, req.Path)
+	if err != nil {
+		utils.WriteError(w, http.StatusBadRequest, "invalid worktree path")
+		return
+	}
+	if resolvedPath == "" {
+		resolvedPath = defaultWorktreePath(ws.RootPath, req.Branch)
+	}
+	req.Path = resolvedPath
+
+	if err := os.MkdirAll(filepath.Dir(req.Path), 0o755); err != nil {
+		utils.WriteError(w, http.StatusInternalServerError, "failed to prepare worktree directory")
+		return
+	}
+
+	args := []string{"worktree", "add", "-b", req.Branch, req.Path}
+	if req.Base != "" {
+		args = append(args, req.Base)
+	}
+
+	cmd := exec.CommandContext(r.Context(), "git", args...)
+	cmd.Dir = ws.RootPath
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		message := strings.TrimSpace(string(output))
+		if message == "" {
+			message = "failed to create worktree"
+		}
+		utils.WriteError(w, http.StatusInternalServerError, message)
+		return
+	}
+
+	utils.WriteJSON(w, http.StatusOK, map[string]string{
+		"path":   req.Path,
+		"branch": req.Branch,
+		"base":   req.Base,
+	})
 }
 
 func (h *WorkspaceHandler) GitInit(w http.ResponseWriter, r *http.Request) {

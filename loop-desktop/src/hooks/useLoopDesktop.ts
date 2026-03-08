@@ -159,7 +159,7 @@ export function useLoopDesktop(): LoopDesktopController {
       messageImages: ComposerImage[],
       clearComposer: boolean,
       forceSend = false,
-      options?: { retryMessageId?: string; editMessageId?: string },
+      options?: { retryMessageId?: string; editMessageId?: string; worktreePath?: string },
     ): Promise<void> => {
       const text = messageText.trim();
       const retryMessageId = options?.retryMessageId?.trim() || '';
@@ -183,7 +183,7 @@ export function useLoopDesktop(): LoopDesktopController {
 
       let conversationId = curSelectedConversationId;
       if (!isBranch) {
-        const ensuredConversationId = await conversationsHook.ensureConversationId(text);
+        const ensuredConversationId = await conversationsHook.ensureConversationId(text, { worktreePath: options?.worktreePath });
         if (!ensuredConversationId) {
           return;
         }
@@ -385,12 +385,12 @@ export function useLoopDesktop(): LoopDesktopController {
     await sendMessageText(msg.text, msg.images, false, true);
   }, [composer, selectedConversationId, activitiesHook, sendMessageText]);
 
-  const sendMessage = useCallback(async (): Promise<void> => {
+  const sendMessage = useCallback(async (options?: { worktreePath?: string }): Promise<void> => {
     if (composer.editingMessageId) {
-      await sendMessageText(composer.messageInput, composer.composerImages, true, false, { editMessageId: composer.editingMessageId });
+      await sendMessageText(composer.messageInput, composer.composerImages, true, false, { editMessageId: composer.editingMessageId, worktreePath: options?.worktreePath });
       return;
     }
-    await sendMessageText(composer.messageInput, composer.composerImages, true);
+    await sendMessageText(composer.messageInput, composer.composerImages, true, false, { worktreePath: options?.worktreePath });
   }, [composer.composerImages, composer.editingMessageId, composer.messageInput, sendMessageText]);
 
   // Clear editing state if the target message is no longer in activities
@@ -556,6 +556,7 @@ export function useLoopDesktop(): LoopDesktopController {
     isResolvingCommandApproval: commandApprovals.isResolvingCommandApproval,
     isRestoringCheckpoint: conversationsHook.isRestoringCheckpoint,
     isLoadingSelectedConversation: conversationsHook.isLoadingSelectedConversation,
+    pushNotice: notices.pushNotice,
     dismissNotice: notices.dismissNotice,
     resolveCommandApproval: commandApprovals.resolveCommandApproval,
     hideLifecycle: activitiesHook.hideLifecycle,
