@@ -1,7 +1,8 @@
+import { memo } from 'react';
 import type { ActivityEvent } from '../../types/ui';
 import { ActivityFrame } from './ActivityItemShared';
 
-export function ActivityStatusItem({ event }: { event: ActivityEvent }) {
+export const ActivityStatusItem = memo(function ActivityStatusItem({ event }: { event: ActivityEvent }) {
   return (
     <ActivityFrame
       className="px-2 py-0.5 text-[11px] font-normal text-loop-500 opacity-75"
@@ -14,4 +15,4 @@ export function ActivityStatusItem({ event }: { event: ActivityEvent }) {
       </div>
     </ActivityFrame>
   );
-}
+});

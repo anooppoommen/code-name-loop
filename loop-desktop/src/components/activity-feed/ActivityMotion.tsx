@@ -565,9 +565,25 @@ interface ActivityAppendGrowProps extends ComponentPropsWithoutRef<"div"> {
 }
 
 export const ActivityAppendGrow = memo(function ActivityAppendGrow(
-  props: ActivityAppendGrowProps,
+  {
+    animate = true,
+    watch = false,
+    fade = true,
+    children,
+    ...props
+  }: ActivityAppendGrowProps,
 ) {
-  return <ActivityMeasuredBox {...props} />;
+  // Most feed rows are static once mounted. For those rows, bypass the measured
+  // box entirely so we don't pay layout/effect/ResizeObserver overhead.
+  if (!animate && !watch) {
+    return <div {...props}>{children}</div>;
+  }
+
+  return (
+    <ActivityMeasuredBox animate={animate} watch={watch} fade={fade} {...props}>
+      {children}
+    </ActivityMeasuredBox>
+  );
 });
 
 interface ActivityCollapsibleProps extends ComponentPropsWithoutRef<"div"> {
