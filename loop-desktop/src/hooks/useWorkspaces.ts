@@ -3,7 +3,11 @@ import { chooseFolder, requestJson } from '../lib/loopClient';
 import type { WorkspaceSummary } from '../types/ui';
 import { lastPathSegment, parseWorkspace, stringifyResponseError } from '../utils/parsers';
 import { rowsFromUnknown } from './useLoopDesktop.helpers';
-import type { NoticeTone } from './useLoopDesktop.types';
+import { useConnectionStore } from '../stores/connectionStore';
+import { useSelectionStore } from '../stores/selectionStore';
+import { useNoticeStore } from '../stores/noticeStore';
+import { useConversationStore } from '../stores/conversationStore';
+import { usePatchRevertStore } from '../stores/patchRevertStore';
 
 export interface UseWorkspacesReturn {
     workspaces: WorkspaceSummary[];
@@ -23,15 +27,14 @@ export interface UseWorkspacesReturn {
     selectWorkspace: (workspaceId: string) => void;
 }
 
-export function useWorkspaces(
-    backendUrl: string,
-    pushNotice: (tone: NoticeTone, message: string) => void,
-    clearConversationView: () => void,
-    onWorkspacesRefreshed: (parsed: WorkspaceSummary[]) => void,
-    onWorkspaceDeleted: (workspaceId: string) => void,
-): UseWorkspacesReturn {
+export function useWorkspaces(): UseWorkspacesReturn {
+    // ── Read from stores ─────────────────────────────────
+    const backendUrl = useConnectionStore((s) => s.backendUrl);
+    const selectedWorkspaceId = useSelectionStore((s) => s.selectedWorkspaceId);
+    const setSelectedWorkspaceId = useSelectionStore.getState().setSelectedWorkspaceId;
+    const setSelectedConversationId = useSelectionStore.getState().setSelectedConversationId;
+
     const [workspaces, setWorkspaces] = useState<WorkspaceSummary[]>([]);
-    const [selectedWorkspaceId, setSelectedWorkspaceId] = useState('');
     const [workspacePath, setWorkspacePath] = useState('');
     const [workspaceName, setWorkspaceName] = useState('');
     const [isLoadingWorkspaces, setIsLoadingWorkspaces] = useState(false);
@@ -42,6 +45,7 @@ export function useWorkspaces(
     );
 
     const refreshWorkspaces = useCallback(async (): Promise<void> => {
+        const pushNotice = useNoticeStore.getState().pushNotice;
         setIsLoadingWorkspaces(true);
         const response = await requestJson<unknown>({
             baseUrl: backendUrl,
@@ -64,25 +68,19 @@ export function useWorkspaces(
 
         if (parsed.length === 0) {
             setSelectedWorkspaceId('');
-            onWorkspacesRefreshed(parsed);
             return;
         }
-
-        onWorkspacesRefreshed(parsed);
 
         if (!parsed.some((workspace) => workspace.id === selectedWorkspaceId)) {
             setSelectedWorkspaceId(parsed[0].id);
             setWorkspacePath(parsed[0].rootPath);
             setWorkspaceName(parsed[0].name);
         }
-    }, [backendUrl, onWorkspacesRefreshed, pushNotice, selectedWorkspaceId]);
+    }, [backendUrl, selectedWorkspaceId, setSelectedWorkspaceId]);
 
     const pickFolder = useCallback(async (): Promise<void> => {
         const folder = await chooseFolder();
-        if (!folder) {
-            return;
-        }
-
+        if (!folder) return;
         setWorkspacePath(folder);
         if (!workspaceName.trim()) {
             setWorkspaceName(lastPathSegment(folder));
@@ -90,6 +88,7 @@ export function useWorkspaces(
     }, [workspaceName]);
 
     const createWorkspace = useCallback(async (): Promise<void> => {
+        const pushNotice = useNoticeStore.getState().pushNotice;
         const trimmedPath = workspacePath.trim();
         if (!trimmedPath) {
             pushNotice('info', 'Select a workspace folder before creating the workspace.');
@@ -121,13 +120,12 @@ export function useWorkspaces(
         pushNotice('success', `Workspace "${name}" created.`);
         await refreshWorkspaces();
         setSelectedWorkspaceId(id);
-    }, [backendUrl, pushNotice, refreshWorkspaces, workspaceName, workspacePath]);
+    }, [backendUrl, refreshWorkspaces, workspaceName, workspacePath, setSelectedWorkspaceId]);
 
     const pickAndCreateWorkspace = useCallback(async (): Promise<void> => {
+        const pushNotice = useNoticeStore.getState().pushNotice;
         const folder = await chooseFolder();
-        if (!folder) {
-            return;
-        }
+        if (!folder) return;
 
         const id = `ws-${crypto.randomUUID()}`;
         const name = lastPathSegment(folder);
@@ -154,12 +152,11 @@ export function useWorkspaces(
         pushNotice('success', `Workspace "${name}" created.`);
         await refreshWorkspaces();
         setSelectedWorkspaceId(id);
-    }, [backendUrl, pushNotice, refreshWorkspaces]);
+    }, [backendUrl, refreshWorkspaces, setSelectedWorkspaceId]);
 
     const deleteWorkspace = useCallback(async (workspaceId: string): Promise<void> => {
-        if (!workspaceId) {
-            return;
-        }
+        const pushNotice = useNoticeStore.getState().pushNotice;
+        if (!workspaceId) return;
 
         const response = await requestJson<unknown>({
             baseUrl: backendUrl,
@@ -176,14 +173,19 @@ export function useWorkspaces(
 
         if (selectedWorkspaceId === workspaceId) {
             setSelectedWorkspaceId('');
+            setSelectedConversationId('');
             setWorkspacePath('');
             setWorkspaceName('');
-            onWorkspaceDeleted(workspaceId);
-            clearConversationView();
+            // Clear the conversation view
+            const conversationId = useSelectionStore.getState().selectedConversationId;
+            if (conversationId) {
+                useConversationStore.getState().clearConversation(conversationId);
+                usePatchRevertStore.getState().clearConversation(conversationId);
+            }
         }
 
         await refreshWorkspaces();
-    }, [backendUrl, clearConversationView, onWorkspaceDeleted, pushNotice, refreshWorkspaces, selectedWorkspaceId]);
+    }, [backendUrl, refreshWorkspaces, selectedWorkspaceId, setSelectedConversationId, setSelectedWorkspaceId]);
 
     const selectWorkspace = useCallback(
         (workspaceId: string): void => {
@@ -193,9 +195,14 @@ export function useWorkspaces(
                 setWorkspacePath(workspace.rootPath);
                 setWorkspaceName(workspace.name);
             }
-            clearConversationView();
+            // Clear conversation view when swapping workspaces
+            const conversationId = useSelectionStore.getState().selectedConversationId;
+            if (conversationId) {
+                useConversationStore.getState().clearConversation(conversationId);
+                usePatchRevertStore.getState().clearConversation(conversationId);
+            }
         },
-        [clearConversationView, workspaces],
+        [setSelectedWorkspaceId, workspaces],
     );
 
     // Initial load
@@ -206,7 +213,10 @@ export function useWorkspaces(
     return {
         workspaces,
         selectedWorkspaceId,
-        setSelectedWorkspaceId,
+        setSelectedWorkspaceId: (action) => {
+            const next = typeof action === 'function' ? action(selectedWorkspaceId) : action;
+            setSelectedWorkspaceId(next);
+        },
         selectedWorkspace,
         workspacePath,
         setWorkspacePath,

@@ -1,5 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
-import type { NoticeTone, SshTunnelConfig, SshTunnelStatus } from './useLoopDesktop.types';
+import { useCallback, useEffect } from 'react';
+import type { SshTunnelConfig, SshTunnelStatus } from './useLoopDesktop.types';
+import { useSshTunnelStore } from '../stores/sshTunnelStore';
+import { useConnectionStore } from '../stores/connectionStore';
+import { useNoticeStore } from '../stores/noticeStore';
 
 export interface UseSshTunnelReturn {
     sshTunnelConfig: SshTunnelConfig;
@@ -10,61 +13,49 @@ export interface UseSshTunnelReturn {
     disconnectTunnel: () => Promise<void>;
 }
 
-export function useSshTunnel(
-    pushNotice: (tone: NoticeTone, message: string) => void,
-    setBackendUrl: (value: string) => void,
-): UseSshTunnelReturn {
-    const [sshTunnelConfig, setSshTunnelConfig] = useState<SshTunnelConfig>({
-        host: 'localhost',
-        port: 22,
-        username: '',
-        privateKeyPath: '',
-        remotePort: 8080,
-    });
-    const [sshTunnelStatus, setSshTunnelStatus] = useState<SshTunnelStatus>('disconnected');
-    const [sshTunnelError, setSshTunnelError] = useState<string | null>(null);
+export function useSshTunnel(): UseSshTunnelReturn {
+    const sshTunnelConfig = useSshTunnelStore((s) => s.sshTunnelConfig);
+    const setSshTunnelConfig = useSshTunnelStore.getState().setSshTunnelConfig;
+    const sshTunnelStatus = useSshTunnelStore((s) => s.sshTunnelStatus);
+    const sshTunnelError = useSshTunnelStore((s) => s.sshTunnelError);
 
     useEffect(() => {
-        if (!window.loopDesktop?.isElectron) {
-            return;
-        }
+        if (!window.loopDesktop?.isElectron) return;
 
         const unsubscribe = window.loopDesktop.sshTunnel.onStatusChange((status) => {
-            setSshTunnelStatus(status.status as SshTunnelStatus);
-            setSshTunnelError(status.error);
+            useSshTunnelStore.getState().setSshTunnelStatus(status.status as SshTunnelStatus);
+            useSshTunnelStore.getState().setSshTunnelError(status.error);
 
             if (status.status === 'connected' && status.localPort) {
-                setBackendUrl(`http://localhost:${status.localPort}`);
-                pushNotice('success', 'SSH tunnel connected. Workspaces resynced.');
+                useConnectionStore.getState().setBackendUrl(`http://localhost:${status.localPort}`);
+                useNoticeStore.getState().pushNotice('success', 'SSH tunnel connected. Workspaces resynced.');
             } else if (status.status === 'disconnected' || status.status === 'error') {
-                setBackendUrl('http://localhost:8080');
+                useConnectionStore.getState().setBackendUrl('http://localhost:8080');
                 if (status.status === 'error' && status.error) {
-                    pushNotice('error', `SSH tunnel error: ${status.error}`);
+                    useNoticeStore.getState().pushNotice('error', `SSH tunnel error: ${status.error}`);
                 }
             }
         });
 
         // Check initial status
         void window.loopDesktop.sshTunnel.status().then((status) => {
-            setSshTunnelStatus(status.status as SshTunnelStatus);
-            setSshTunnelError(status.error);
+            useSshTunnelStore.getState().setSshTunnelStatus(status.status as SshTunnelStatus);
+            useSshTunnelStore.getState().setSshTunnelError(status.error);
             if (status.status === 'connected' && status.localPort) {
-                setBackendUrl(`http://localhost:${status.localPort}`);
+                useConnectionStore.getState().setBackendUrl(`http://localhost:${status.localPort}`);
             }
         });
 
-        return () => {
-            unsubscribe();
-        };
-    }, [pushNotice, setBackendUrl]);
+        return () => { unsubscribe(); };
+    }, []);
 
     const connectTunnel = useCallback(async (config: SshTunnelConfig): Promise<void> => {
         if (!window.loopDesktop?.isElectron) return;
         const res = await window.loopDesktop.sshTunnel.connect(config);
         if (!res.ok) {
-            pushNotice('error', `Tunnel connection failed: ${res.error}`);
+            useNoticeStore.getState().pushNotice('error', `Tunnel connection failed: ${res.error}`);
         }
-    }, [pushNotice]);
+    }, []);
 
     const disconnectTunnel = useCallback(async (): Promise<void> => {
         if (!window.loopDesktop?.isElectron) return;

@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { LoopStreamPacket } from '../electron';
 import { attachReplyStream, getActiveReplyStream, requestJson } from '../lib/loopClient';
 import { useConversationStore } from '../stores/conversationStore';
 import type { ActivityEvent, CheckpointSummary, ConversationSummary } from '../types/ui';
@@ -17,7 +16,14 @@ import {
     stringifyResponseError,
 } from '../utils/parsers';
 import { annotateActivitiesWithPendingApprovals, rowsFromUnknown } from './useLoopDesktop.helpers';
-import type { NoticeTone, PendingCommandApproval, StreamHandle } from './useLoopDesktop.types';
+
+import { useConnectionStore } from '../stores/connectionStore';
+import { useSelectionStore } from '../stores/selectionStore';
+import { useNoticeStore } from '../stores/noticeStore';
+import { useStreamingStore, activeStreams } from '../stores/streamingStore';
+import { useCommandApprovalStore } from '../stores/commandApprovalStore';
+import { useModelSettingsStore } from '../stores/modelSettingsStore';
+import { useComposerDraftStore } from '../stores/composerDraftStore';
 
 interface ConversationPageCursor {
     id: string;
@@ -41,15 +47,11 @@ export interface ApplyPatchResult {
 
 function parseWorkspaceChangeApiPayload(payload: unknown): WorkspaceChangeApiPayload | null {
     const record = asRecord(payload);
-    if (!record) {
-        return null;
-    }
+    if (!record) return null;
 
     const kind = getString(record, ['kind']);
     const text = getString(record, ['text']);
-    if (!kind || !text) {
-        return null;
-    }
+    if (!kind || !text) return null;
 
     const rawPaths = getField(record, ['file_paths']);
     const filePaths = Array.isArray(rawPaths)
@@ -71,9 +73,7 @@ function parseWorkspaceChangeApiPayload(payload: unknown): WorkspaceChangeApiPay
 function compareConversationSummaries(a: ConversationSummary, b: ConversationSummary): number {
     const timeA = new Date(a.updatedAt).getTime();
     const timeB = new Date(b.updatedAt).getTime();
-    if (timeA !== timeB) {
-        return timeB - timeA;
-    }
+    if (timeA !== timeB) return timeB - timeA;
     return b.id.localeCompare(a.id);
 }
 
@@ -82,27 +82,19 @@ function mergeConversationSummaries(
     incoming: ConversationSummary[],
 ): ConversationSummary[] {
     const merged = new Map<string, ConversationSummary>();
-    for (const conversation of existing) {
-        merged.set(conversation.id, conversation);
-    }
-    for (const conversation of incoming) {
-        merged.set(conversation.id, conversation);
-    }
+    for (const conversation of existing) merged.set(conversation.id, conversation);
+    for (const conversation of incoming) merged.set(conversation.id, conversation);
     return Array.from(merged.values()).sort(compareConversationSummaries);
 }
 
 function parseConversationPageCursor(payload: unknown): ConversationPageCursor | null {
     const record = asRecord(payload);
     const cursorRecord = asRecord(getField(record, ['next_cursor', 'nextCursor']));
-    if (!cursorRecord) {
-        return null;
-    }
+    if (!cursorRecord) return null;
 
     const id = getString(cursorRecord, ['id', 'ID']);
     const updatedAt = getString(cursorRecord, ['updated_at', 'updatedAt']);
-    if (!id || !updatedAt) {
-        return null;
-    }
+    if (!id || !updatedAt) return null;
 
     return { id, updatedAt };
 }
@@ -142,28 +134,20 @@ export interface UseConversationsReturn {
     isLoadingSelectedConversation: boolean;
 }
 
-export function useConversations(
-    backendUrl: string,
-    selectedWorkspaceId: string,
-    selectedConversationId: string,
-    setSelectedConversationId: React.Dispatch<React.SetStateAction<string>>,
-    selectedConversationIdRef: React.RefObject<string>,
-    pushNotice: (tone: NoticeTone, message: string) => void,
-    pushActivity: (input: ActivityInput, conversationId?: string) => string,
-    replaceConversationActivities: (conversationId: string, events: ActivityEvent[]) => void,
-    clearConversationView: () => void,
-    clearNotices: () => void,
-    resetConversationLiveState: (conversationId: string) => void,
-    activeStreamsRef: React.RefObject<Record<string, StreamHandle>>,
-    handleStreamPacketRef: React.RefObject<((packet: LoopStreamPacket, conversationId: string) => void) | null>,
-    setSendingConversations: React.Dispatch<React.SetStateAction<Record<string, boolean>>>,
-    sendingConversationsRef: React.RefObject<Record<string, boolean>>,
-    isSending: boolean,
-    pendingCommandApprovalsRef: React.RefObject<PendingCommandApproval[]>,
-    setThinkingLevelsByConversation: React.Dispatch<React.SetStateAction<Record<string, unknown>>>,
-    clearEditingMessage: (conversationId: string) => void,
-    setCurrentStatus: (value: string) => void,
-): UseConversationsReturn {
+export function useConversations(): UseConversationsReturn {
+    // ── Read from stores ─────────────────────────────────
+    const backendUrl = useConnectionStore((s) => s.backendUrl);
+    const selectedConversationId = useSelectionStore((s) => s.selectedConversationId);
+    const selectedWorkspaceId = useSelectionStore((s) => s.selectedWorkspaceId);
+    const setSelectedConversationId = useSelectionStore.getState().setSelectedConversationId;
+
+    // Keep a stable ref to selected conversation ID for use in async callbacks
+    const selectedConversationIdRef = useRef(selectedConversationId);
+    useEffect(() => {
+        selectedConversationIdRef.current = selectedConversationId;
+    }, [selectedConversationId]);
+
+    // ── Local state ──────────────────────────────────────
     const [conversationsByWorkspace, setConversationsByWorkspace] = useState<Record<string, ConversationSummary[]>>({});
     const [checkpointsByConversation, setCheckpointsByConversation] = useState<Record<string, CheckpointSummary[]>>({});
     const [isRestoringCheckpoint, setIsRestoringCheckpoint] = useState(false);
@@ -172,6 +156,7 @@ export function useConversations(
     const [conversationCursorByWorkspace, setConversationCursorByWorkspace] = useState<Record<string, ConversationPageCursor | null>>({});
     const loadingMoreConversationsRef = useRef<Record<string, boolean>>({});
 
+    // ── Derived ─────────────────────────────────────────
     const conversations = useMemo(
         () => conversationsByWorkspace[selectedWorkspaceId] ?? [],
         [conversationsByWorkspace, selectedWorkspaceId],
@@ -187,8 +172,59 @@ export function useConversations(
         [checkpointsByConversation, selectedConversationId],
     );
 
+    // Helper: push an activity event for the current / given conversation
+    const pushActivity = useCallback((input: ActivityInput, conversationId?: string): string => {
+        const targetConversationId = conversationId ?? selectedConversationIdRef.current;
+        if (!targetConversationId) return '';
+
+        const sequenceNo = useConversationStore.getState().reserveSequenceNo(targetConversationId);
+        const event: ActivityEvent = {
+            id: crypto.randomUUID(),
+            conversationId: targetConversationId,
+            sequenceNo,
+            kind: input.kind,
+            title: input.title,
+            body: input.body,
+            userTurn: input.userTurn,
+            checkpointId: input.checkpointId,
+            checkpointReason: input.checkpointReason,
+            baseCheckpointId: input.baseCheckpointId,
+            patchId: input.patchId,
+            filePaths: input.filePaths,
+            tool: input.tool,
+            images: input.images,
+            timestamp: Date.now(),
+            streaming: input.streaming,
+        };
+        useConversationStore.getState().upsertConversationEvent(event);
+        return event.id;
+    }, [selectedConversationIdRef]);
+
+    // Helper: replace activities for a conversation
+    const replaceConversationActivities = useCallback((conversationId: string, events: ActivityEvent[]): void => {
+        if (!conversationId) return;
+        const sorted = [...events].sort((l, r) => {
+            if (l.sequenceNo !== r.sequenceNo) return l.sequenceNo - r.sequenceNo;
+            if (l.timestamp !== r.timestamp) return l.timestamp - r.timestamp;
+            return l.id.localeCompare(r.id);
+        });
+        useConversationStore.getState().replaceConversationEvents(conversationId, sorted);
+    }, []);
+
+    // Helper: clear view for current conversation
+    const clearConversationView = useCallback((): void => {
+        const conversationId = selectedConversationIdRef.current;
+        if (!conversationId) return;
+        useConversationStore.getState().clearConversation(conversationId);
+    }, [selectedConversationIdRef]);
+
+    const handleStreamPacketRef = useRef<((packet: import('../electron').LoopStreamPacket, conversationId: string) => void) | null>(null);
+
+    // ── Conversation loading ──────────────────────────────
     const refreshConversationsByWorkspace = useCallback(
         async (workspaceId: string, preserveEmpty = false, limit = 50, cursor: ConversationPageCursor | null = null): Promise<void> => {
+            const pushNotice = useNoticeStore.getState().pushNotice;
+            const setSendingConversations = useStreamingStore.getState().setSendingConversations;
             const query = new URLSearchParams({ limit: String(limit) });
             if (cursor) {
                 query.set('before_updated_at', cursor.updatedAt);
@@ -232,8 +268,8 @@ export function useConversations(
                 }
 
                 mergedConversations = rootsOnly;
-                if (currentSelectedId && !mergedConversations.some((conversation) => conversation.id === currentSelectedId)) {
-                    const selectedExisting = existing.find((conversation) => conversation.id === currentSelectedId);
+                if (currentSelectedId && !mergedConversations.some((c) => c.id === currentSelectedId)) {
+                    const selectedExisting = existing.find((c) => c.id === currentSelectedId);
                     if (selectedExisting) {
                         mergedConversations = mergeConversationSummaries(mergedConversations, [selectedExisting]);
                     }
@@ -243,17 +279,17 @@ export function useConversations(
 
             // Restore active streams for any root conversation that is currently running
             for (const conv of rootsOnly) {
-                if (!activeStreamsRef.current[conv.id]) {
+                if (!activeStreams[conv.id]) {
                     void (async () => {
                         const active = await getActiveReplyStream({
                             baseUrl: backendUrl,
                             conversationId: conv.id,
                         });
-                        if (active.ok && active.streamId && !activeStreamsRef.current[conv.id]) {
+                        if (active.ok && active.streamId && !activeStreams[conv.id]) {
                             const attached = attachReplyStream(active.streamId, (packet) => {
                                 handleStreamPacketRef.current?.(packet, conv.id);
                             });
-                            activeStreamsRef.current[conv.id] = { ...attached, conversationId: conv.id };
+                            activeStreams[conv.id] = { ...attached, conversationId: conv.id };
                             setSendingConversations((prev) => ({ ...prev, [conv.id]: true }));
                         }
                     })();
@@ -261,30 +297,23 @@ export function useConversations(
             }
 
             if (preserveEmpty && currentSelectedId === '') {
-                // Do nothing, keep it empty
-            } else if (currentSelectedId && mergedConversations.some((conversation) => conversation.id === currentSelectedId)) {
-                // Preserve the current selection when it is still present in the merged list.
+                // keep empty
+            } else if (currentSelectedId && mergedConversations.some((c) => c.id === currentSelectedId)) {
+                // preserve current selection
             } else {
                 setSelectedConversationId(mergedConversations[0]?.id ?? '');
             }
         },
-        [backendUrl, pushActivity, pushNotice, activeStreamsRef, handleStreamPacketRef, setSendingConversations, selectedConversationIdRef, setSelectedConversationId],
+        [backendUrl, pushActivity, selectedConversationIdRef, setSelectedConversationId],
     );
 
     const loadMoreConversations = useCallback(
         async (workspaceId: string) => {
-            if (loadingMoreConversationsRef.current[workspaceId]) {
-                return;
-            }
-
-            if (!hasMoreConversationsByWorkspace[workspaceId]) {
-                return;
-            }
+            if (loadingMoreConversationsRef.current[workspaceId]) return;
+            if (!hasMoreConversationsByWorkspace[workspaceId]) return;
 
             const cursor = conversationCursorByWorkspace[workspaceId];
-            if (!cursor) {
-                return;
-            }
+            if (!cursor) return;
 
             loadingMoreConversationsRef.current[workspaceId] = true;
             try {
@@ -293,22 +322,18 @@ export function useConversations(
                 loadingMoreConversationsRef.current[workspaceId] = false;
             }
         },
-        [conversationCursorByWorkspace, hasMoreConversationsByWorkspace, refreshConversationsByWorkspace]
+        [conversationCursorByWorkspace, hasMoreConversationsByWorkspace, refreshConversationsByWorkspace],
     );
 
     const refreshCheckpointsForConversation = useCallback(
         async (conversationId: string): Promise<CheckpointSummary[]> => {
-            if (!conversationId) {
-                return [];
-            }
+            if (!conversationId) return [];
             const response = await requestJson<unknown>({
                 baseUrl: backendUrl,
                 endpointPath: `/conversations/${conversationId}/checkpoints?limit=60`,
                 method: 'GET',
             });
-            if (!response.ok) {
-                return [];
-            }
+            if (!response.ok) return [];
 
             const rows = rowsFromUnknown(response.data);
             const parsed = rows
@@ -323,6 +348,7 @@ export function useConversations(
 
     const loadConversationHistory = useCallback(
         async (conversationId: string): Promise<void> => {
+            const pushNotice = useNoticeStore.getState().pushNotice;
             const response = await requestJson<unknown>({
                 baseUrl: backendUrl,
                 endpointPath: `/conversations/${conversationId}/timeline`,
@@ -351,32 +377,31 @@ export function useConversations(
                 }
             }
 
-            if (selectedConversationIdRef.current !== conversationId) {
-                return;
-            }
-            const hasActiveStream = !!activeStreamsRef.current[conversationId];
-            const isConversationSending = !!sendingConversationsRef.current[conversationId];
-            if (rows.length === 0 && (hasActiveStream || isConversationSending)) {
-                return;
-            }
+            if (selectedConversationIdRef.current !== conversationId) return;
 
+            const sendingConversations = useStreamingStore.getState().sendingConversations;
+            const hasActiveStream = !!activeStreams[conversationId];
+            const isConversationSending = !!sendingConversations[conversationId];
+            if (rows.length === 0 && (hasActiveStream || isConversationSending)) return;
+
+            const pendingApprovals = useCommandApprovalStore.getState().getPendingForConversation(conversationId);
             replaceConversationActivities(
                 conversationId,
-                annotateActivitiesWithPendingApprovals(
-                    historyRowsToActivities(rows),
-                    pendingCommandApprovalsRef.current.filter((item) => item.conversationId === conversationId),
-                ),
+                annotateActivitiesWithPendingApprovals(historyRowsToActivities(rows), pendingApprovals),
             );
-            resetConversationLiveState(conversationId);
-            setCurrentStatus('');
+            useConversationStore.getState().resetLiveState(conversationId);
+            useStreamingStore.getState().setSendingConversations((prev) => {
+                if (!prev[conversationId]) return prev;
+                return prev;
+            });
         },
-        [backendUrl, pushActivity, pushNotice, replaceConversationActivities, resetConversationLiveState, activeStreamsRef, sendingConversationsRef, pendingCommandApprovalsRef, setCurrentStatus, selectedConversationIdRef],
+        [backendUrl, pushActivity, replaceConversationActivities, selectedConversationIdRef],
     );
 
     const createConversation = useCallback(
         async (seedText: string, options?: { worktreePath?: string }): Promise<string | null> => {
-            const targetWorkspaceId = selectedWorkspaceId;
-            if (!targetWorkspaceId) {
+            const pushNotice = useNoticeStore.getState().pushNotice;
+            if (!selectedWorkspaceId) {
                 pushNotice('info', 'Pick or create a workspace first.');
                 return null;
             }
@@ -388,7 +413,7 @@ export function useConversations(
                 method: 'POST',
                 body: {
                     ID: conversationId,
-                    WorkspaceID: targetWorkspaceId,
+                    WorkspaceID: selectedWorkspaceId,
                     Title: buildConversationTitle(seedText),
                     WorktreePath: options?.worktreePath || '',
                 },
@@ -399,24 +424,21 @@ export function useConversations(
                 return null;
             }
 
-            await refreshConversationsByWorkspace(targetWorkspaceId, true);
+            await refreshConversationsByWorkspace(selectedWorkspaceId, true);
             return conversationId;
         },
-        [backendUrl, pushNotice, refreshConversationsByWorkspace, selectedWorkspaceId],
+        [backendUrl, refreshConversationsByWorkspace, selectedWorkspaceId],
     );
 
     const deleteConversation = useCallback(
         async (conversationId: string): Promise<void> => {
-            if (!selectedWorkspaceId) {
-                return;
-            }
+            const pushNotice = useNoticeStore.getState().pushNotice;
+            if (!selectedWorkspaceId) return;
 
             const targetConversation = conversations.find((conversation) => conversation.id === conversationId);
             const displayName = targetConversation?.title || shortID(conversationId);
             const confirmed = window.confirm(`Delete conversation "${displayName}"? This will also remove nested thread history.`);
-            if (!confirmed) {
-                return;
-            }
+            if (!confirmed) return;
 
             const response = await requestJson<unknown>({
                 baseUrl: backendUrl,
@@ -439,23 +461,19 @@ export function useConversations(
                 ...prev,
                 [selectedWorkspaceId]: (prev[selectedWorkspaceId] ?? []).filter((conversation) => conversation.id !== conversationId),
             }));
-            setThinkingLevelsByConversation((prev) => {
-                if (!(conversationId in prev)) {
-                    return prev;
-                }
+            useModelSettingsStore.getState().setThinkingLevelsByConversation((prev) => {
+                if (!(conversationId in prev)) return prev;
                 const next = { ...prev };
                 delete next[conversationId];
                 return next;
             });
             setCheckpointsByConversation((prev) => {
-                if (!(conversationId in prev)) {
-                    return prev;
-                }
+                if (!(conversationId in prev)) return prev;
                 const next = { ...prev };
                 delete next[conversationId];
                 return next;
             });
-            clearEditingMessage(conversationId);
+            useComposerDraftStore.getState().clearEditingMessage(conversationId);
             pushNotice('success', `Deleted conversation "${displayName}".`);
             await refreshConversationsByWorkspace(selectedWorkspaceId, selectedConversationId === '' && !wasSelected);
         },
@@ -463,22 +481,18 @@ export function useConversations(
             backendUrl,
             clearConversationView,
             conversations,
-            pushNotice,
             refreshConversationsByWorkspace,
             selectedConversationId,
             selectedWorkspaceId,
             setSelectedConversationId,
-            setThinkingLevelsByConversation,
-            clearEditingMessage,
         ],
     );
 
     const renameConversation = useCallback(
         async (conversationId: string, newTitle: string): Promise<void> => {
+            const pushNotice = useNoticeStore.getState().pushNotice;
             const trimmedTitle = newTitle.trim();
-            if (!selectedWorkspaceId || !trimmedTitle || !conversationId) {
-                return;
-            }
+            if (!selectedWorkspaceId || !trimmedTitle || !conversationId) return;
 
             const response = await requestJson<unknown>({
                 baseUrl: backendUrl,
@@ -492,30 +506,23 @@ export function useConversations(
                 return;
             }
 
-            // Optimistic update
             setConversationsByWorkspace((prev) => ({
                 ...prev,
                 [selectedWorkspaceId]: (prev[selectedWorkspaceId] ?? []).map((conversation) =>
-                    conversation.id === conversationId ? { ...conversation, title: trimmedTitle } : conversation
+                    conversation.id === conversationId ? { ...conversation, title: trimmedTitle } : conversation,
                 ),
             }));
 
             await refreshConversationsByWorkspace(selectedWorkspaceId, true);
         },
-        [backendUrl, pushNotice, refreshConversationsByWorkspace, selectedWorkspaceId],
+        [backendUrl, refreshConversationsByWorkspace, selectedWorkspaceId],
     );
 
     const ensureConversationId = useCallback(
         async (seedText: string, options?: { worktreePath?: string }): Promise<string | null> => {
-            if (selectedConversationId) {
-                return selectedConversationId;
-            }
-
+            if (selectedConversationId) return selectedConversationId;
             const conversationId = await createConversation(seedText, options);
-            if (!conversationId) {
-                return null;
-            }
-
+            if (!conversationId) return null;
             setSelectedConversationId(conversationId);
             return conversationId;
         },
@@ -529,27 +536,22 @@ export function useConversations(
     const newConversation = useCallback(async (): Promise<void> => {
         clearConversationView();
         setSelectedConversationId('');
-        clearNotices();
-    }, [clearConversationView, clearNotices, setSelectedConversationId]);
+        useNoticeStore.getState().clearNotices();
+    }, [clearConversationView, setSelectedConversationId]);
 
     const refreshConversations = useCallback(async (): Promise<void> => {
-        if (!selectedWorkspaceId) {
-            return;
-        }
+        if (!selectedWorkspaceId) return;
         await refreshConversationsByWorkspace(selectedWorkspaceId, true);
     }, [refreshConversationsByWorkspace, selectedWorkspaceId]);
 
     const refreshCheckpoints = useCallback(async (): Promise<void> => {
-        if (!selectedConversationId) {
-            return;
-        }
+        if (!selectedConversationId) return;
         await refreshCheckpointsForConversation(selectedConversationId);
     }, [refreshCheckpointsForConversation, selectedConversationId]);
 
     const createCheckpoint = useCallback(async (label?: string): Promise<void> => {
-        if (!selectedConversationId) {
-            return;
-        }
+        const pushNotice = useNoticeStore.getState().pushNotice;
+        if (!selectedConversationId) return;
 
         const response = await requestJson<unknown>({
             baseUrl: backendUrl,
@@ -565,42 +567,30 @@ export function useConversations(
 
         await refreshCheckpointsForConversation(selectedConversationId);
         pushNotice('success', 'Checkpoint created.');
-    }, [backendUrl, pushNotice, refreshCheckpointsForConversation, selectedConversationId]);
+    }, [backendUrl, refreshCheckpointsForConversation, selectedConversationId]);
 
     const restoreCheckpoint = useCallback(async (checkpointId: string): Promise<void> => {
+        const pushNotice = useNoticeStore.getState().pushNotice;
+        const isSending = !!useStreamingStore.getState().sendingConversations[selectedConversationId];
         const checkpointID = checkpointId.trim();
         if (!selectedConversationId) {
-            console.warn('[loop-ui] skipping checkpoint restore: no selected conversation', { checkpointId: checkpointID });
             pushNotice('error', 'Unable to restore checkpoint: no conversation is selected.');
             return;
         }
         if (!checkpointID) {
-            console.warn('[loop-ui] skipping checkpoint restore: empty checkpoint id', { conversationId: selectedConversationId });
             pushNotice('error', 'Unable to restore checkpoint: checkpoint id is missing.');
             return;
         }
         if (isRestoringCheckpoint) {
-            console.warn('[loop-ui] skipping checkpoint restore: restore already in progress', {
-                conversationId: selectedConversationId,
-                checkpointId: checkpointID,
-            });
             pushNotice('info', 'A checkpoint restore is already in progress.');
             return;
         }
         if (isSending) {
-            console.warn('[loop-ui] skipping checkpoint restore: conversation is sending', {
-                conversationId: selectedConversationId,
-                checkpointId: checkpointID,
-            });
             pushNotice('info', 'Wait for the current response to finish before restoring a checkpoint.');
             return;
         }
 
         setIsRestoringCheckpoint(true);
-        console.info('[loop-ui] requesting checkpoint restore', {
-            conversationId: selectedConversationId,
-            checkpointId: checkpointID,
-        });
         const response = await requestJson<unknown>({
             baseUrl: backendUrl,
             endpointPath: `/conversations/${encodeURIComponent(selectedConversationId)}/checkpoints/${encodeURIComponent(checkpointID)}/restore`,
@@ -621,38 +611,28 @@ export function useConversations(
     }, [
         backendUrl,
         isRestoringCheckpoint,
-        isSending,
         loadConversationHistory,
-        pushNotice,
         refreshCheckpointsForConversation,
         selectedConversationId,
     ]);
 
     const undoLatestCheckpoint = useCallback(async (): Promise<void> => {
+        const pushNotice = useNoticeStore.getState().pushNotice;
+        const isSending = !!useStreamingStore.getState().sendingConversations[selectedConversationId];
         if (!selectedConversationId) {
-            console.warn('[loop-ui] skipping undo latest checkpoint: no selected conversation');
             pushNotice('error', 'Unable to undo: no conversation is selected.');
             return;
         }
         if (isRestoringCheckpoint) {
-            console.warn('[loop-ui] skipping undo latest checkpoint: restore already in progress', {
-                conversationId: selectedConversationId,
-            });
             pushNotice('info', 'A checkpoint restore is already in progress.');
             return;
         }
         if (isSending) {
-            console.warn('[loop-ui] skipping undo latest checkpoint: conversation is sending', {
-                conversationId: selectedConversationId,
-            });
             pushNotice('info', 'Wait for the current response to finish before undoing.');
             return;
         }
 
         setIsRestoringCheckpoint(true);
-        console.info('[loop-ui] requesting undo latest checkpoint', {
-            conversationId: selectedConversationId,
-        });
         const response = await requestJson<unknown>({
             baseUrl: backendUrl,
             endpointPath: `/conversations/${encodeURIComponent(selectedConversationId)}/undo`,
@@ -673,9 +653,7 @@ export function useConversations(
     }, [
         backendUrl,
         isRestoringCheckpoint,
-        isSending,
         loadConversationHistory,
-        pushNotice,
         refreshCheckpointsForConversation,
         selectedConversationId,
     ]);
@@ -704,20 +682,22 @@ export function useConversations(
         });
     }, [clearConversationView, loadConversationHistory, selectedConversationId, selectedConversationIdRef]);
 
-    const prevIsSending = useRef(isSending);
+    // Reload history after sending finishes
+    const prevIsSendingRef = useRef(false);
+    const isSending = !!useStreamingStore((s) => s.sendingConversations[selectedConversationId]);
     useEffect(() => {
-        if (prevIsSending.current && !isSending && selectedConversationId) {
+        if (prevIsSendingRef.current && !isSending && selectedConversationId) {
             const liveState = useConversationStore.getState().getLiveState(selectedConversationId);
             if (liveState.skipNextHistoryReload) {
                 useConversationStore.getState().updateLiveState(selectedConversationId, {
                     skipNextHistoryReload: false,
                 });
-                prevIsSending.current = isSending;
+                prevIsSendingRef.current = isSending;
                 return;
             }
             void loadConversationHistory(selectedConversationId);
         }
-        prevIsSending.current = isSending;
+        prevIsSendingRef.current = isSending;
     }, [isSending, selectedConversationId, loadConversationHistory]);
 
     const applyPatchToWorkspace = useCallback(async (
@@ -727,30 +707,16 @@ export function useConversations(
         baseCheckpointId?: string,
         patchId?: string,
     ): Promise<ApplyPatchResult | null> => {
+        const pushNotice = useNoticeStore.getState().pushNotice;
         if (!conversationId) {
-            console.warn('[loop-ui] skipping apply patch: no conversation selected', {
-                fileCount: files.length,
-                baseCheckpointId: baseCheckpointId?.trim() || '',
-                patchId: patchId?.trim() || '',
-            });
             pushNotice('error', 'Unable to revert changes: no conversation is selected.');
             return null;
         }
         if (files.length === 0) {
-            console.warn('[loop-ui] skipping apply patch: no files selected', {
-                conversationId,
-                baseCheckpointId: baseCheckpointId?.trim() || '',
-                patchId: patchId?.trim() || '',
-            });
             pushNotice('info', 'Select at least one file to revert.');
             return null;
         }
-        console.info('[loop-ui] requesting workspace revert', {
-            conversationId,
-            fileCount: files.length,
-            baseCheckpointId: baseCheckpointId?.trim() || '',
-            patchId: patchId?.trim() || '',
-        });
+
         const response = await requestJson<unknown>({
             baseUrl: backendUrl,
             endpointPath: `/conversations/${encodeURIComponent(conversationId)}/apply-patch`,
@@ -782,14 +748,14 @@ export function useConversations(
                 filePaths: workspaceChange.file_paths,
             }, conversationId);
         }
-        
+
         pushNotice('info', 'Successfully reverted changes.');
         void Promise.all([
             loadConversationHistory(conversationId),
             refreshCheckpointsForConversation(conversationId),
         ]);
         return { workspaceChange };
-    }, [backendUrl, loadConversationHistory, pushActivity, pushNotice, refreshCheckpointsForConversation]);
+    }, [backendUrl, loadConversationHistory, pushActivity, refreshCheckpointsForConversation]);
 
     return {
         conversationsByWorkspace,

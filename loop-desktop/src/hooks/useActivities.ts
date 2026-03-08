@@ -1,13 +1,18 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import type { LoopStreamPacket } from '../electron';
 import type { ActivityEvent } from '../types/ui';
 import type { ActivityInput } from '../utils/activityTimeline';
 import { annotateActivitiesWithPendingApprovals } from './useLoopDesktop.helpers';
 import { createHandleStreamPacket, createHandleTurnEvent } from './useLoopDesktop.stream';
-import type { ConversationLiveState, NoticeTone, PendingCommandApproval, StreamHandle } from './useLoopDesktop.types';
+import type { ConversationLiveState } from './useLoopDesktop.types';
 import { useConversationStore } from '../stores/conversationStore';
 import { useEventStore } from '../stores/eventStore';
 import { usePatchRevertStore } from '../stores/patchRevertStore';
+import { useSelectionStore } from '../stores/selectionStore';
+import { useUiPrefsStore } from '../stores/uiPrefsStore';
+import { useStreamingStore, activeStreams } from '../stores/streamingStore';
+import { useCommandApprovalStore } from '../stores/commandApprovalStore';
+import { useNoticeStore } from '../stores/noticeStore';
 
 const EMPTY_ACTIVITY_IDS: string[] = [];
 
@@ -38,42 +43,28 @@ export interface UseActivitiesReturn {
   getConversationLiveState: (conversationId: string) => ConversationLiveState;
   resetConversationLiveState: (conversationId: string) => void;
   feedScrollRef: React.RefObject<HTMLDivElement | null>;
-  currentStatus: string;
-  setCurrentStatus: (value: string) => void;
-  hideLifecycle: boolean;
-  setHideLifecycle: (value: boolean) => void;
-  showMascot: boolean;
-  setShowMascot: (value: boolean) => void;
-  reactScanEnabled: boolean;
-  setReactScanEnabled: (value: boolean) => void;
-  activeStreamsRef: React.RefObject<Record<string, StreamHandle>>;
-  sendingConversations: Record<string, boolean>;
-  setSendingConversations: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
-  sendingConversationsRef: React.RefObject<Record<string, boolean>>;
   handleStreamPacketRef: React.RefObject<((packet: LoopStreamPacket, conversationId: string) => void) | null>;
   handleStreamPacket: (packet: LoopStreamPacket, conversationId: string) => void;
   handleTurnEvent: (eventName: string, data: unknown, conversationId: string) => void;
 }
 
-export function useActivities(
-  selectedConversationId: string,
-  selectedConversationIdRef: React.RefObject<string>,
-  enqueueCommandApproval: (approval: PendingCommandApproval) => void,
-  pushNotice: (tone: NoticeTone, message: string) => void,
-  pendingApprovalsForSelectedConversation: PendingCommandApproval[],
-): UseActivitiesReturn {
-  const [hideLifecycle, setHideLifecycle] = useState(true);
-  const [showMascot, setShowMascot] = useState(false);
-  const [reactScanEnabled, setReactScanEnabled] = useState(false);
-  const [currentStatus, setCurrentStatus] = useState<string>('');
-  const [sendingConversations, setSendingConversations] = useState<Record<string, boolean>>({});
+export function useActivities(): UseActivitiesReturn {
+  // ── Store subscriptions ────────────────────────────────
+  const selectedConversationId = useSelectionStore((s) => s.selectedConversationId);
+  const { setSendingConversations } = useStreamingStore();
+  const { setCurrentStatus } = useUiPrefsStore();
 
-  const activeStreamsRef = useRef<Record<string, StreamHandle>>({});
+  // Keep a stable ref to selected conversation ID for use in non-reactive callbacks
+  const selectedConversationIdRef = useRef(selectedConversationId);
+  useEffect(() => {
+    selectedConversationIdRef.current = selectedConversationId;
+  }, [selectedConversationId]);
+
   const feedScrollRef = useRef<HTMLDivElement | null>(null);
   const handleStreamPacketRef = useRef<((packet: LoopStreamPacket, conversationId: string) => void) | null>(null);
   const handleTurnEventRef = useRef<((eventName: string, data: unknown, conversationId: string) => void) | null>(null);
-  const sendingConversationsRef = useRef<Record<string, boolean>>({});
 
+  // ── Activity data from stores ──────────────────────────
   const selectedEventIds = useConversationStore(
     useCallback(
       (state) => state.conversations[selectedConversationId]?.orderedEventIds ?? EMPTY_ACTIVITY_IDS,
@@ -88,10 +79,20 @@ export function useActivities(
       .filter((event): event is ActivityEvent => !!event);
   }, [eventsById, selectedEventIds]);
 
+
+  // Subscribe to the raw array (stable reference). Filter in useMemo to avoid
+  // returning a new array every snapshot check (which causes an infinite loop).
+  const allPendingCommandApprovals = useCommandApprovalStore((s) => s.pendingCommandApprovals);
+  const pendingApprovalsForSelectedConversation = useMemo(
+    () => allPendingCommandApprovals.filter((item) => item.conversationId === selectedConversationId),
+    [allPendingCommandApprovals, selectedConversationId],
+  );
+
   const activities = useMemo(() => {
     return annotateActivitiesWithPendingApprovals(rawActivities, pendingApprovalsForSelectedConversation);
   }, [pendingApprovalsForSelectedConversation, rawActivities]);
 
+  const hideLifecycle = useUiPrefsStore((s) => s.hideLifecycle);
   const visibleActivities = useMemo(() => {
     if (!hideLifecycle) {
       return activities;
@@ -99,10 +100,7 @@ export function useActivities(
     return activities.filter((event) => event.kind !== 'lifecycle');
   }, [activities, hideLifecycle]);
 
-  useEffect(() => {
-    sendingConversationsRef.current = sendingConversations;
-  }, [sendingConversations]);
-
+  // ── Annotation sync effect ─────────────────────────────
   useEffect(() => {
     const annotatedActivities = annotateActivitiesWithPendingApprovals(
       rawActivities,
@@ -117,19 +115,17 @@ export function useActivities(
       if (currentWaitingApproval === nextWaitingApproval) {
         continue;
       }
-
       eventStore.updateEvent(annotatedEvent.id, () => annotatedEvent);
     }
   }, [pendingApprovalsForSelectedConversation, rawActivities]);
 
+  // ── Core activity operations ───────────────────────────
   const getConversationLiveState = useCallback((conversationId: string): ConversationLiveState => {
     return useConversationStore.getState().getLiveState(conversationId);
   }, []);
 
   const resetConversationLiveState = useCallback((conversationId: string): void => {
-    if (!conversationId) {
-      return;
-    }
+    if (!conversationId) return;
     useConversationStore.getState().resetLiveState(conversationId);
   }, []);
 
@@ -139,32 +135,25 @@ export function useActivities(
       | Partial<ConversationLiveState>
       | ((prev: ConversationLiveState) => Partial<ConversationLiveState>),
   ): void => {
-    if (!conversationId) {
-      return;
-    }
+    if (!conversationId) return;
     useConversationStore.getState().updateLiveState(conversationId, stateOrUpdater);
   }, []);
 
   const replaceConversationActivities = useCallback((conversationId: string, events: ActivityEvent[]): void => {
-    if (!conversationId) {
-      return;
-    }
-
-    const normalizedEvents = sortEvents(
+    if (!conversationId) return;
+    const normalized = sortEvents(
       events.map((event, index) => ({
         ...event,
         conversationId,
         sequenceNo: Number.isFinite(event.sequenceNo) ? event.sequenceNo : index + 1,
       })),
     );
-    useConversationStore.getState().replaceConversationEvents(conversationId, normalizedEvents);
+    useConversationStore.getState().replaceConversationEvents(conversationId, normalized);
   }, []);
 
   const updateConversationActivities = useCallback(
     (conversationId: string, updater: (events: ActivityEvent[]) => ActivityEvent[]): void => {
-      if (!conversationId) {
-        return;
-      }
+      if (!conversationId) return;
       const currentEvents = useConversationStore.getState().getConversationEvents(conversationId);
       replaceConversationActivities(conversationId, updater(currentEvents));
     },
@@ -173,9 +162,7 @@ export function useActivities(
 
   const pushActivity = useCallback((input: ActivityInput, conversationId?: string): string => {
     const targetConversationId = conversationId ?? selectedConversationIdRef.current;
-    if (!targetConversationId) {
-      return '';
-    }
+    if (!targetConversationId) return '';
 
     const sequenceNo = useConversationStore.getState().reserveSequenceNo(targetConversationId);
     const event: ActivityEvent = {
@@ -198,35 +185,24 @@ export function useActivities(
     };
 
     useConversationStore.getState().upsertConversationEvent(event);
-
     return event.id;
   }, [selectedConversationIdRef]);
 
   const mutateActivity = useCallback((id: string, transform: (event: ActivityEvent) => ActivityEvent): void => {
     const currentEvent = useEventStore.getState().events[id];
-    if (!currentEvent) {
-      return;
-    }
-
+    if (!currentEvent) return;
     useEventStore.getState().updateEvent(id, transform);
   }, []);
 
   const appendStreamingText = useCallback(
     (conversationId: string, kind: 'assistant' | 'thought', text: string): void => {
-      if (!text) {
-        return;
-      }
+      if (!text) return;
 
       const liveState = getConversationLiveState(conversationId);
       const existing = kind === 'assistant' ? liveState.draftAssistantId : liveState.draftThoughtId;
       if (!existing) {
         const draftId = pushActivity(
-          {
-            kind,
-            title: kind === 'assistant' ? 'Assistant response' : 'Model thought',
-            body: text,
-            streaming: true,
-          },
+          { kind, title: kind === 'assistant' ? 'Assistant response' : 'Model thought', body: text, streaming: true },
           conversationId,
         );
         updateConversationLiveState(conversationId, {
@@ -246,19 +222,14 @@ export function useActivities(
   );
 
   const settleDrafts = useCallback((conversationId: string): void => {
-    if (!conversationId) {
-      return;
-    }
-
+    if (!conversationId) return;
     const liveState = getConversationLiveState(conversationId);
     const draftIds = [liveState.draftAssistantId, liveState.draftThoughtId].filter(
       (id): id is string => typeof id === 'string' && id.length > 0,
     );
-
     for (const draftId of draftIds) {
       mutateActivity(draftId, (event) => ({ ...event, streaming: false }));
     }
-
     updateConversationLiveState(conversationId, {
       draftAssistantId: null,
       draftThoughtId: null,
@@ -266,15 +237,9 @@ export function useActivities(
   }, [getConversationLiveState, mutateActivity, updateConversationLiveState]);
 
   const settleThoughtDraft = useCallback((conversationId: string): void => {
-    if (!conversationId) {
-      return;
-    }
-
+    if (!conversationId) return;
     const liveState = getConversationLiveState(conversationId);
-    if (!liveState.draftThoughtId) {
-      return;
-    }
-
+    if (!liveState.draftThoughtId) return;
     mutateActivity(liveState.draftThoughtId, (event) => ({ ...event, streaming: false }));
     updateConversationLiveState(conversationId, { draftThoughtId: null });
   }, [getConversationLiveState, mutateActivity, updateConversationLiveState]);
@@ -307,14 +272,14 @@ export function useActivities(
       }
 
       if (closeStream && conversationId) {
-        const stream = activeStreamsRef.current[conversationId];
+        const stream = activeStreams[conversationId];
         if (stream) {
           stream.dispose();
-          delete activeStreamsRef.current[conversationId];
+          delete activeStreams[conversationId];
         }
       }
     },
-    [selectedConversationIdRef, settleDrafts, updateConversationLiveState],
+    [selectedConversationIdRef, settleDrafts, updateConversationLiveState, setSendingConversations, setCurrentStatus],
   );
 
   const clearConversationView = useCallback((): void => {
@@ -326,17 +291,19 @@ export function useActivities(
     useConversationStore.getState().clearConversation(conversationId);
     usePatchRevertStore.getState().clearConversation(conversationId);
     setCurrentStatus('');
-  }, [selectedConversationIdRef]);
+  }, [selectedConversationIdRef, setCurrentStatus]);
 
+  // ── Cleanup streams on unmount ─────────────────────────
   useEffect(() => {
     return () => {
-      for (const key of Object.keys(activeStreamsRef.current)) {
-        activeStreamsRef.current[key]?.dispose();
+      for (const key of Object.keys(activeStreams)) {
+        activeStreams[key]?.dispose();
+        delete activeStreams[key];
       }
-      activeStreamsRef.current = {};
     };
   }, []);
 
+  // ── Wire up stream/turn event handlers ────────────────
   useEffect(() => {
     handleTurnEventRef.current = createHandleTurnEvent({
       appendStreamingText,
@@ -364,10 +331,13 @@ export function useActivities(
   }, []);
 
   useEffect(() => {
+    const enqueueCommandApproval = useCommandApprovalStore.getState().enqueueCommandApproval;
+    const pushNotice = useNoticeStore.getState().pushNotice;
+
     handleStreamPacketRef.current = createHandleStreamPacket({
       enqueueCommandApproval,
       finalizeTurn,
-      getActiveStreamId: (conversationId: string) => activeStreamsRef.current[conversationId]?.streamId,
+      getActiveStreamId: (conversationId: string) => activeStreams[conversationId]?.streamId,
       handleTurnEvent,
       pushActivity,
       pushNotice,
@@ -375,11 +345,9 @@ export function useActivities(
       updateConversationLiveState,
     });
   }, [
-    enqueueCommandApproval,
     finalizeTurn,
     handleTurnEvent,
     pushActivity,
-    pushNotice,
     selectedConversationIdRef,
     updateConversationLiveState,
   ]);
@@ -403,18 +371,6 @@ export function useActivities(
     getConversationLiveState,
     resetConversationLiveState,
     feedScrollRef,
-    currentStatus,
-    setCurrentStatus,
-    hideLifecycle,
-    setHideLifecycle,
-    showMascot,
-    setShowMascot,
-    reactScanEnabled,
-    setReactScanEnabled,
-    activeStreamsRef,
-    sendingConversations,
-    setSendingConversations,
-    sendingConversationsRef,
     handleStreamPacketRef,
     handleStreamPacket,
     handleTurnEvent,
