@@ -6,6 +6,7 @@ import type { NoticeTone } from './useLoopDesktop.types';
 export interface GitStatus {
   isInitialized: boolean;
   hasCommits: boolean;
+  hasUpstreamChanges: boolean;
   branch: string;
   branches: string[];
   worktrees: { path: string; branch: string }[];
@@ -38,6 +39,7 @@ export function useGitStatus(
     const response = await requestJson<{
       is_initialized: boolean;
       has_commits?: boolean;
+      has_upstream_changes?: boolean;
       branch: string;
       branches: string[];
       worktrees: { path: string; branch: string }[];
@@ -52,6 +54,7 @@ export function useGitStatus(
       setStatus({
         isInitialized: response.data.is_initialized,
         hasCommits: Boolean(response.data.has_commits),
+        hasUpstreamChanges: Boolean(response.data.has_upstream_changes),
         branch: response.data.branch,
         branches: response.data.branches || [],
         worktrees: response.data.worktrees || [],
@@ -93,6 +96,22 @@ export function useGitStatus(
     return false;
   }, [backendUrl, workspaceId, fetchStatus, pushNotice]);
 
+  const pushBranch = useCallback(async (branch: string) => {
+    if (!workspaceId) return false;
+    const response = await requestJson<unknown>({
+      baseUrl: backendUrl,
+      endpointPath: `/workspaces/${encodeURIComponent(workspaceId)}/git/push`,
+      method: 'POST',
+      body: { branch },
+    });
+    if (response.ok) {
+      await fetchStatus();
+      return true;
+    }
+    pushNotice?.('error', `Failed to push branch: ${stringifyResponseError(response.data, response.error)}`);
+    return false;
+  }, [backendUrl, workspaceId, fetchStatus, pushNotice]);
+
   const createWorktree = useCallback(async (path: string, branch: string, base: string = ''): Promise<CreateWorktreeResult> => {
     if (!workspaceId) {
       return { ok: false, error: 'No workspace selected.' };
@@ -130,5 +149,5 @@ export function useGitStatus(
     return () => clearInterval(interval);
   }, [fetchStatus]);
 
-  return { status, isLoading, initGit, checkoutBranch, createWorktree, refreshGitStatus: fetchStatus };
+  return { status, isLoading, initGit, checkoutBranch, pushBranch, createWorktree, refreshGitStatus: fetchStatus };
 }

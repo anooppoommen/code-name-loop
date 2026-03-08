@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 
 import type { ConversationSummary } from '../types/ui';
@@ -11,6 +12,7 @@ interface ComposerEnvironmentBarProps {
     status: GitStatus | null;
     initGit: () => Promise<boolean | undefined>;
     checkoutBranch: (branch: string, create?: boolean) => Promise<boolean>;
+    pushBranch: (branch: string) => Promise<boolean>;
   };
   selectedConversationId: string;
   selectedConversation: ConversationSummary | null;
@@ -36,6 +38,7 @@ export function ComposerEnvironmentBar({
   const status = gitStatus.status;
   const effectiveDraftMode = resolveDraftEnvironmentMode(draftEnvMode, status);
   const canCreateWorktree = Boolean(status?.isInitialized && status.hasCommits);
+  const [isPushing, setIsPushing] = useState(false);
 
   if (isPreparingWorktree) {
     return (
@@ -85,9 +88,35 @@ export function ComposerEnvironmentBar({
     );
   }
 
+  const handlePush = async () => {
+    if (!status?.branch) return;
+    setIsPushing(true);
+    try {
+      await gitStatus.pushBranch(status.branch);
+    } finally {
+      setIsPushing(false);
+    }
+  };
+
   if (selectedConversationId) {
+    const hasUpstreamChanges = status.hasUpstreamChanges && status.branch;
     return (
-      <div className="mt-3 mb-4 flex items-center justify-end px-4 text-[12px] text-loop-400">
+      <div className="mt-3 mb-4 flex items-center justify-between px-4 text-[12px] text-loop-400">
+        <div>
+          <button
+            type="button"
+            disabled={!hasUpstreamChanges || isPushing}
+            onClick={handlePush}
+            className="flex items-center gap-1.5 rounded-full bg-loop-800 px-2.5 py-1 text-loop-400 transition-colors hover:bg-loop-700 hover:text-loop-200 focus:outline-none focus:ring-1 focus:ring-loop-500/50 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-loop-800 disabled:hover:text-loop-400"
+          >
+            {isPushing ? (
+              <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-loop-500 border-t-transparent" />
+            ) : (
+              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
+            )}
+            <span>{isPushing ? 'Pushing...' : 'Push to upstream'}</span>
+          </button>
+        </div>
         <div className="flex items-center gap-1.5">
           {selectedConversation?.worktreePath ? (
             <div className="flex items-center gap-1.5 rounded-full border border-emerald-400/20 bg-emerald-500/10 px-2.5 py-1 text-emerald-100">
@@ -124,9 +153,28 @@ export function ComposerEnvironmentBar({
     );
   }
 
+  const hasUpstreamChanges = status.hasUpstreamChanges && status.branch;
   return (
     <div className="mt-3 mb-4 px-4 text-[12px] text-loop-400">
-      <div className="flex flex-wrap items-center justify-end gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          {effectiveDraftMode !== 'worktree' && (
+            <button
+              type="button"
+              disabled={!hasUpstreamChanges || isPushing}
+              onClick={handlePush}
+              className="flex items-center gap-1.5 rounded-full bg-loop-800 px-2.5 py-1 text-loop-400 transition-colors hover:bg-loop-700 hover:text-loop-200 focus:outline-none focus:ring-1 focus:ring-loop-500/50 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-loop-800 disabled:hover:text-loop-400"
+            >
+              {isPushing ? (
+                <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-loop-500 border-t-transparent" />
+              ) : (
+                <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
+              )}
+              <span>{isPushing ? 'Pushing...' : 'Push to upstream'}</span>
+            </button>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
         <div className="flex items-center rounded-full border border-loop-700 bg-loop-900/80 p-0.5 shadow-[0_12px_30px_rgba(0,0,0,0.22)]">
           <button
             type="button"
@@ -206,6 +254,7 @@ export function ComposerEnvironmentBar({
             </motion.div>
           )}
         </AnimatePresence>
+        </div>
       </div>
 
       <AnimatePresence initial={false}>

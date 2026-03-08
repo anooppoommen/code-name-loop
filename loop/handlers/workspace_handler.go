@@ -37,6 +37,7 @@ func (h *WorkspaceHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /workspaces/{id}/git", h.GitStatus)
 	mux.HandleFunc("POST /workspaces/{id}/git/init", h.GitInit)
 	mux.HandleFunc("POST /workspaces/{id}/git/checkout", h.GitCheckout)
+	mux.HandleFunc("POST /workspaces/{id}/git/push", h.GitPush)
 	mux.HandleFunc("POST /workspaces/{id}/git/worktree", h.GitCreateWorktree)
 }
 
@@ -214,6 +215,7 @@ func (h *WorkspaceHandler) GitStatus(w http.ResponseWriter, r *http.Request) {
 	branches := []string{}
 	worktrees := []map[string]string{}
 	hasCommits := false
+	hasUpstreamChanges := false
 	if isInit {
 		headCmd := exec.CommandContext(r.Context(), "git", "rev-parse", "--verify", "HEAD")
 		headCmd.Dir = ws.RootPath
@@ -261,15 +263,63 @@ func (h *WorkspaceHandler) GitStatus(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+
+		// Check for upstream changes to push
+		if hasCommits && branch != "" {
+			// First check if there are any remotes
+			remoteCmd := exec.CommandContext(r.Context(), "git", "remote")
+			remoteCmd.Dir = ws.RootPath
+			if rOut, rErr := remoteCmd.Output(); rErr == nil && len(strings.TrimSpace(string(rOut))) > 0 {
+				// Check if there are changes to push to origin/<branch>
+				pushCmd := exec.CommandContext(r.Context(), "git", "rev-list", "origin/"+branch+"..HEAD")
+				pushCmd.Dir = ws.RootPath
+				if out, err := pushCmd.Output(); err == nil {
+					hasUpstreamChanges = len(strings.TrimSpace(string(out))) > 0
+				} else {
+					// origin/branch doesn't exist, meaning the whole branch needs to be pushed
+					hasUpstreamChanges = true
+				}
+			}
+		}
 	}
 
 	utils.WriteJSON(w, http.StatusOK, map[string]any{
-		"is_initialized": isInit,
-		"has_commits":    hasCommits,
-		"branch":         branch,
-		"branches":       branches,
-		"worktrees":      worktrees,
+		"is_initialized":       isInit,
+		"has_commits":          hasCommits,
+		"has_upstream_changes": hasUpstreamChanges,
+		"branch":               branch,
+		"branches":             branches,
+		"worktrees":            worktrees,
 	})
+}
+
+func (h *WorkspaceHandler) GitPush(w http.ResponseWriter, r *http.Request) {
+	id := models.WorkspaceID(r.PathValue("id"))
+	ws, err := h.store.Workspaces().Get(r.Context(), id)
+	if err != nil {
+		utils.WriteError(w, http.StatusNotFound, "workspace not found")
+		return
+	}
+
+	var req struct {
+		Branch string `json:"branch"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		utils.WriteError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Branch == "" {
+		utils.WriteError(w, http.StatusBadRequest, "branch name is required")
+		return
+	}
+
+	cmd := exec.CommandContext(r.Context(), "git", "push", "-u", "origin", req.Branch)
+	cmd.Dir = ws.RootPath
+	if err := cmd.Run(); err != nil {
+		utils.WriteError(w, http.StatusInternalServerError, "failed to push branch")
+		return
+	}
+	w.WriteHeader(http.StatusOK)
 }
 
 func (h *WorkspaceHandler) GitCheckout(w http.ResponseWriter, r *http.Request) {
