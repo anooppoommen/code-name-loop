@@ -36,3 +36,4 @@ calendar-app-loop-rich
 
 node_modules/
 .run/
+tmp

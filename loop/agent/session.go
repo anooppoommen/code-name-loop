@@ -692,7 +692,11 @@ func (t *Turn) buildHistory(ctx context.Context) ([]*models.Message, error) {
 		// Summary strategy: skip the parent walk; the sub-agent only sees
 		// its own messages. Useful for isolated, focused sub-tasks.
 		if conv.ContextStrategy == models.ContextStrategySummary {
-			return s.Store.Messages().GetRange(ctx, conv.ID, 1, 999999)
+			msgs, err := s.Store.Messages().GetRange(ctx, conv.ID, 1, 999999)
+			if err != nil {
+				return nil, err
+			}
+			return pruneHistoricalToolResponses(msgs), nil
 		}
 
 		// Full-chain strategy (default): reconstruct the full ancestor prefix
@@ -705,10 +709,18 @@ func (t *Turn) buildHistory(ctx context.Context) ([]*models.Message, error) {
 			return nil, nil
 		}
 		maxSeq := msgs[len(msgs)-1].Seq
-		return s.Store.Messages().GetParentHistory(ctx, conv.ID, maxSeq)
+		history, err := s.Store.Messages().GetParentHistory(ctx, conv.ID, maxSeq)
+		if err != nil {
+			return nil, err
+		}
+		return pruneHistoricalToolResponses(history), nil
 	}
 
-	return s.Store.Messages().GetRange(ctx, conv.ID, 1, 999999)
+	msgs, err := s.Store.Messages().GetRange(ctx, conv.ID, 1, 999999)
+	if err != nil {
+		return nil, err
+	}
+	return pruneHistoricalToolResponses(msgs), nil
 }
 
 // extractFunctionCalls pulls all function call parts from a message.

@@ -434,10 +434,13 @@ export const ActivityFeed = memo(function ActivityFeed({
     };
   }, [containerRef, markProgrammatic]);
 
-  const appendedEventIds = useMemo(() => {
+  const [appendedEventIds, setAppendedEventIds] = useState<Set<string>>(EMPTY_EVENT_ID_SET);
+
+  useEffect(() => {
     if (!allowInteractiveMotion || showHistoryLoadingState) {
       animatedEventIdsRef.current = new Set();
-      return EMPTY_EVENT_ID_SET;
+      setAppendedEventIds(EMPTY_EVENT_ID_SET);
+      return;
     }
 
     const previousIds = previousRenderedEventIdsRef.current;
@@ -446,14 +449,15 @@ export const ActivityFeed = memo(function ActivityFeed({
       || renderedEventIds.length <= previousIds.length
       || !previousIds.every((id, index) => renderedEventIds[index] === id)
     ) {
-      return animatedEventIdsRef.current.size > 0 ? animatedEventIdsRef.current : EMPTY_EVENT_ID_SET;
+      setAppendedEventIds(animatedEventIdsRef.current.size > 0 ? animatedEventIdsRef.current : EMPTY_EVENT_ID_SET);
+      return;
     }
 
     const newIds = renderedEventIds.slice(previousIds.length);
     for (const id of newIds) {
       animatedEventIdsRef.current.add(id);
     }
-    return animatedEventIdsRef.current;
+    setAppendedEventIds(animatedEventIdsRef.current);
   }, [allowInteractiveMotion, renderedEventIds, showHistoryLoadingState]);
 
   useLayoutEffect(() => {

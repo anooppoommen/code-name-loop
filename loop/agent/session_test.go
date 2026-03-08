@@ -217,6 +217,41 @@ func textParts(text string) []models.MessagePart {
 	}}
 }
 
+func toolResponsePart(callID, name, raw string) []models.MessagePart {
+	return []models.MessagePart{{
+		Kind: models.PartFunctionResponse,
+		FunctionResponse: &models.FunctionResponsePart{
+			CallID:       callID,
+			Name:         name,
+			ResponseJSON: json.RawMessage(raw),
+		},
+	}}
+}
+
+func historyToolResponseMap(t *testing.T, history []*models.Message, callID string) map[string]any {
+	t.Helper()
+	for _, msg := range history {
+		if msg == nil || msg.SentBy != models.SentByTool {
+			continue
+		}
+		for _, part := range msg.Parts {
+			if part.Kind != models.PartFunctionResponse || part.FunctionResponse == nil {
+				continue
+			}
+			if part.FunctionResponse.CallID != callID {
+				continue
+			}
+			var parsed map[string]any
+			if err := json.Unmarshal(part.FunctionResponse.ResponseJSON, &parsed); err != nil {
+				t.Fatalf("unmarshal tool response %s: %v", callID, err)
+			}
+			return parsed
+		}
+	}
+	t.Fatalf("tool response %s not found in history", callID)
+	return nil
+}
+
 // ─────────────────────────────────────────────────────────────────
 // Session Tests — Core Flow
 // ─────────────────────────────────────────────────────────────────
@@ -1675,6 +1710,226 @@ func TestSessionThreadHistoryComposition(t *testing.T) {
 	}
 	if capturedHistory[0].Parts[0].Text.Text != "Parent Q1" {
 		t.Errorf("history[0] = %q, want 'Parent Q1'", capturedHistory[0].Parts[0].Text.Text)
+	}
+}
+
+func TestSessionBuildHistoryPrunesPriorToolResultsOnFollowUp(t *testing.T) {
+	s := newTestStore(t)
+	ws, conv := seedConversation(t, s)
+	ctx := context.Background()
+
+	if err := s.Messages().Append(ctx, &models.Message{
+		ID:             "u-old",
+		ConversationID: conv.ID,
+		SentBy:         models.SentByUser,
+		State:          models.MessageStateCompleted,
+		Parts:          textParts("first turn"),
+	}); err != nil {
+		t.Fatalf("append old user: %v", err)
+	}
+	if err := s.Messages().Append(ctx, &models.Message{
+		ID:             "a-old",
+		ConversationID: conv.ID,
+		SentBy:         models.SentByAgent,
+		State:          models.MessageStateCompleted,
+		Parts: []models.MessagePart{{
+			Kind: models.PartFunctionCall,
+			FunctionCall: &models.FunctionCallPart{
+				CallID:   "old-call",
+				Name:     "exec_command",
+				ArgsJSON: json.RawMessage(`{"cmd":"pwd"}`),
+			},
+		}},
+	}); err != nil {
+		t.Fatalf("append old agent: %v", err)
+	}
+	originalToolJSON := `{"output":"old output","session_id":17}`
+	if err := s.Messages().Append(ctx, &models.Message{
+		ID:             "t-old",
+		ConversationID: conv.ID,
+		SentBy:         models.SentByTool,
+		State:          models.MessageStateCompleted,
+		Parts:          toolResponsePart("old-call", "exec_command", originalToolJSON),
+	}); err != nil {
+		t.Fatalf("append old tool: %v", err)
+	}
+	if err := s.Messages().Append(ctx, &models.Message{
+		ID:             "a-old-text",
+		ConversationID: conv.ID,
+		SentBy:         models.SentByAgent,
+		State:          models.MessageStateCompleted,
+		Parts:          textParts("done"),
+	}); err != nil {
+		t.Fatalf("append old agent text: %v", err)
+	}
+
+	var capturedHistory []*models.Message
+	mock := &historyCaptureMock{
+		inner:           &mockModelClient{responses: [][]agent.TurnEvent{makeTextResponse("next")}},
+		captureCallback: func(h []*models.Message) { capturedHistory = h },
+	}
+
+	session := agent.NewSession(s, mock, ws, conv, nil, 0)
+	events, cancel, err := session.HandleUserMessage(ctx, textParts("follow up"))
+	if err != nil {
+		t.Fatalf("HandleUserMessage: %v", err)
+	}
+	defer cancel()
+	collectEvents(events)
+
+	got := historyToolResponseMap(t, capturedHistory, "old-call")
+	if got["output"] != "[Old tool result content cleared]" {
+		t.Fatalf("history output = %#v, want placeholder", got["output"])
+	}
+	if got["session_id"] != float64(17) {
+		t.Fatalf("history session_id = %#v, want 17", got["session_id"])
+	}
+
+	msgs, err := s.Messages().GetRange(ctx, conv.ID, 1, 20)
+	if err != nil {
+		t.Fatalf("load messages: %v", err)
+	}
+	persisted := historyToolResponseMap(t, msgs, "old-call")
+	if persisted["output"] != "old output" {
+		t.Fatalf("persisted output = %#v, want original", persisted["output"])
+	}
+}
+
+func TestSessionBuildHistoryKeepsCurrentTurnToolResults(t *testing.T) {
+	s := newTestStore(t)
+	ws, conv := seedConversation(t, s)
+	ctx := context.Background()
+
+	if err := s.Messages().Append(ctx, &models.Message{
+		ID:             "u-old",
+		ConversationID: conv.ID,
+		SentBy:         models.SentByUser,
+		State:          models.MessageStateCompleted,
+		Parts:          textParts("previous"),
+	}); err != nil {
+		t.Fatalf("append old user: %v", err)
+	}
+	if err := s.Messages().Append(ctx, &models.Message{
+		ID:             "t-old",
+		ConversationID: conv.ID,
+		SentBy:         models.SentByTool,
+		State:          models.MessageStateCompleted,
+		Parts:          toolResponsePart("old-call", "read_file", `{"output":"stale contents","success":true}`),
+	}); err != nil {
+		t.Fatalf("append old tool: %v", err)
+	}
+
+	var histories [][]*models.Message
+	captureMock := &historyCaptureMock{
+		inner: &mockModelClient{
+			responses: [][]agent.TurnEvent{
+				makeToolCallResponse(struct{ Name, CallID, Args string }{"echo", "fresh-call", `{}`}),
+				makeTextResponse("done"),
+			},
+		},
+		captureCallback: func(h []*models.Message) {
+			snapshot := append([]*models.Message(nil), h...)
+			histories = append(histories, snapshot)
+		},
+	}
+
+	session := agent.NewSession(s, captureMock, ws, conv, []*agent.ToolDef{simpleTool("echo", `{"output":"fresh output","session_id":42}`)}, 0)
+	events, cancel, err := session.HandleUserMessage(ctx, textParts("follow up"))
+	if err != nil {
+		t.Fatalf("HandleUserMessage: %v", err)
+	}
+	defer cancel()
+	collectEvents(events)
+
+	if len(histories) != 2 {
+		t.Fatalf("histories = %d, want 2", len(histories))
+	}
+
+	firstOld := historyToolResponseMap(t, histories[0], "old-call")
+	if firstOld["output"] != "[Old tool result content cleared]" {
+		t.Fatalf("first old output = %#v, want placeholder", firstOld["output"])
+	}
+
+	secondOld := historyToolResponseMap(t, histories[1], "old-call")
+	if secondOld["output"] != "[Old tool result content cleared]" {
+		t.Fatalf("second old output = %#v, want placeholder", secondOld["output"])
+	}
+
+	secondFresh := historyToolResponseMap(t, histories[1], "fresh-call")
+	if secondFresh["output"] != "fresh output" {
+		t.Fatalf("fresh output = %#v, want fresh output", secondFresh["output"])
+	}
+	if secondFresh["session_id"] != float64(42) {
+		t.Fatalf("fresh session_id = %#v, want 42", secondFresh["session_id"])
+	}
+}
+
+func TestSessionThreadHistoryPrunesParentToolResults(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	ws := &models.Workspace{ID: "ws-1", Name: "W", RootPath: "/tmp", CanonicalRootPath: "/tmp"}
+	if err := s.Workspaces().Create(ctx, ws); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+
+	parent := &models.Conversation{ID: "parent", WorkspaceID: "ws-1", Title: "Parent"}
+	if err := s.Conversations().Create(ctx, parent); err != nil {
+		t.Fatalf("create parent conversation: %v", err)
+	}
+	if err := s.Messages().Append(ctx, &models.Message{
+		ID:             "pm1",
+		ConversationID: parent.ID,
+		SentBy:         models.SentByUser,
+		State:          models.MessageStateCompleted,
+		Parts:          textParts("launch child"),
+	}); err != nil {
+		t.Fatalf("append parent user: %v", err)
+	}
+	if err := s.Messages().Append(ctx, &models.Message{
+		ID:             "pm2",
+		ConversationID: parent.ID,
+		SentBy:         models.SentByTool,
+		State:          models.MessageStateCompleted,
+		Parts:          toolResponsePart("parent-call", "spawn_thread", `{"thread_id":"thread-123","status":"completed","result":"child answer"}`),
+	}); err != nil {
+		t.Fatalf("append parent tool: %v", err)
+	}
+
+	thread := &models.Conversation{
+		ID:                   "thread",
+		WorkspaceID:          "ws-1",
+		Title:                "Thread",
+		ParentConversationID: "parent",
+		AnchorMessageID:      "pm2",
+	}
+	if err := s.Conversations().Create(ctx, thread); err != nil {
+		t.Fatalf("create thread: %v", err)
+	}
+
+	var capturedHistory []*models.Message
+	mock := &historyCaptureMock{
+		inner:           &mockModelClient{responses: [][]agent.TurnEvent{makeTextResponse("thread response")}},
+		captureCallback: func(h []*models.Message) { capturedHistory = h },
+	}
+
+	session := agent.NewSession(s, mock, ws, thread, nil, 0)
+	events, cancel, err := session.HandleUserMessage(ctx, textParts("follow up in thread"))
+	if err != nil {
+		t.Fatalf("HandleUserMessage: %v", err)
+	}
+	defer cancel()
+	collectEvents(events)
+
+	got := historyToolResponseMap(t, capturedHistory, "parent-call")
+	if got["thread_id"] != "thread-123" {
+		t.Fatalf("thread_id = %#v, want thread-123", got["thread_id"])
+	}
+	if got["status"] != "completed" {
+		t.Fatalf("status = %#v, want completed", got["status"])
+	}
+	if got["result"] != "[Old tool result content cleared]" {
+		t.Fatalf("result = %#v, want placeholder", got["result"])
 	}
 }
 
