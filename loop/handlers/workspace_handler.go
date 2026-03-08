@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"math"
-	"os"
 	"net/http"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -42,7 +42,8 @@ func (h *WorkspaceHandler) Stats(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	id := r.PathValue("id")
 
-	_, err := h.store.Workspaces().Get(ctx, models.WorkspaceID(id))
+	ws, err := h.store.Workspaces().Get(ctx, models.WorkspaceID(id))
+	branches := []string{}
 	if err != nil {
 		utils.WriteError(w, http.StatusNotFound, "workspace not found")
 		return
@@ -131,6 +132,7 @@ func (h *WorkspaceHandler) Stats(w http.ResponseWriter, r *http.Request) {
 		"context_percent":      contextPercent(latestPromptTokens, contextLimit),
 		"model":                h.model,
 		"cost":                 cost,
+		"branches":             branches,
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -221,6 +223,17 @@ func (h *WorkspaceHandler) GitStatus(w http.ResponseWriter, r *http.Request) {
 			branch = strings.TrimSpace(string(dOut))
 			if branch == "" {
 				branch = "main"
+			}
+		}
+
+		listCmd := exec.CommandContext(r.Context(), "git", "branch", "--format=%(refname:short)")
+		listCmd.Dir = ws.RootPath
+		if lOut, lErr := listCmd.Output(); lErr == nil {
+			for _, b := range strings.Split(strings.TrimSpace(string(lOut)), "\n") {
+				b = strings.TrimSpace(b)
+				if b != "" {
+					branches = append(branches, b)
+				}
 			}
 		}
 	}
