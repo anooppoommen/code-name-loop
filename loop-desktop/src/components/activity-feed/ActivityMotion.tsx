@@ -372,6 +372,14 @@ const ActivityMeasuredBox = memo(function ActivityMeasuredBox({
     };
 
     if (!shouldAnimate) {
+      animRootRef.current?.stop();
+      animBodyRef.current?.stop();
+      animRootRef.current = null;
+      animBodyRef.current = null;
+      if (cleanupObserverRef.current) {
+        cleanupObserverRef.current();
+        cleanupObserverRef.current = undefined;
+      }
       applyInstant();
       return;
     }
@@ -424,7 +432,7 @@ const ActivityMeasuredBox = memo(function ActivityMeasuredBox({
               root.style.overflow = "visible";
               animRootRef.current = null;
             })
-            .catch(() => {});
+            .catch(() => { });
         });
       });
       observer.observe(body);
@@ -482,7 +490,7 @@ const ActivityMeasuredBox = memo(function ActivityMeasuredBox({
         initializedRef.current = true;
         animRootRef.current = null;
       })
-      .catch(() => {});
+      .catch(() => { });
 
     return () => {
       animRootRef.current?.stop();

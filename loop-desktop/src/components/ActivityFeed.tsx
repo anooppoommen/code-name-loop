@@ -178,6 +178,7 @@ export const ActivityFeed = memo(function ActivityFeed({
   const settleScrollPassesRef = useRef(0);
   const resizeScrollFrameRef = useRef<number | null>(null);
   const previousRenderedEventIdsRef = useRef<string[]>([]);
+  const animatedEventIdsRef = useRef<Set<string>>(new Set());
   const bottomLockUntilRef = useRef(0);
   const settleTimeoutsRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const [settlingEventIds, setSettlingEventIds] = useState<Set<string>>(() => new Set());
@@ -301,6 +302,7 @@ export const ActivityFeed = memo(function ActivityFeed({
     stickyBottomRef.current = true;
     pendingInitialSnapRef.current = true;
     previousRenderedEventIdsRef.current = [];
+    animatedEventIdsRef.current = new Set();
     bottomLockUntilRef.current = 0;
     for (const timeout of Object.values(settleTimeoutsRef.current)) {
       clearTimeout(timeout);
@@ -420,6 +422,7 @@ export const ActivityFeed = memo(function ActivityFeed({
 
   const appendedEventIds = useMemo(() => {
     if (!allowInteractiveMotion || showHistoryLoadingState) {
+      animatedEventIdsRef.current = new Set();
       return EMPTY_EVENT_ID_SET;
     }
 
@@ -429,10 +432,14 @@ export const ActivityFeed = memo(function ActivityFeed({
       || renderedEventIds.length <= previousIds.length
       || !previousIds.every((id, index) => renderedEventIds[index] === id)
     ) {
-      return EMPTY_EVENT_ID_SET;
+      return animatedEventIdsRef.current.size > 0 ? animatedEventIdsRef.current : EMPTY_EVENT_ID_SET;
     }
 
-    return new Set(renderedEventIds.slice(previousIds.length));
+    const newIds = renderedEventIds.slice(previousIds.length);
+    for (const id of newIds) {
+      animatedEventIdsRef.current.add(id);
+    }
+    return animatedEventIdsRef.current;
   }, [allowInteractiveMotion, renderedEventIds, showHistoryLoadingState]);
 
   useLayoutEffect(() => {
