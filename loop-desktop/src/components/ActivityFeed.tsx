@@ -577,7 +577,7 @@ export const ActivityFeed = memo(function ActivityFeed({
           {showHistoryLoadingState ? (
             <ActivityReveal
               key="history-loading"
-              className="mx-auto flex h-full w-full max-w-[720px] items-start px-4 py-3"
+              className="mx-auto flex h-full w-full max-w-[800px] items-start px-4 py-3"
             >
               <p className="m-0 text-sm text-loop-500">Loading activity…</p>
             </ActivityReveal>
@@ -585,7 +585,7 @@ export const ActivityFeed = memo(function ActivityFeed({
             <ActivityReveal
               key={`history-content:${conversationId}`}
             >
-              <div ref={feedContentRef} className="mx-auto flex min-h-full w-full max-w-[720px] flex-col justify-end">
+              <div ref={feedContentRef} className="mx-auto flex min-h-full w-full max-w-[800px] flex-col justify-end">
                 <div className="flex flex-col justify-end">
                   <ActivityFeedEvents
                     allowInteractiveMotion={allowInteractiveMotion}
