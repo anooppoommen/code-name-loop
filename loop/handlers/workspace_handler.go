@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"math"
+	"os"
 	"net/http"
 	"os/exec"
 	"strconv"
@@ -32,6 +33,9 @@ func (h *WorkspaceHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /workspaces/{id}", h.Get)
 	mux.HandleFunc("DELETE /workspaces/{id}", h.Delete)
 	mux.HandleFunc("GET /workspaces/{id}/stats", h.Stats)
+	mux.HandleFunc("GET /workspaces/{id}/git", h.GitStatus)
+	mux.HandleFunc("POST /workspaces/{id}/git/init", h.GitInit)
+	mux.HandleFunc("POST /workspaces/{id}/git/checkout", h.GitCheckout)
 }
 
 func (h *WorkspaceHandler) Stats(w http.ResponseWriter, r *http.Request) {
@@ -89,6 +93,18 @@ func (h *WorkspaceHandler) Stats(w http.ResponseWriter, r *http.Request) {
 						cost += (out / 1000000.0) * 18.00
 					}
 					cost += (cache / 1000000.0) * 0.20
+				}
+			}
+		}
+
+		// Also get all branches
+		listCmd := exec.CommandContext(r.Context(), "git", "branch", "--format=%(refname:short)")
+		listCmd.Dir = ws.RootPath
+		if lOut, lErr := listCmd.Output(); lErr == nil {
+			for _, b := range strings.Split(strings.TrimSpace(string(lOut)), "\n") {
+				b = strings.TrimSpace(b)
+				if b != "" {
+					branches = append(branches, b)
 				}
 			}
 		}
@@ -175,6 +191,101 @@ func (h *WorkspaceHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *WorkspaceHandler) GitStatus(w http.ResponseWriter, r *http.Request) {
+	id := models.WorkspaceID(r.PathValue("id"))
+	ws, err := h.store.Workspaces().Get(r.Context(), id)
+	if err != nil {
+		utils.WriteError(w, http.StatusNotFound, "workspace not found")
+		return
+	}
+
+	cmd := exec.CommandContext(r.Context(), "git", "rev-parse", "--is-inside-work-tree")
+	cmd.Dir = ws.RootPath
+	err = cmd.Run()
+	isInit := err == nil
+
+	branch := ""
+	branches := []string{}
+	if isInit {
+		bCmd := exec.CommandContext(r.Context(), "git", "branch", "--show-current")
+		bCmd.Dir = ws.RootPath
+		out, _ := bCmd.Output()
+		branch = strings.TrimSpace(string(out))
+		if branch == "" {
+			// If empty, it might be an empty repo. Let's try to get default branch config.
+			dCmd := exec.CommandContext(r.Context(), "git", "config", "--get", "init.defaultBranch")
+			dCmd.Dir = ws.RootPath
+			dOut, _ := dCmd.Output()
+			branch = strings.TrimSpace(string(dOut))
+			if branch == "" {
+				branch = "main"
+			}
+		}
+	}
+
+	utils.WriteJSON(w, http.StatusOK, map[string]any{
+		"is_initialized": isInit,
+		"branch":         branch,
+		"branches":       branches,
+	})
+}
+
+func (h *WorkspaceHandler) GitCheckout(w http.ResponseWriter, r *http.Request) {
+	id := models.WorkspaceID(r.PathValue("id"))
+	ws, err := h.store.Workspaces().Get(r.Context(), id)
+	if err != nil {
+		utils.WriteError(w, http.StatusNotFound, "workspace not found")
+		return
+	}
+
+	var req struct {
+		Branch string `json:"branch"`
+		Create bool   `json:"create"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		utils.WriteError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Branch == "" {
+		utils.WriteError(w, http.StatusBadRequest, "branch name is required")
+		return
+	}
+
+	var cmd *exec.Cmd
+	if req.Create {
+		cmd = exec.CommandContext(r.Context(), "git", "checkout", "-b", req.Branch)
+	} else {
+		cmd = exec.CommandContext(r.Context(), "git", "checkout", req.Branch)
+	}
+	cmd.Dir = ws.RootPath
+	if err := cmd.Run(); err != nil {
+		utils.WriteError(w, http.StatusInternalServerError, "failed to checkout branch")
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func (h *WorkspaceHandler) GitInit(w http.ResponseWriter, r *http.Request) {
+	id := models.WorkspaceID(r.PathValue("id"))
+	ws, err := h.store.Workspaces().Get(r.Context(), id)
+	if err != nil {
+		utils.WriteError(w, http.StatusNotFound, "workspace not found")
+		return
+	}
+
+	if err := os.MkdirAll(ws.RootPath, 0755); err != nil {
+		utils.WriteError(w, http.StatusInternalServerError, "failed to create workspace directory")
+		return
+	}
+	cmd := exec.CommandContext(r.Context(), "git", "init")
+	cmd.Dir = ws.RootPath
+	if err := cmd.Run(); err != nil {
+		utils.WriteError(w, http.StatusInternalServerError, "failed to initialize git")
+		return
+	}
+	w.WriteHeader(http.StatusOK)
 }
 
 func workspaceLineStats(ctx context.Context, rootPath string) (int, int) {
