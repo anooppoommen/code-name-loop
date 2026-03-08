@@ -1,3 +1,4 @@
+import { memo, useMemo } from 'react';
 import { PatchViewer } from '../PatchViewer';
 import {
   CommandToolCard,
@@ -21,7 +22,7 @@ interface ActivityToolEventDetailsProps extends ActivityToolReplyProps {
   includeSystemErrorDetails?: boolean;
 }
 
-export function ActivityToolEventDetails({
+export const ActivityToolEventDetails = memo(function ActivityToolEventDetails({
   event,
   fallbackText,
   patchOutputClassName,
@@ -32,13 +33,16 @@ export function ActivityToolEventDetails({
   onUseToolReply,
   onSendToolReply,
 }: ActivityToolEventDetailsProps) {
-  const requestInputPayload = parseRequestUserInputPayload(event);
-  const updatePlanPayload = parseUpdatePlanPayload(event);
-  const commandToolPayload = parseCommandToolPayload(event);
-  const fileToolPayload = parseFileToolPayload(event);
+  const requestInputPayload = useMemo(() => parseRequestUserInputPayload(event), [event]);
+  const updatePlanPayload = useMemo(() => parseUpdatePlanPayload(event), [event]);
+  const commandToolPayload = useMemo(() => parseCommandToolPayload(event), [event]);
+  const fileToolPayload = useMemo(() => parseFileToolPayload(event), [event]);
   const isPatchToolEvent =
     event.tool?.name === 'apply_patch' || event.tool?.name?.endsWith(':apply_patch');
-  const systemErrorDetails = includeSystemErrorDetails ? parseSystemErrorDetails(event) : null;
+  const systemErrorDetails = useMemo(
+    () => (includeSystemErrorDetails ? parseSystemErrorDetails(event) : null),
+    [event, includeSystemErrorDetails],
+  );
 
   if (requestInputPayload) {
     return (
@@ -111,4 +115,4 @@ export function ActivityToolEventDetails({
   }
 
   return fallbackText ? <pre className={fallbackClassName}>{fallbackText}</pre> : null;
-}
+});

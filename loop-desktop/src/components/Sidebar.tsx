@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import type { ConversationSummary, WorkspaceSummary } from '../types/ui';
 import { SidebarActions } from './sidebar/SidebarActions';
 import { SidebarSettings } from './sidebar/SidebarSettings';
@@ -32,7 +33,7 @@ interface SidebarProps {
   onLoadMoreConversations: (workspaceId: string) => void;
 }
 
-export function Sidebar({
+export const Sidebar = memo(function Sidebar({
   backendUrl,
   onBackendUrlChange,
   onOpenCommandPalette,
@@ -99,4 +100,4 @@ export function Sidebar({
       />
     </aside>
   );
-}
+});

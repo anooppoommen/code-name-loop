@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { FolderPlus, MessageSquarePlus, Search } from 'lucide-react';
 
 interface SidebarActionsProps {
@@ -7,7 +8,7 @@ interface SidebarActionsProps {
   onOpenCommandPalette: () => void;
 }
 
-export function SidebarActions({
+export const SidebarActions = memo(function SidebarActions({
   selectedWorkspaceId,
   onNewConversation,
   onPickFolder,
@@ -47,4 +48,4 @@ export function SidebarActions({
       </button>
     </nav>
   );
-}
+});

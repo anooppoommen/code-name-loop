@@ -19,7 +19,7 @@ import { useEventStore } from '../stores/eventStore';
 import { useGroupStore } from '../stores/groupStore';
 import { usePatchRevertStore } from '../stores/patchRevertStore';
 import { buildRenderGroups, visibleEventsForGroup } from '../utils/activityRenderGroups';
-import { buildAssistantPatchContext } from '../utils/patchActivityState';
+import { buildAssistantPatchContext, type AssistantPatchContextEntry } from '../utils/patchActivityState';
 import { buildPatchRevertKey } from '../utils/patchRevertKey';
 import { useShallow } from 'zustand/react/shallow';
 
@@ -97,6 +97,77 @@ const ActivitySendingStatus = memo(function ActivitySendingStatus({ currentStatu
         {currentStatus || 'Thinking...'}
       </span>
     </ActivityFrame>
+  );
+});
+
+interface ActivityEventRowProps extends ToolReplyActions {
+  event: ActivityEvent;
+  conversationId: string;
+  allowInteractiveMotion: boolean;
+  isFinalAgent: boolean;
+  isAppended: boolean;
+  shouldTrackLiveHeight: boolean;
+  assistantPatchData?: AssistantPatchContextEntry;
+  applyPatchToWorkspace: ActivityFeedProps['applyPatchToWorkspace'];
+  canCompose: boolean;
+  isSending: boolean;
+  onRetryMessage: ActivityFeedProps['onRetryMessage'];
+  onEditMessage: ActivityFeedProps['onEditMessage'];
+}
+
+const ActivityEventRow = memo(function ActivityEventRow({
+  event,
+  conversationId,
+  allowInteractiveMotion,
+  isFinalAgent,
+  isAppended,
+  shouldTrackLiveHeight,
+  assistantPatchData,
+  applyPatchToWorkspace,
+  canCompose,
+  isSending,
+  onUseToolReply,
+  onSendToolReply,
+  onRetryMessage,
+  onEditMessage,
+}: ActivityEventRowProps) {
+  const shouldAnimate = allowInteractiveMotion && (isAppended || shouldTrackLiveHeight);
+
+  return (
+    <ActivityAppendGrow
+      animate={shouldAnimate}
+      watch={shouldTrackLiveHeight}
+      fade={event.kind === 'assistant' && !event.streaming}
+      data-activity-event-id={event.id}
+    >
+      <ActivityItem
+        event={event}
+        isFinalAgent={isFinalAgent}
+        canCompose={canCompose}
+        isSending={isSending}
+        onUseToolReply={onUseToolReply}
+        onSendToolReply={onSendToolReply}
+        onRetryMessage={onRetryMessage}
+        onEditMessage={onEditMessage}
+      />
+      {event.kind === 'assistant' && assistantPatchData ? (
+        <ActivityFrame
+          className="px-2 pb-3 pt-1"
+          left={<div className="flex h-8 w-8 shrink-0 items-center justify-center" />}
+          contentClassName="min-w-0"
+        >
+          <CombinedPatchViewer
+            patchKey={buildPatchRevertKey(conversationId, assistantPatchData.patchId, assistantPatchData.patches)}
+            patchId={assistantPatchData.patchId}
+            patches={assistantPatchData.patches}
+            checkpointId={assistantPatchData.checkpointId}
+            revertedPaths={assistantPatchData.revertedPaths}
+            conversationId={conversationId}
+            applyPatchToWorkspace={applyPatchToWorkspace}
+          />
+        </ActivityFrame>
+      ) : null}
+    </ActivityAppendGrow>
   );
 });
 
@@ -512,46 +583,26 @@ export const ActivityFeed = memo(function ActivityFeed({
     //   (their content may update even though event.streaming is false for tool events)
     const isRecentlyAppended = isSending && appendedEventIds.has(event.id);
     const shouldTrackLiveHeight = Boolean(event.streaming) || settlingEventIds.has(event.id) || isRecentlyAppended;
+    const assistantPatchData = assistantPatchContext.get(event.id);
+
     return (
-      <ActivityAppendGrow
+      <ActivityEventRow
         key={event.id}
-        animate={allowInteractiveMotion && (appendedEventIds.has(event.id) || shouldTrackLiveHeight)}
-        watch={shouldTrackLiveHeight}
-        fade={event.kind === 'assistant' && !event.streaming}
-        data-activity-event-id={event.id}
-      >
-        <ActivityItem
-          event={event}
-          isFinalAgent={isFinalAgent}
-          canCompose={canCompose}
-          isSending={isSending}
-          onUseToolReply={onUseToolReply}
-          onSendToolReply={onSendToolReply}
-          onRetryMessage={onRetryMessage}
-          onEditMessage={onEditMessage}
-        />
-        {event.kind === 'assistant' && assistantPatchContext.has(event.id) ? (
-          <ActivityFrame
-            className="px-2 pb-3 pt-1"
-            left={<div className="flex h-8 w-8 shrink-0 items-center justify-center" />}
-            contentClassName="min-w-0"
-          >
-            <CombinedPatchViewer
-              patchKey={buildPatchRevertKey(
-                conversationId,
-                assistantPatchContext.get(event.id)?.patchId,
-                assistantPatchContext.get(event.id)?.patches || [],
-              )}
-              patchId={assistantPatchContext.get(event.id)?.patchId}
-              patches={assistantPatchContext.get(event.id)?.patches || []}
-              checkpointId={assistantPatchContext.get(event.id)?.checkpointId}
-              revertedPaths={assistantPatchContext.get(event.id)?.revertedPaths}
-              conversationId={conversationId}
-              applyPatchToWorkspace={applyPatchToWorkspace}
-            />
-          </ActivityFrame>
-        ) : null}
-      </ActivityAppendGrow>
+        event={event}
+        conversationId={conversationId}
+        allowInteractiveMotion={allowInteractiveMotion}
+        isFinalAgent={isFinalAgent}
+        isAppended={isRecentlyAppended}
+        shouldTrackLiveHeight={shouldTrackLiveHeight}
+        assistantPatchData={assistantPatchData}
+        applyPatchToWorkspace={applyPatchToWorkspace}
+        canCompose={canCompose}
+        isSending={isSending}
+        onUseToolReply={onUseToolReply}
+        onSendToolReply={onSendToolReply}
+        onRetryMessage={onRetryMessage}
+        onEditMessage={onEditMessage}
+      />
     );
   }, [
     allowInteractiveMotion,

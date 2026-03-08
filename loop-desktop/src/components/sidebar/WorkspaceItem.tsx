@@ -1,5 +1,5 @@
 import { AnimatePresence, motion } from 'framer-motion';
-import { useState } from 'react';
+import { memo, useState } from 'react';
 import { Folder, FolderOpen, Trash2 } from 'lucide-react';
 import type { ConversationSummary, WorkspaceSummary } from '../../types/ui';
 import { COLLAPSIBLE_SPRING } from '../activity-feed/ActivityMotion';
@@ -22,7 +22,7 @@ interface WorkspaceItemProps {
   onLoadMore: () => void;
 }
 
-export function WorkspaceItem({
+export const WorkspaceItem = memo(function WorkspaceItem({
   workspace,
   isSelected,
   isExpanded,
@@ -138,4 +138,4 @@ export function WorkspaceItem({
       </AnimatePresence>
     </div>
   );
-}
+});

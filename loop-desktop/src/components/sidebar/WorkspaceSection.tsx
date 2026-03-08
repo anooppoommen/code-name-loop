@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import type { ConversationSummary, WorkspaceSummary } from '../../types/ui';
 import { WorkspaceItem } from './WorkspaceItem';
 
@@ -19,7 +20,7 @@ interface WorkspaceSectionProps {
   onLoadMoreConversations: (workspaceId: string) => void;
 }
 
-export function WorkspaceSection({
+export const WorkspaceSection = memo(function WorkspaceSection({
   workspaces,
   isLoadingWorkspaces,
   selectedWorkspaceId,
@@ -73,4 +74,4 @@ export function WorkspaceSection({
       </div>
     </section>
   );
-}
+});

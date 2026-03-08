@@ -1,4 +1,4 @@
-import { memo, useDeferredValue, useEffect, useState } from 'react';
+import { memo, useDeferredValue, useEffect, useMemo, useState } from 'react';
 import { parseParallelToolPayload } from '../tool-cards';
 import type { ToolReplyActions } from '../tool-cards';
 import type { ActivityEvent } from '../../types/ui';
@@ -32,11 +32,19 @@ export const ActivityItem = memo(function ActivityItem({
   onEditMessage,
 }: ActivityItemProps) {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
-  const icon = iconFor(event.kind);
   const userModel = event.userTurn?.model?.trim() || '';
   const userThinkingLevel = event.userTurn?.thinkingLevel?.trim() || '';
-  const thinkingToneClass = userThinkingToneClass(userThinkingLevel);
   const renderedText = useDeferredValue(useThrottledText(textTargetForEvent(event), !!event.streaming));
+  const thinkingToneClass = useMemo(() => userThinkingToneClass(userThinkingLevel), [userThinkingLevel]);
+  const visual = useMemo(() => visualStyleFor(event), [event]);
+  const parallelToolPayload = useMemo(() => parseParallelToolPayload(event), [event]);
+  const leftGutterIcon = useMemo(() => {
+    if (event.kind === 'tool' || event.kind === 'thought') {
+      return null;
+    }
+
+    return <div className={visual.icon}>{iconFor(event.kind)}</div>;
+  }, [event.kind, visual.icon]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -52,15 +60,9 @@ export const ActivityItem = memo(function ActivityItem({
     return <ActivityStatusItem event={event} />;
   }
 
-  const visual = visualStyleFor(event);
   const isUser = event.kind === 'user';
   const isAsst = event.kind === 'assistant';
   const isSystemEvent = !isUser && !isAsst;
-  const parallelToolPayload = parseParallelToolPayload(event);
-  const leftGutterIcon =
-    event.kind === 'tool' || event.kind === 'thought'
-      ? null
-      : <div className={visual.icon}>{icon}</div>;
 
   if (event.kind === 'thought') {
     return (

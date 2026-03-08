@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
@@ -34,7 +34,7 @@ interface ThreadItemProps {
   onRename: (title: string) => void;
 }
 
-export function ThreadItem({
+export const ThreadItem = memo(function ThreadItem({
   conversation,
   isActive,
   isWorking,
@@ -225,4 +225,4 @@ export function ThreadItem({
       )}
     </div>
   );
-}
+});
