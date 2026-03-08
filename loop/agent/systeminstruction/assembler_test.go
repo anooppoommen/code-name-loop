@@ -46,8 +46,8 @@ func TestGet(t *testing.T) {
 
 func TestDefaultVariantMetadata(t *testing.T) {
 	variant := DefaultVariant()
-	if variant.ID != "gemini-coding-strict-optimized.v7" {
-		t.Fatalf("default variant id = %q, want v7", variant.ID)
+	if variant.ID != "gemini-coding-strict-optimized.v8" {
+		t.Fatalf("default variant id = %q, want v8", variant.ID)
 	}
 	if variant.Name == "" {
 		t.Fatal("default variant name should not be empty")

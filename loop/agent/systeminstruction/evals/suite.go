@@ -48,9 +48,9 @@ type turnBundle struct {
 }
 
 func GenerateSuite(dbPath string) (*Suite, error) {
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := openReadOnlyDB(dbPath)
 	if err != nil {
-		return nil, fmt.Errorf("open sqlite db: %w", err)
+		return nil, err
 	}
 	defer db.Close()
 
@@ -289,7 +289,7 @@ func buildCase(conv dbConversation, workspaceRoot string, bundle turnBundle, bun
 	}
 
 	artifacts := extractArtifacts(conv.Title + "\n" + userText)
-	expectations := inferExpectations(conv, bundle, idx)
+	expectations := inferExpectations(conv, bundle, idx, artifacts)
 	originalRun := OriginalRun{
 		ToolCounts:            bundle.Assistant.ToolCounts,
 		FirstTools:            bundle.Assistant.FirstTools,
@@ -326,7 +326,7 @@ func buildCase(conv dbConversation, workspaceRoot string, bundle turnBundle, bun
 	}
 }
 
-func inferExpectations(conv dbConversation, bundle turnBundle, idx int) Expectations {
+func inferExpectations(conv dbConversation, bundle turnBundle, idx int, artifacts []string) Expectations {
 	text := strings.ToLower(normalizeWhitespace(bundle.UserText))
 	correction := isCorrectionTurn(text, idx)
 	clarify := shouldAskClarifying(text, idx)
@@ -340,6 +340,7 @@ func inferExpectations(conv dbConversation, bundle turnBundle, idx int) Expectat
 		RequireContractReset:      correction,
 		PrioritizeNamedArtifacts:  mentionsConcreteArtifact(text, conv.Title),
 		PrioritizeSourceOfTruth:   needsSourceOfTruthInspection(text, bundle.NextUserMessage),
+		PreferParallelDiscovery:   false,
 		AvoidUpdatePlan:           shouldAvoidUpdatePlan(text),
 		AvoidRequestUserInput:     !clarify,
 		PreferStructuredTools:     !needsGitStatus(text, conv.Title) && !requiresVerificationCommand(text),
@@ -377,6 +378,11 @@ func inferExpectations(conv dbConversation, bundle turnBundle, idx int) Expectat
 	}
 	if expect.PrioritizeSourceOfTruth {
 		expect.QualitySignals = append(expect.QualitySignals, "Trace the source-of-truth layer instead of patching only the leaf UI component.")
+	}
+	expect.PreferParallelDiscovery = shouldPreferParallelDiscovery(text, idx, artifacts, expect)
+	if expect.PreferParallelDiscovery {
+		expect.PreferredFirstTools = append([]string{"parallel_tool_use"}, expect.PreferredFirstTools...)
+		expect.QualitySignals = append(expect.QualitySignals, "Front-load 2 to 4 targeted independent reads or searches instead of single-step probing.")
 	}
 	if expect.AvoidUpdatePlan {
 		expect.ForbiddenFirstTools = append(expect.ForbiddenFirstTools, "update_plan")
@@ -422,6 +428,9 @@ func shouldPatch(text string, idx int) bool {
 	return strings.Contains(text, "fix") ||
 		strings.Contains(text, "add ") ||
 		strings.Contains(text, "implement") ||
+		strings.Contains(text, "need the ability to") ||
+		strings.Contains(text, "needs changes to") ||
+		strings.Contains(text, "i need you to") ||
 		strings.Contains(text, "update ") ||
 		strings.Contains(text, "redesign") ||
 		strings.Contains(text, "make ") ||
@@ -555,6 +564,9 @@ func deriveTags(expect Expectations, artifacts []string, bundle turnBundle, orig
 	if expect.PrioritizeSourceOfTruth {
 		tags = append(tags, "source_of_truth")
 	}
+	if expect.PreferParallelDiscovery {
+		tags = append(tags, "parallel_discovery")
+	}
 	if expect.ShouldCheckGitStatus {
 		tags = append(tags, "git_state")
 	}
@@ -581,6 +593,76 @@ func bundleTag(expect Expectations) string {
 	default:
 		return "investigate"
 	}
+}
+
+func openReadOnlyDB(dbPath string) (*sql.DB, error) {
+	dsn := strings.TrimSpace(dbPath)
+	if dsn == "" {
+		return nil, fmt.Errorf("open sqlite db: empty path")
+	}
+	if !strings.HasPrefix(dsn, "file:") {
+		dsn = "file:" + dsn + "?mode=ro&_busy_timeout=5000"
+	} else if !strings.Contains(dsn, "?") {
+		dsn += "?mode=ro&_busy_timeout=5000"
+	} else if !strings.Contains(dsn, "mode=") {
+		dsn += "&mode=ro&_busy_timeout=5000"
+	}
+
+	db, err := sql.Open("sqlite3", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("open sqlite db: %w", err)
+	}
+	db.SetMaxOpenConns(1)
+	return db, nil
+}
+
+func shouldPreferParallelDiscovery(text string, idx int, artifacts []string, expect Expectations) bool {
+	if expect.MustNotPatchThisTurn || expect.ShouldCheckGitStatus || expect.ShouldAskClarifying || !expect.PreferStructuredTools {
+		return false
+	}
+	if !(expect.ShouldPatch || expect.PrimaryIntent == "investigate" || expect.RequireContractReset) {
+		return false
+	}
+
+	complexSurface := len(artifacts) >= 2 || expect.PrioritizeSourceOfTruth || hasParallelDiscoveryKeywords(text)
+	if !complexSurface {
+		return false
+	}
+
+	score := 0
+	if idx == 0 || expect.RequireContractReset {
+		score++
+	}
+	if len(artifacts) >= 2 {
+		score++
+	}
+	if expect.PrioritizeSourceOfTruth {
+		score++
+	}
+	if hasParallelDiscoveryKeywords(text) {
+		score++
+	}
+	if len(strings.Fields(text)) >= 18 {
+		score++
+	}
+
+	return score >= 2
+}
+
+func hasParallelDiscoveryKeywords(text string) bool {
+	keywords := []string{
+		"analyze", "explore", "figure out", "trace", "what files", "which files",
+		"where the edits", "both backend and", "backend and the front end",
+		"front end and back end", "desktop app", "activity view", "timeline",
+		"conversation", "composer", "sidebar", "settings", "performance",
+		"lifecycle events", "source of truth", "render chain",
+	}
+	for _, keyword := range keywords {
+		if strings.Contains(text, keyword) {
+			return true
+		}
+	}
+	return false
 }
 
 func dissatisfactionScore(text string) int {

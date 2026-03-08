@@ -48,7 +48,7 @@ func NewExecCommandTool(
 	return &agent.ToolDef{
 		Declaration: &genai.FunctionDeclaration{
 			Name:        "exec_command",
-			Description: "Runs diagnostic or verification shell commands and returns output (or a session ID for interactive follow-up). Prefer structured repository tools for code/file reads. Never use this tool to create/edit/delete workspace files; use apply_patch for workspace changes.",
+			Description: "Runs shell commands when command semantics are required, such as git state, tests, builds, lint, runtime reproduction, or environment inspection. Do not use this for basic repo discovery or file/code reads that read_file, list_dir, grep_files, or parallel_tool_use can express. Never use this tool to create/edit/delete workspace files; use apply_patch for workspace changes.",
 			Parameters: &genai.Schema{
 				Type: genai.TypeObject,
 				Properties: map[string]*genai.Schema{
@@ -84,8 +84,8 @@ func NewExecCommandTool(
 			return handleExecCommand(ctx, args, pm, guard, approvalRequester)
 		},
 		Intents: []string{
-			"Use for read-only repo inspection, diagnostics, and verification commands (tests/build/lint)",
-			"Prefer read_file/grep_files/list_dir (or equivalents) for file content and code search before shell",
+			"Use for git status/diff, tests, builds, lint, runtime reproduction, and environment inspection",
+			"Do not use for grep/find/ls/cat/sed-style repo discovery when read_file/grep_files/list_dir or parallel_tool_use can express the step",
 			"Do not use for file edits or temporary patch scripts; use apply_patch for workspace changes",
 			"If policy blocks a command as workspace mutation, switch to apply_patch instead of retrying shell edits",
 		},

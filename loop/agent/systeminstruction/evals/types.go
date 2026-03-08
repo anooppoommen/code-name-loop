@@ -65,6 +65,7 @@ type Expectations struct {
 	RequireContractReset      bool     `json:"require_contract_reset"`
 	PrioritizeNamedArtifacts  bool     `json:"prioritize_named_artifacts"`
 	PrioritizeSourceOfTruth   bool     `json:"prioritize_source_of_truth"`
+	PreferParallelDiscovery   bool     `json:"prefer_parallel_discovery"`
 	AvoidUpdatePlan           bool     `json:"avoid_update_plan"`
 	AvoidRequestUserInput     bool     `json:"avoid_request_user_input"`
 	PreferStructuredTools     bool     `json:"prefer_structured_tools"`

@@ -924,16 +924,18 @@ func (h *ConversationHandler) Reply(w http.ResponseWriter, r *http.Request) {
 
 	// Build the base tool list (without spawn_thread/await_thread initially).
 	baseTools := []*agent.ToolDef{
-		tools.NewExecCommandTool(h.pm, ws, commandApprovalRequester),
-		tools.NewWriteStdinTool(h.pm),
-		tools.NewApplyPatchTool(ws, commandApprovalRequester),
 		tools.NewReadFileTool(ws, commandApprovalRequester),
 		tools.NewListDirTool(ws, commandApprovalRequester),
 		tools.NewGrepFilesTool(ws, commandApprovalRequester),
-		tools.NewUpdatePlanTool(),
-		tools.NewRequestUserInputTool(),
 	}
 	baseTools = append(baseTools, tools.NewParallelToolUseTool(func() []*agent.ToolDef { return baseTools }))
+	baseTools = append(baseTools,
+		tools.NewExecCommandTool(h.pm, ws, commandApprovalRequester),
+		tools.NewWriteStdinTool(h.pm),
+		tools.NewApplyPatchTool(ws, commandApprovalRequester),
+		tools.NewUpdatePlanTool(),
+		tools.NewRequestUserInputTool(),
+	)
 
 	// spawn_thread passes the full tool list to child sessions so they have
 	// the same capabilities as the parent (including spawn_thread for nesting).

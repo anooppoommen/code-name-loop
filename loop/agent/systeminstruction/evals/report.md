@@ -124,3 +124,70 @@ The winning prompt family adds:
 - named-artifact and source-of-truth priority as hard defaults instead of soft guidance
 - a general working-set model so follow-up turns continue from the active files/components instead of restarting from repo discovery
 - answer-first behavior for explanation and `why` turns
+
+**V8 / V2 Suite**
+
+The original suite was still weak on one thing the user explicitly wanted: early multi-tool context building.
+To measure that better, the suite generator was updated and regenerated as `agent/systeminstruction/evals/recent_conversations.v2.json`.
+
+What changed in `v2`:
+
+- root conversations analyzed: `95`
+- user turns converted into eval cases: `219`
+- added `parallel_discovery` expectations for broad, structured, multi-surface tasks
+- added deterministic penalties for missing obvious same-turn parallel discovery
+- opened the sqlite source in read-only mode so suite generation works reliably even while the app is using `loop.db`
+
+Prompt/runtime changes tested for `v8`:
+
+- new `gemini-coding-strict-optimized.v8` variant
+- explicit early parallel discovery guidance
+- explicit instruction that prior assistant tool usage is history, not precedent
+- stronger `exec_command` tool description
+- `parallel_tool_use` description now explicitly covers early discovery bursts
+- tool catalog order changed so structured tools and `parallel_tool_use` appear before `exec_command`
+
+Full `v2` results:
+
+`v7` on `v2`:
+
+- average score: `72.5`
+- pass rate: `64.8%`
+- context building: `3.31 / 5`
+- tool discipline: `3.63 / 5`
+- shell-first penalty cases: `67`
+- `parallel_tool_use` calls: `8`
+- `exec_command` calls: `80`
+- `parallel_discovery` tag average: `60.3`
+- `correction` tag average: `57.3`
+
+`v8` on `v2`:
+
+- average score: `72.7`
+- pass rate: `63.5%`
+- context building: `3.50 / 5`
+- tool discipline: `3.59 / 5`
+- shell-first penalty cases: `77`
+- `parallel_tool_use` calls: `22`
+- `exec_command` calls: `89`
+- `parallel_discovery` tag average: `61.7`
+- `correction` tag average: `70.7`
+
+What `v8` improved:
+
+- much higher `parallel_tool_use` usage (`22` vs `8`)
+- better context building
+- dramatically better correction handling
+- better scores on the new `parallel_discovery` slice
+
+What `v8` still gets wrong:
+
+- it still falls back to `exec_command` too often
+- shell-first penalties increased instead of decreasing
+- overall pass rate is slightly below `v7`
+
+Current conclusion:
+
+- `v8` is the better prompt family if the priority is stronger multi-tool and correction-turn behavior
+- `v8` is not yet a clean overall replacement if pass rate is the only metric
+- the remaining ceiling is no longer mostly a prompt problem; Gemini still needs a harder runtime guard against shell-based repo discovery if we want both high parallel usage and lower shell-first penalties

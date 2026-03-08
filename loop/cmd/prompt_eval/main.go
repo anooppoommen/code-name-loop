@@ -34,7 +34,7 @@ func main() {
 func generateSuite(args []string) {
 	fs := flag.NewFlagSet("generate-suite", flag.ExitOnError)
 	dbPath := fs.String("db", "loop.db", "path to loop db")
-	outPath := fs.String("out", "agent/systeminstruction/evals/recent_conversations.v1.json", "output suite path")
+	outPath := fs.String("out", "agent/systeminstruction/evals/recent_conversations.v2.json", "output suite path")
 	fs.Parse(args)
 
 	suite, err := evals.GenerateSuite(*dbPath)
@@ -49,8 +49,8 @@ func generateSuite(args []string) {
 
 func runSuite(args []string) {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
-	suitePath := fs.String("suite", "agent/systeminstruction/evals/recent_conversations.v1.json", "suite path")
-	variant := fs.String("variant", "gemini-coding-strict-optimized.v7.json", "embedded prompt variant filename")
+	suitePath := fs.String("suite", "agent/systeminstruction/evals/recent_conversations.v2.json", "suite path")
+	variant := fs.String("variant", "gemini-coding-strict-optimized.v8.json", "embedded prompt variant filename")
 	model := fs.String("model", "gemini-3.1-pro-preview", "candidate model")
 	judgeModel := fs.String("judge-model", "gemini-3-flash-preview", "judge model")
 	outPath := fs.String("out", "agent/systeminstruction/evals/results/latest.json", "results output path")

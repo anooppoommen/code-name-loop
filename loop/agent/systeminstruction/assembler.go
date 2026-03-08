@@ -30,7 +30,7 @@ var (
 	initOnce       sync.Once
 )
 
-const defaultVariantFile = "prompts/variants/gemini-coding-strict-optimized.v7.json"
+const defaultVariantFile = "prompts/variants/gemini-coding-strict-optimized.v8.json"
 
 // Get returns the assembled system instruction text.
 func Get() string {

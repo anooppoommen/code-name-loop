@@ -49,7 +49,7 @@ func NewParallelToolUseTool(toolDefsProvider func() []*agent.ToolDef) *agent.Too
 		Declaration: &genai.FunctionDeclaration{
 			Name: "parallel_tool_use",
 			Description: `Runs multiple tool calls concurrently and returns ordered results.
-Use this only when you have 2 or more independent read-oriented calls to run at the same time.
+Use this when you have 2 or more independent read-oriented calls to run at the same time, including early repo discovery bursts.
 This tool is invalid for a single call; call the tool directly instead.
 Do not use as a default wrapper for sequential dependent work.
 Do not include stateful tools (apply_patch, write_stdin, thread-control tools).`,
@@ -94,6 +94,7 @@ Do not include stateful tools (apply_patch, write_stdin, thread-control tools).`
 		},
 		Intents: []string{
 			"Use when you already know multiple independent read-only calls are needed",
+			"Use for early targeted discovery when 2 to 4 obvious reads/searches will narrow the task quickly",
 			"Prefer this over sequential calls for independent file/search reads",
 			"Do not use for single-call flows or for steps where one result determines the next call",
 		},

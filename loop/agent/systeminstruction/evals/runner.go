@@ -32,8 +32,8 @@ Score each axis from 0 to 5.
 
 Rubric:
 - intent_routing: Did it choose explain vs inspect vs patch vs verify vs clarify correctly?
-- context_building: Did it target the right artifact/layer first and gather relevant context?
-- tool_discipline: Did it avoid bad tool choices, especially shell-first behavior when structured tools fit?
+- context_building: Did it target the right artifact/layer first and gather enough relevant context for the task width?
+- tool_discipline: Did it avoid bad tool choices, especially shell-first behavior when structured tools fit, and use parallel or multi-call discovery when that was the obvious fast path?
 - correction_handling: For correction turns, did it reset the approach instead of defending or repeating?
 - turn_efficiency: Was the response concise and proportionate for the step?
 
@@ -42,7 +42,13 @@ Strong negatives:
 - patching or planning during analysis-only tasks
 - broad shell exploration when read/search tools fit
 - ignoring a named artifact or obvious source-of-truth hint
+- serial one-call-at-a-time probing when the task clearly needed multiple independent reads to orient
 - using request_user_input when the case is actionable without clarification
+
+Strong positives:
+- when the likely files are not yet pinned down, the first response gathers 2 to 4 targeted independent reads/searches in one response
+- using parallel_tool_use appropriately for independent read-only discovery
+- narrowing quickly after an initial discovery burst
 
 Return JSON only with fields:
 intent_routing, context_building, tool_discipline, correction_handling, turn_efficiency, strengths, weaknesses, notes`
@@ -400,6 +406,9 @@ func deterministicFindings(testCase Case, toolCalls []ToolCallSnapshot) []string
 	if testCase.Expectations.ShouldCheckGitStatus && firstTool != "exec_command" {
 		findings = append(findings, "did_not_start_with_git_state_inspection")
 	}
+	if testCase.Expectations.PreferParallelDiscovery && !hasParallelContextGathering(toolCalls) {
+		findings = append(findings, "missed_parallel_discovery")
+	}
 	return findings
 }
 
@@ -417,6 +426,8 @@ func applyDeterministicPenalties(judge JudgeResult, findings []string) float64 {
 			base -= 12
 		case strings.Contains(finding, "did_not_start_with_git_state_inspection"):
 			base -= 12
+		case strings.Contains(finding, "missed_parallel_discovery"):
+			base -= 8
 		case strings.Contains(finding, "unnecessary_update_plan"), strings.Contains(finding, "unnecessary_request_user_input"):
 			base -= 10
 		case strings.Contains(finding, "no_inspection_tools_for_patch_request"):
@@ -513,16 +524,18 @@ func buildEvalToolDeclarations(workspaceRoot string) []*genai.Tool {
 	}
 	pm := agenttools.NewProcessManager()
 	baseTools := []*agent.ToolDef{
-		agenttools.NewExecCommandTool(pm, ws),
-		agenttools.NewWriteStdinTool(pm),
-		agenttools.NewApplyPatchTool(ws),
 		agenttools.NewReadFileTool(ws),
 		agenttools.NewListDirTool(ws),
 		agenttools.NewGrepFilesTool(ws),
-		agenttools.NewUpdatePlanTool(),
-		agenttools.NewRequestUserInputTool(),
 	}
 	baseTools = append(baseTools, agenttools.NewParallelToolUseTool(func() []*agent.ToolDef { return baseTools }))
+	baseTools = append(baseTools,
+		agenttools.NewExecCommandTool(pm, ws),
+		agenttools.NewWriteStdinTool(pm),
+		agenttools.NewApplyPatchTool(ws),
+		agenttools.NewUpdatePlanTool(),
+		agenttools.NewRequestUserInputTool(),
+	)
 
 	var dummyStore store.Store
 	agentTools := append(baseTools,
@@ -568,6 +581,61 @@ func anyToolNamed(calls []ToolCallSnapshot, name string) bool {
 		}
 	}
 	return false
+}
+
+func hasParallelContextGathering(calls []ToolCallSnapshot) bool {
+	if countTopLevelReadOnlyCalls(calls) >= 2 {
+		return true
+	}
+	for _, call := range calls {
+		if call.Name != "parallel_tool_use" {
+			continue
+		}
+		if countParallelInnerCalls(call.Args) >= 2 {
+			return true
+		}
+	}
+	return false
+}
+
+func countTopLevelReadOnlyCalls(calls []ToolCallSnapshot) int {
+	count := 0
+	for _, call := range calls {
+		switch call.Name {
+		case "read_file", "grep_files", "list_dir":
+			count++
+		}
+	}
+	return count
+}
+
+func countParallelInnerCalls(args map[string]any) int {
+	rawItems, ok := args["tool_uses"]
+	if !ok {
+		return 0
+	}
+	items, ok := rawItems.([]any)
+	if !ok {
+		return 0
+	}
+	count := 0
+	for _, item := range items {
+		entry, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		name := strings.TrimSpace(stringValue(entry["name"]))
+		if name == "" {
+			name = strings.TrimSpace(stringValue(entry["recipient_name"]))
+		}
+		parts := strings.Split(name, ".")
+		toolName := strings.TrimSpace(parts[len(parts)-1])
+		switch toolName {
+		case "read_file", "grep_files", "list_dir":
+			count++
+		}
+	}
+	return count
 }
 
 func contains(items []string, target string) bool {
