@@ -1,4 +1,4 @@
-import type { ActivityEvent, ActivityKind } from '../types/ui';
+import type { ActivityEvent, ActivityKind, ToolTag } from '../types/ui';
 import {
   asRecord,
   extractMessageText,
@@ -55,6 +55,13 @@ function toolNameMatches(toolName: string, canonical: string): boolean {
     toolName.endsWith(`:${canonical}`) ||
     toolName.endsWith(`.${canonical}`)
   );
+}
+
+function mergeToolTags(existing: ToolTag[] | undefined, incoming: ToolTag[]): ToolTag[] {
+  if (existing && existing.length > 0) {
+    return existing;
+  }
+  return incoming;
 }
 
 export function parseStatusLine(statusText: string): ActivityInput | null {
@@ -283,6 +290,7 @@ export function historyRowsToActivities(items: unknown[]): ActivityEvent[] {
           const callId = getString(metadata, ['call_id', 'callId']);
           const toolName = getString(metadata, ['tool_name']);
           const argsText = getString(metadata, ['args']);
+          const tags = readToolTags(metadata);
           const parsedArgs = parseToolResultPayload(argsText);
           const command = parseToolCommand(toolName, argsText);
           activityRows.push({
@@ -304,6 +312,7 @@ export function historyRowsToActivities(items: unknown[]): ActivityEvent[] {
               callId: callId || undefined,
               command: command || undefined,
               args: parsedArgs,
+              tags,
             },
           });
           if (callId) {
@@ -318,6 +327,7 @@ export function historyRowsToActivities(items: unknown[]): ActivityEvent[] {
           const resultText = getString(metadata, ['result']);
           const errorMsg = getString(metadata, ['error']);
           const argsText = getString(metadata, ['args']);
+          const tags = readToolTags(metadata);
           const parsedArgs = parseToolResultPayload(argsText);
           const summary = summarizeToolBody(toolName, resultText, errorMsg);
           const fallbackBody = success ? text : errorMsg || text;
@@ -350,6 +360,7 @@ export function historyRowsToActivities(items: unknown[]): ActivityEvent[] {
                   command: existing.tool?.command || mergedCommand || undefined,
                   args: existing.tool?.args ?? parsedArgs,
                   payload: parsedPayload,
+                  tags: mergeToolTags(existing.tool?.tags, tags),
                 },
               };
               openToolByCallID.delete(callId);
@@ -380,6 +391,7 @@ export function historyRowsToActivities(items: unknown[]): ActivityEvent[] {
               command: mergedCommand || undefined,
               args: parsedArgs,
               payload: parsedPayload,
+              tags,
             },
           });
           break;
@@ -703,6 +715,16 @@ function userTurnFromMetadata(metadata: Record<string, unknown> | null): Activit
     model: model || undefined,
     thinkingLevel: thinkingLevel || undefined,
   };
+}
+
+function readToolTags(metadata: Record<string, unknown> | null): ToolTag[] {
+  const raw = getField(metadata, ['tool_tags', 'toolTags', 'tags']);
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  return raw
+    .map((item) => (typeof item === 'string' ? item.trim().toLowerCase() : ''))
+    .filter((item): item is ToolTag => item === 'read' || item === 'discovery' || item === 'write');
 }
 
 function appendThoughtChunk(

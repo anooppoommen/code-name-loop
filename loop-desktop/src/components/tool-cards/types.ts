@@ -1,3 +1,5 @@
+import type { ToolTag } from '../../types/ui';
+
 export interface ToolReplyActions {
   canCompose: boolean;
   isSending: boolean;
@@ -58,6 +60,7 @@ export interface CommandToolPayload {
   wallTime: string;
   exitCode: string;
   executedAt: string;
+  tags: ToolTag[];
 }
 
 export interface FileToolPayload {
@@ -67,4 +70,5 @@ export interface FileToolPayload {
   status: CommandToolStatus;
   error: string;
   executedAt: string;
+  tags: ToolTag[];
 }

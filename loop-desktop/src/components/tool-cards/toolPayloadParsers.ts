@@ -134,6 +134,7 @@ export function parseCommandToolPayload(event: ActivityEvent): CommandToolPayloa
     wallTime: parsedOutput.wallTime,
     exitCode: parsedOutput.exitCode,
     executedAt: String(event.timestamp),
+    tags: event.tool?.tags || [],
   };
 }
 
@@ -160,6 +161,7 @@ export function parseFileToolPayload(event: ActivityEvent): FileToolPayload | nu
     status: resolveCommandStatus(event, payloadError, false, false),
     error,
     executedAt: String(event.timestamp),
+    tags: event.tool?.tags || [],
   };
 }
 

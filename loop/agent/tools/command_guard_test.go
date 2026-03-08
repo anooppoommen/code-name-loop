@@ -14,6 +14,8 @@ func TestValidateWorkspaceEditPolicy_BlocksMutatingCommands(t *testing.T) {
 		"cp /tmp/a.ts src/a.ts",
 		"mkdir scripts",
 		"sed -i 's/a/b/' src/app.ts",
+		"git apply patch.diff",
+		"echo boom 2> errors.txt",
 	}
 
 	for _, cmd := range cases {
@@ -47,7 +49,7 @@ func TestValidateWorkspaceEditPolicy_BlocksWorkspaceRedirection(t *testing.T) {
 func TestValidateWorkspaceEditPolicy_AllowsSafeCommands(t *testing.T) {
 	cases := []string{
 		"rg -n \"TODO\" .",
-		"npm run build",
+		"npm run lint",
 		"echo done > /dev/null",
 		"printf 'x' > /tmp/codex-scratch.txt",
 	}

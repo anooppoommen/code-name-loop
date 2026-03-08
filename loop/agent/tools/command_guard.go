@@ -3,20 +3,9 @@ package tools
 import (
 	"context"
 	"fmt"
-	"path/filepath"
-	"regexp"
 	"strings"
-)
 
-var (
-	mutatingCommandRe = regexp.MustCompile(`(?i)(^|[;&|]\s*)(cp|mv|rm|touch|truncate|install|mkdir)\b`)
-	inlineEditRe      = regexp.MustCompile(`(?i)(^|[;&|]\s*)(sed\s+-i|perl\s+-pi)\b`)
-	redirectionRe     = regexp.MustCompile(`\s>+?\s*([^\s;|&]+)`)
-	// These command forms can surface .gitignore-excluded files in bulk output.
-	gitignoreBypassScanRe = regexp.MustCompile(`(?i)(^|[;&|]\s*)(find|tree)\b|(^|[;&|]\s*)ls\b[^|;&\n]*\s-R\b`)
-	// These flags disable ignore behavior when used with common recursive search tools.
-	gitignoreBypassRgFlagsRe = regexp.MustCompile(`(?i)(^|[;&|]\s*)rg\b[^|;&\n]*(--no-ignore(?:-vcs|-parent)?\b|\s-u{1,3}\b)`)
-	gitignoreBypassFdFlagsRe = regexp.MustCompile(`(?i)(^|[;&|]\s*)fd\b[^|;&\n]*(--no-ignore\b|\s-I\b|\s-u{1,3}\b)`)
+	"loop/agent/tools/shellparser"
 )
 
 func validateWorkspaceEditPolicy(command string) error {
@@ -25,23 +14,62 @@ func validateWorkspaceEditPolicy(command string) error {
 		return nil
 	}
 
-	if mutatingCommandRe.MatchString(cmd) || inlineEditRe.MatchString(cmd) {
-		return fmt.Errorf("direct filesystem mutation in shell/exec_command is blocked; use apply_patch directly for workspace edits and do not retry mutation via shell")
+	analysis, err := shellparser.Analyze(command)
+	if err != nil {
+		return fmt.Errorf("failed to parse shell command for workspace edit policy: %w", err)
+	}
+	return validateWorkspaceEditPolicyAnalysis(analysis)
+}
+
+func validateWorkspaceEditPolicyAnalysis(analysis *shellparser.Analysis) error {
+	if analysis == nil {
+		return nil
+	}
+	resolution := shellparser.ResolveAnalysisTargets(analysis, "")
+
+	for _, c := range analysis.Commands {
+		name := strings.ToLower(c.Name)
+		switch name {
+		case "cp", "mv", "rm", "touch", "truncate", "install", "mkdir", "rmdir", "patch", "tee":
+			return fmt.Errorf("direct filesystem mutation in shell/exec_command is blocked; use apply_patch directly for workspace edits and do not retry mutation via shell")
+		case "sed":
+			for _, opt := range c.Options {
+				if opt.Name == "-i" || opt.Name == "--in-place" || strings.HasPrefix(opt.Name, "--in-place=") || strings.HasPrefix(opt.Raw, "-i") {
+					return fmt.Errorf("direct filesystem mutation in shell/exec_command is blocked; use apply_patch directly for workspace edits and do not retry mutation via shell")
+				}
+			}
+		case "perl":
+			for _, arg := range c.Args {
+				if strings.HasPrefix(arg, "-") && strings.Contains(arg, "p") && strings.Contains(arg, "i") {
+					return fmt.Errorf("direct filesystem mutation in shell/exec_command is blocked; use apply_patch directly for workspace edits and do not retry mutation via shell")
+				}
+			}
+		case "git":
+			if gitCommandMutatesWorkspace(c.Args[1:]) {
+				return fmt.Errorf("direct filesystem mutation in shell/exec_command is blocked; use apply_patch directly for workspace edits and do not retry mutation via shell")
+			}
+		}
+
 	}
 
-	matches := redirectionRe.FindAllStringSubmatch(cmd, -1)
-	for _, m := range matches {
-		if len(m) < 2 {
+	for _, unknown := range resolution.UnknownByAccess(shellparser.AccessWrite, shellparser.AccessDelete) {
+		if unknown.Access == shellparser.AccessWrite || unknown.Access == shellparser.AccessDelete {
+			return fmt.Errorf("direct filesystem mutation in shell/exec_command is blocked; use apply_patch directly for workspace edits and do not retry mutation via shell")
+		}
+	}
+
+	for _, target := range resolution.TargetsByAccess(shellparser.AccessWrite, shellparser.AccessDelete) {
+		if target.FromRedirect {
+			sanitized := sanitizeRedirectTarget(target.Raw)
+			if sanitized != "" && sanitized[0] == '&' {
+				continue
+			}
+			if sanitized != "" && sanitized[0] != '&' && !isAllowedRedirectTarget(sanitized) {
+				return fmt.Errorf("writing files via shell redirection is blocked; use apply_patch directly for workspace edits and do not retry with shell redirection")
+			}
 			continue
 		}
-		target := sanitizeRedirectTarget(m[1])
-		if target == "" || target[0] == '&' {
-			continue
-		}
-		if isAllowedRedirectTarget(target) {
-			continue
-		}
-		return fmt.Errorf("writing files via shell redirection is blocked; use apply_patch directly for workspace edits and do not retry with shell redirection")
+		return fmt.Errorf("direct filesystem mutation in shell/exec_command is blocked; use apply_patch directly for workspace edits and do not retry mutation via shell")
 	}
 
 	return nil
@@ -60,49 +88,71 @@ func validateGitIgnoreReadPolicy(
 	if guard == nil {
 		return nil
 	}
-	if gitignoreBypassScanRe.MatchString(cmd) {
-		return fmt.Errorf("command can enumerate .gitignore-excluded paths; use structured tools (list_dir/grep_files/read_file) or rg-based queries that respect .gitignore")
+
+	analysis, err := shellparser.Analyze(command)
+	if err != nil {
+		return fmt.Errorf("failed to parse shell command for .gitignore policy: %w", err)
 	}
-	if gitignoreBypassRgFlagsRe.MatchString(cmd) || gitignoreBypassFdFlagsRe.MatchString(cmd) {
-		return fmt.Errorf("command disables ignore rules; avoid --no-ignore/-u style flags so .gitignore-excluded paths stay out of model context")
+	return validateGitIgnoreReadPolicyAnalysis(ctx, analysis, workdir, guard)
+}
+
+func validateGitIgnoreReadPolicyAnalysis(
+	ctx context.Context,
+	analysis *shellparser.Analysis,
+	workdir string,
+	guard *pathGuard,
+) error {
+	if analysis == nil {
+		return nil
+	}
+	resolution := shellparser.ResolveAnalysisTargets(analysis, workdir)
+
+	for _, c := range analysis.Commands {
+		name := strings.ToLower(c.Name)
+		if name == "find" || name == "tree" {
+			return fmt.Errorf("command can enumerate .gitignore-excluded paths; use structured tools (list_dir/grep_files/read_file) or rg-based queries that respect .gitignore")
+		}
+		if name == "ls" {
+			for _, opt := range c.Options {
+				if strings.Contains(opt.Raw, "R") {
+					return fmt.Errorf("command can enumerate .gitignore-excluded paths; use structured tools (list_dir/grep_files/read_file) or rg-based queries that respect .gitignore")
+				}
+			}
+		}
+		if name == "rg" || name == "fd" {
+			for _, opt := range c.Options {
+				if opt.Raw == "--no-ignore" || opt.Raw == "--no-ignore-vcs" || opt.Raw == "--no-ignore-parent" || opt.Raw == "-u" || opt.Raw == "-uu" || opt.Raw == "-uuu" || opt.Raw == "-I" {
+					return fmt.Errorf("command disables ignore rules; avoid --no-ignore/-u style flags so .gitignore-excluded paths stay out of model context")
+				}
+			}
+		}
 	}
 
-	for _, token := range extractPathLikeTokens(cmd) {
-		candidate := token
-		if !filepath.IsAbs(candidate) {
-			candidate = filepath.Join(workdir, candidate)
+	for _, target := range resolution.TargetsByAccess(shellparser.AccessRead, shellparser.AccessList, shellparser.AccessSearch, shellparser.AccessMetadata) {
+		candidate := target.Path
+		if candidate == "" {
+			candidate = target.Raw
+		}
+		if candidate == "" {
+			continue
 		}
 		if err := guard.rejectIfGitIgnored(ctx, candidate, false); err != nil {
-			return fmt.Errorf("command targets a .gitignore-excluded path (%s); use include_ignored only when the user explicitly asks for ignored files", token)
+			return fmt.Errorf("command targets a .gitignore-excluded path (%s); use include_ignored only when the user explicitly asks for ignored files", target.Raw)
 		}
 	}
 	return nil
 }
 
-func extractPathLikeTokens(command string) []string {
-	rawTokens := strings.Fields(command)
-	if len(rawTokens) == 0 {
-		return nil
+func gitCommandMutatesWorkspace(args []string) bool {
+	if len(args) == 0 {
+		return false
 	}
-	tokens := make([]string, 0, len(rawTokens))
-	for _, raw := range rawTokens {
-		token := strings.TrimSpace(raw)
-		token = strings.Trim(token, `"'()[]{},`)
-		if token == "" {
-			continue
-		}
-		if strings.HasPrefix(token, "-") || strings.HasPrefix(token, "$") {
-			continue
-		}
-		if strings.ContainsAny(token, "*?[]{}") {
-			continue
-		}
-		if !(filepath.IsAbs(token) || strings.HasPrefix(token, "./") || strings.HasPrefix(token, "../") || strings.Contains(token, "/")) {
-			continue
-		}
-		tokens = append(tokens, token)
+	switch strings.ToLower(strings.TrimSpace(args[0])) {
+	case "apply", "checkout", "restore", "clean", "reset", "commit", "merge", "rebase", "cherry-pick", "stash", "switch", "add", "mv", "rm":
+		return true
+	default:
+		return false
 	}
-	return dedupeStrings(tokens)
 }
 
 func sanitizeRedirectTarget(raw string) string {

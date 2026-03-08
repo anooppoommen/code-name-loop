@@ -1,5 +1,5 @@
 import type { LoopStreamPacket } from '../electron';
-import type { ActivityEvent } from '../types/ui';
+import type { ActivityEvent, ToolTag } from '../types/ui';
 import {
   type ActivityInput,
   parseStatusLine,
@@ -33,6 +33,13 @@ export interface TurnEventHandlerDeps {
       | Partial<ConversationLiveState>
       | ((prev: ConversationLiveState) => Partial<ConversationLiveState>),
   ) => void;
+}
+
+function mergeToolTags(existing: ToolTag[] | undefined, incoming: ToolTag[]): ToolTag[] {
+  if (existing && existing.length > 0) {
+    return existing;
+  }
+  return incoming;
 }
 
 export function createHandleTurnEvent(deps: TurnEventHandlerDeps) {
@@ -233,6 +240,7 @@ export function createHandleTurnEvent(deps: TurnEventHandlerDeps) {
       const toolName = getString(toolCall, ['name']) || 'unknown tool';
       const callID = getString(toolCall, ['call_id']);
       const args = getString(toolCall, ['args']);
+      const tags = readToolTags(toolCall);
       const command = parseToolCommand(toolName, args);
       const parsedArgs = parseToolResultPayload(args);
       const eventID = pushActivity({
@@ -245,6 +253,7 @@ export function createHandleTurnEvent(deps: TurnEventHandlerDeps) {
           callId: callID || undefined,
           command: command || undefined,
           args: parsedArgs,
+          tags,
         },
       });
       if (callID) {
@@ -269,6 +278,7 @@ export function createHandleTurnEvent(deps: TurnEventHandlerDeps) {
       const errorText = getString(toolResult, ['error']);
       const argsText = getString(toolResult, ['args']);
       const callID = getString(toolResult, ['call_id']);
+      const tags = readToolTags(toolResult);
       const summary = summarizeToolBody(toolName, resultText, errorText);
       const parsedPayload = parseToolResultPayload(resultText);
       const parsedArgs = parseToolResultPayload(argsText);
@@ -291,6 +301,7 @@ export function createHandleTurnEvent(deps: TurnEventHandlerDeps) {
             error: errorText || undefined,
             args: event.tool?.args ?? parsedArgs,
             payload: parsedPayload,
+            tags: mergeToolTags(event.tool?.tags, tags),
           },
           streaming: false,
         }));
@@ -315,6 +326,7 @@ export function createHandleTurnEvent(deps: TurnEventHandlerDeps) {
             error: errorText || undefined,
             args: parsedArgs,
             payload: parsedPayload,
+            tags,
           },
         });
       }
@@ -505,4 +517,14 @@ export function createHandleStreamPacket(deps: StreamPacketHandlerDeps) {
       finalizeTurn(true, conversationId);
     }
   };
+}
+
+function readToolTags(record: Record<string, unknown> | null): ToolTag[] {
+  const raw = getField(record, ['tags', 'tool_tags', 'toolTags']);
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  return raw
+    .map((item) => (typeof item === 'string' ? item.trim().toLowerCase() : ''))
+    .filter((item): item is ToolTag => item === 'read' || item === 'discovery' || item === 'write');
 }

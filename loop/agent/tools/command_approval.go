@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path"
 	"sort"
 	"strings"
 	"sync"
 	"time"
-	"unicode"
+
+	"loop/agent/tools/shellparser"
 
 	"github.com/google/uuid"
 )
@@ -337,101 +339,86 @@ func isSafeReadonlyCommand(command string) bool {
 	if cmd == "" {
 		return false
 	}
-	if strings.Contains(cmd, "||") || strings.Contains(cmd, ";") {
-		return false
-	}
-	if strings.ContainsAny(cmd, "`$|<>[]{}()\n\r") {
-		return false
-	}
-	withoutAnd := strings.ReplaceAll(cmd, "&&", "")
-	if strings.Contains(withoutAnd, "&") {
+
+	analysis, err := shellparser.Analyze(command)
+	if err != nil || len(analysis.Commands) == 0 {
 		return false
 	}
 
-	segments := strings.Split(cmd, "&&")
-	if len(segments) == 0 {
+	if analysis.HasPipelines || analysis.HasSequentialLists || analysis.HasBackground || analysis.HasSubshells || analysis.HasCommandSubst || analysis.HasProcessSubst || analysis.HasParamExpansions || analysis.HasExtendedGlobs || analysis.HasHeredocs {
 		return false
 	}
-	for _, segment := range segments {
-		tokens, ok := splitSafeCommandTokens(segment)
-		if !ok || !isAllowlistedReadonlySegment(tokens) {
+
+	for _, cmd := range analysis.Commands {
+		if cmd.Negated || len(cmd.Env) > 0 || len(cmd.Redirects) > 0 {
+			return false
+		}
+		if cmd.ChainOperator != "" && cmd.ChainOperator != "&&" {
+			return false
+		}
+		if !isAllowlistedReadonlyCommand(cmd) {
 			return false
 		}
 	}
 	return true
 }
 
-func splitSafeCommandTokens(segment string) ([]string, bool) {
-	trimmed := strings.TrimSpace(segment)
-	if trimmed == "" {
-		return nil, false
-	}
-	if strings.ContainsAny(trimmed, `'"\\`) {
-		return nil, false
-	}
-	tokens := strings.Fields(trimmed)
-	if len(tokens) == 0 {
-		return nil, false
-	}
-	for _, token := range tokens {
-		if !isSafeToken(token) {
-			return nil, false
-		}
-	}
-	return tokens, true
-}
-
-func isSafeToken(token string) bool {
-	if token == "" {
+func isAllowlistedReadonlyCommand(cmd *shellparser.Command) bool {
+	if cmd == nil || cmd.Name == "" {
 		return false
 	}
-	for _, r := range token {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
-			continue
-		}
-		switch r {
-		case '-', '_', '.', '/', '@', ':', '+', ',', '=', '%', '~':
-			continue
-		default:
-			return false
-		}
-	}
-	return true
-}
-
-func isAllowlistedReadonlySegment(tokens []string) bool {
-	if len(tokens) == 0 {
-		return false
-	}
-	switch tokens[0] {
+	switch cmd.Name {
 	case "pwd":
-		return len(tokens) == 1
+		return len(cmd.Args) == 1
 	case "ls", "cat", "head", "tail", "wc", "stat", "file", "rg", "grep":
-		return allReadonlyArgs(tokens[1:])
+		return allReadonlyArgs(cmd.Arguments[1:])
 	case "git":
-		return isAllowlistedGitReadonly(tokens[1:])
+		return isAllowlistedGitReadonly(cmd.Arguments[1:])
 	default:
 		return false
 	}
 }
 
-func allReadonlyArgs(args []string) bool {
+func allReadonlyArgs(args []shellparser.Argument) bool {
 	for _, arg := range args {
-		if arg == "--" || strings.HasPrefix(arg, "-") {
+		switch arg.Kind {
+		case shellparser.ArgumentOption, shellparser.ArgumentOptionTerminator:
 			continue
+		case shellparser.ArgumentOptionValue, shellparser.ArgumentPositional:
+			if isUnsafePathArg(arg.Raw) {
+				return false
+			}
+		default:
+			if arg.Raw == "" {
+				return false
+			}
 		}
-		if isAbsolutePathArg(arg) {
+		if strings.ContainsAny(arg.Raw, "*?[]{}") {
 			return false
 		}
 	}
 	return true
 }
 
-func isAllowlistedGitReadonly(args []string) bool {
+func isAllowlistedGitReadonly(args []shellparser.Argument) bool {
 	if len(args) == 0 {
 		return false
 	}
-	subcommand := strings.ToLower(strings.TrimSpace(args[0]))
+
+	var tokens []string
+	for _, arg := range args {
+		switch arg.Kind {
+		case shellparser.ArgumentOption, shellparser.ArgumentOptionTerminator:
+			tokens = append(tokens, arg.Raw)
+		case shellparser.ArgumentOptionValue, shellparser.ArgumentPositional:
+			tokens = append(tokens, arg.Raw)
+		}
+	}
+	if len(tokens) == 0 {
+		return false
+	}
+
+	subcommand := strings.ToLower(strings.TrimSpace(tokens[0]))
 	switch subcommand {
 	case "status", "diff", "log", "show", "rev-parse", "branch", "ls-files":
 		// allowed
@@ -439,31 +426,51 @@ func isAllowlistedGitReadonly(args []string) bool {
 		return false
 	}
 
-	for _, arg := range args[1:] {
+	for _, arg := range tokens[1:] {
 		if arg == "--" {
 			continue
 		}
 		lower := strings.ToLower(arg)
-		if lower == "-c" ||
+		if lower == "-c" || strings.HasPrefix(lower, "-c=") ||
+			arg == "-C" || strings.HasPrefix(arg, "-C=") ||
 			strings.HasPrefix(lower, "--config-env") ||
 			strings.HasPrefix(lower, "--exec-path") ||
 			strings.HasPrefix(lower, "--git-dir") ||
-			strings.HasPrefix(lower, "--work-tree") {
+			strings.HasPrefix(lower, "--work-tree") ||
+			strings.HasPrefix(lower, "--super-prefix") {
 			return false
 		}
-		if isAbsolutePathArg(arg) {
+		if isUnsafePathArg(arg) {
 			return false
 		}
 	}
 	return true
 }
 
+func isUnsafePathArg(arg string) bool {
+	if arg == "" {
+		return false
+	}
+	if strings.HasPrefix(arg, "~") {
+		return true
+	}
+	if isAbsolutePathArg(arg) {
+		return true
+	}
+	normalized := strings.ReplaceAll(arg, `\`, "/")
+	cleaned := path.Clean(normalized)
+	return cleaned == ".." || strings.HasPrefix(cleaned, "../")
+}
+
 func isAbsolutePathArg(arg string) bool {
 	if strings.HasPrefix(arg, "/") || strings.HasPrefix(arg, `\\`) {
 		return true
 	}
-	if len(arg) >= 3 && unicode.IsLetter(rune(arg[0])) && arg[1] == ':' && (arg[2] == '\\' || arg[2] == '/') {
-		return true
+	if len(arg) >= 3 {
+		drive := arg[0]
+		if ((drive >= 'a' && drive <= 'z') || (drive >= 'A' && drive <= 'Z')) && arg[1] == ':' && (arg[2] == '\\' || arg[2] == '/') {
+			return true
+		}
 	}
 	return false
 }

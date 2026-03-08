@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 
 	"loop/agent/systeminstruction"
+	"loop/agent/toolmeta"
 	"loop/checkpoints"
 	"loop/gitcheckpoints"
 	"loop/models"
@@ -571,6 +572,7 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 			if fc.Name != "apply_patch" {
 				argsStr = truncateJSONTextValues(argsStr, 2000)
 			}
+			toolTags := toolmeta.Classify(fc.Name, fc.Args)
 
 			ch <- TurnEvent{
 				Kind: EventToolCallStart,
@@ -578,6 +580,7 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 					CallID: fc.CallID,
 					Name:   fc.Name,
 					Args:   argsStr,
+					Tags:   toolTags,
 				},
 			}
 			s.emitUIEvent(ctx, models.UIEventKindToolStart,
@@ -586,6 +589,7 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 					"call_id":   fc.CallID,
 					"tool_name": fc.Name,
 					"args":      argsStr,
+					"tool_tags": toolTags,
 					"iteration": iteration,
 					"index":     i + 1,
 					"total":     len(functionCalls),
@@ -628,6 +632,7 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 			}
 
 			errorText := errorString(result.Err)
+			toolTags := toolmeta.Classify(result.Name, toolRequests[i].Args)
 			ch <- TurnEvent{
 				Kind: EventToolResult,
 				ToolResult: &ToolResultEvent{
@@ -636,6 +641,7 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 					Success: result.Err == nil,
 					Result:  resultText,
 					Error:   errorText,
+					Tags:    toolTags,
 				},
 			}
 			statusText := summarizeToolResultStatus(result, i+1, len(results))
@@ -647,6 +653,7 @@ func (t *Turn) runLoop(ctx context.Context, ch chan<- TurnEvent) {
 					"success":   result.Err == nil,
 					"error":     errorText,
 					"result":    resultText,
+					"tool_tags": toolTags,
 					"iteration": iteration,
 					"index":     i + 1,
 					"total":     len(results),

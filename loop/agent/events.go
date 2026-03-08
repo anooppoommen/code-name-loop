@@ -91,16 +91,18 @@ type ToolCallEvent struct {
 	CallID string `json:"call_id"`
 	Name   string `json:"name"`
 	// Args is a summarized argument payload for UI display parity between live SSE and persisted timeline.
-	Args string `json:"args,omitempty"`
+	Args string   `json:"args,omitempty"`
+	Tags []string `json:"tags,omitempty"`
 }
 
 // ToolResultEvent represents the result of executing a tool call.
 type ToolResultEvent struct {
-	CallID  string `json:"call_id"`
-	Name    string `json:"name"`
-	Success bool   `json:"success"`
-	Result  string `json:"result,omitempty"`
-	Error   string `json:"error,omitempty"`
+	CallID  string   `json:"call_id"`
+	Name    string   `json:"name"`
+	Success bool     `json:"success"`
+	Result  string   `json:"result,omitempty"`
+	Error   string   `json:"error,omitempty"`
+	Tags    []string `json:"tags,omitempty"`
 }
 
 // StatusEvent represents a lightweight progress update during long turns.

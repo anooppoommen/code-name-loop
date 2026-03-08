@@ -3,6 +3,7 @@ export type ThinkingLevel = 'minimal' | 'low' | 'medium' | 'high';
 export type ComposerModel = 'gemini-3.1-pro-preview' | 'gemini-3-flash-preview' | 'gemini-3-pro-preview';
 
 export type ToolPhase = 'start' | 'result';
+export type ToolTag = 'read' | 'discovery' | 'write';
 
 export interface ToolActivityMeta {
   callId?: string;
@@ -15,6 +16,7 @@ export interface ToolActivityMeta {
   command?: string;
   args?: Record<string, unknown> | null;
   payload?: Record<string, unknown> | null;
+  tags?: ToolTag[];
 }
 
 export interface ActivityEvent {

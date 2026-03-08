@@ -1225,6 +1225,9 @@ func TestSessionToolCallArgsTruncationPreservesJSON(t *testing.T) {
 	if !strings.Contains(pathValue, "...(truncated)") {
 		t.Fatal("expected args text value to be truncated")
 	}
+	if len(tc.ToolCall.Tags) != 1 || tc.ToolCall.Tags[0] != "read" {
+		t.Fatalf("tool call tags = %#v, want [\"read\"]", tc.ToolCall.Tags)
+	}
 
 	evts, err := s.UIEvents().GetByConversation(ctx, conv.ID)
 	if err != nil {
@@ -1242,6 +1245,10 @@ func TestSessionToolCallArgsTruncationPreservesJSON(t *testing.T) {
 		}
 		if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
 			t.Fatalf("persisted tool args should remain valid json, got error: %v", err)
+		}
+		tags, _ := evt.Metadata["tool_tags"].([]any)
+		if len(tags) != 1 || tags[0] != "read" {
+			t.Fatalf("persisted tool tags = %#v, want [\"read\"]", evt.Metadata["tool_tags"])
 		}
 		foundPersisted = true
 		break

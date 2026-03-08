@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { memo, useDeferredValue, useEffect, useMemo, useState } from 'react';
 import type { CommandToolPayload } from './types';
 import { COLLAPSIBLE_SPRING, useThrottledText } from '../activity-feed/ActivityMotion';
+import { ToolTagBadges } from './ToolTagBadges';
 
 const GEIST_MONO_STACK = '"Geist Mono","Geist",ui-monospace,SFMono-Regular,Menlo,monospace';
 
@@ -83,6 +84,7 @@ export const CommandToolCard = memo(function CommandToolCard({ payload }: { payl
       <div className="border-b border-loop-600/50 flex items-center justify-between gap-3 px-4 py-3">
         <div className=" group relative flex min-w-0 flex-1 items-center gap-2">
           <div className="flex shrink-0 items-center gap-2">
+            <ToolTagBadges tags={payload.tags} />
             <span
               className="text-[11px] font-semibold tracking-wide text-loop-200"
               style={{ fontFamily: GEIST_MONO_STACK }}

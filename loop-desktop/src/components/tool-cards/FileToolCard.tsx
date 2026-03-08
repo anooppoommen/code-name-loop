@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { memo, useState } from 'react';
 import type { FileToolPayload } from './types';
 import { COLLAPSIBLE_SPRING } from '../activity-feed/ActivityMotion';
+import { ToolTagBadges } from './ToolTagBadges';
 
 const GEIST_MONO_STACK = '"Geist Mono","Geist",ui-monospace,SFMono-Regular,Menlo,monospace';
 
@@ -103,6 +104,7 @@ export const FileToolCard = memo(function FileToolCard({ payload }: { payload: F
           <span className="text-[13px] font-semibold tracking-wide text-blue-400 whitespace-nowrap" style={{ fontFamily: GEIST_MONO_STACK }}>
             {info.action}
           </span>
+          <ToolTagBadges tags={payload.tags} />
           
           {info.path && (
             <div className="flex items-center gap-1 min-w-0">
