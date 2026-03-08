@@ -573,12 +573,6 @@ export const ActivityAppendGrow = memo(function ActivityAppendGrow(
     ...props
   }: ActivityAppendGrowProps,
 ) {
-  // Most feed rows are static once mounted. For those rows, bypass the measured
-  // box entirely so we don't pay layout/effect/ResizeObserver overhead.
-  if (!animate && !watch) {
-    return <div {...props}>{children}</div>;
-  }
-
   return (
     <ActivityMeasuredBox animate={animate} watch={watch} fade={fade} {...props}>
       {children}
