@@ -16,6 +16,8 @@ func TestValidateWorkspaceEditPolicy_BlocksMutatingCommands(t *testing.T) {
 		"sed -i 's/a/b/' src/app.ts",
 		"git apply patch.diff",
 		"echo boom 2> errors.txt",
+		"cd loop-desktop && npm run format",
+		"cd loop-desktop && npm install",
 	}
 
 	for _, cmd := range cases {
@@ -52,6 +54,13 @@ func TestValidateWorkspaceEditPolicy_AllowsSafeCommands(t *testing.T) {
 		"npm run lint",
 		"echo done > /dev/null",
 		"printf 'x' > /tmp/codex-scratch.txt",
+		"cd loop && go build ./handlers",
+		"go build -n ./loop/handlers",
+		"cd loop && go build -o /dev/null ./...",
+		"go build -o /tmp/loop-build ./...",
+		"cd loop-desktop && npm run build",
+		"cargo build --manifest-path rust/Cargo.toml --target-dir rust/target",
+		"make -C buildsys -f Makefile build",
 	}
 
 	for _, cmd := range cases {

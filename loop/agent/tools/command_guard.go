@@ -52,24 +52,50 @@ func validateWorkspaceEditPolicyAnalysis(analysis *shellparser.Analysis) error {
 
 	}
 
-	for _, unknown := range resolution.UnknownByAccess(shellparser.AccessWrite, shellparser.AccessDelete) {
-		if unknown.Access == shellparser.AccessWrite || unknown.Access == shellparser.AccessDelete {
-			return fmt.Errorf("direct filesystem mutation in shell/exec_command is blocked; use apply_patch directly for workspace edits and do not retry mutation via shell")
-		}
-	}
+	for _, ct := range resolution.Commands {
+		allowDerivedArtifactWrites := commandAllowsDerivedArtifactWrites(ct.Command)
 
-	for _, target := range resolution.TargetsByAccess(shellparser.AccessWrite, shellparser.AccessDelete) {
-		if target.FromRedirect {
-			sanitized := sanitizeRedirectTarget(target.Raw)
-			if sanitized != "" && sanitized[0] == '&' {
+		for _, unknown := range ct.Unknown {
+			switch unknown.Access {
+			case shellparser.AccessWrite:
+				if allowDerivedArtifactWrites {
+					continue
+				}
+				return fmt.Errorf("direct filesystem mutation in shell/exec_command is blocked; use apply_patch directly for workspace edits and do not retry mutation via shell")
+			case shellparser.AccessDelete:
+				return fmt.Errorf("direct filesystem mutation in shell/exec_command is blocked; use apply_patch directly for workspace edits and do not retry mutation via shell")
+			}
+		}
+
+		for _, target := range ct.Targets {
+			if target.Access != shellparser.AccessWrite && target.Access != shellparser.AccessDelete {
 				continue
 			}
-			if sanitized != "" && sanitized[0] != '&' && !isAllowedRedirectTarget(sanitized) {
-				return fmt.Errorf("writing files via shell redirection is blocked; use apply_patch directly for workspace edits and do not retry with shell redirection")
+
+			candidate := target.Path
+			if candidate == "" {
+				candidate = sanitizeRedirectTarget(target.Raw)
 			}
-			continue
+			if target.FromRedirect {
+				sanitized := sanitizeRedirectTarget(target.Raw)
+				if sanitized != "" && sanitized[0] == '&' {
+					continue
+				}
+				if sanitized != "" && sanitized[0] != '&' && !isAllowedNonWorkspaceWriteTarget(sanitized) {
+					return fmt.Errorf("writing files via shell redirection is blocked; use apply_patch directly for workspace edits and do not retry with shell redirection")
+				}
+				continue
+			}
+			if target.Access == shellparser.AccessWrite {
+				if candidate != "" && isAllowedNonWorkspaceWriteTarget(candidate) {
+					continue
+				}
+				if allowDerivedArtifactWrites {
+					continue
+				}
+			}
+			return fmt.Errorf("direct filesystem mutation in shell/exec_command is blocked; use apply_patch directly for workspace edits and do not retry mutation via shell")
 		}
-		return fmt.Errorf("direct filesystem mutation in shell/exec_command is blocked; use apply_patch directly for workspace edits and do not retry mutation via shell")
 	}
 
 	return nil
@@ -161,7 +187,161 @@ func sanitizeRedirectTarget(raw string) string {
 	return trimmed
 }
 
-func isAllowedRedirectTarget(path string) bool {
+func commandAllowsDerivedArtifactWrites(cmd *shellparser.Command) bool {
+	if cmd == nil {
+		return false
+	}
+
+	switch strings.ToLower(strings.TrimSpace(cmd.Name)) {
+	case "go":
+		subcmd, _ := splitGoSubcommandForPolicy(cmd.Args[1:])
+		switch subcmd {
+		case "build", "run", "test", "vet":
+			return true
+		}
+	case "cargo":
+		subcmd, _ := splitSubcommandForPolicy(cmd.Args[1:])
+		switch subcmd {
+		case "bench", "build", "check", "clippy", "doc", "run", "rustc", "test":
+			return true
+		}
+	case "npm", "pnpm", "yarn", "bun":
+		return packageManagerAllowsDerivedArtifactWrites(cmd.Args[1:])
+	case "make", "gmake", "just":
+		return taskRunnerAllowsDerivedArtifactWrites(cmd.Args[1:])
+	}
+
+	return false
+}
+
+func splitGoSubcommandForPolicy(args []string) (string, []string) {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "-C":
+			i++
+		case strings.HasPrefix(arg, "-C="):
+		case strings.HasPrefix(arg, "-"):
+		default:
+			return strings.ToLower(arg), args[i+1:]
+		}
+	}
+	return "", nil
+}
+
+func splitSubcommandForPolicy(args []string) (string, []string) {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			break
+		}
+		if strings.HasPrefix(arg, "-") {
+			if optionLikelyConsumesValueForPolicy(arg) && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				i++
+			}
+			continue
+		}
+		return strings.ToLower(arg), args[i+1:]
+	}
+	return "", nil
+}
+
+func firstNonFlagArgForPolicy(args []string) string {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			if i+1 < len(args) {
+				return args[i+1]
+			}
+			return ""
+		}
+		if strings.HasPrefix(arg, "-") {
+			if optionLikelyConsumesValueForPolicy(arg) && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				i++
+			}
+			continue
+		}
+		return arg
+	}
+	return ""
+}
+
+func optionLikelyConsumesValueForPolicy(arg string) bool {
+	if strings.Contains(arg, "=") {
+		return false
+	}
+	switch arg {
+	case "-C", "-f", "-d", "-w", "--cwd", "--dir", "--prefix", "--manifest-path", "--target-dir", "--out-dir", "--outfile", "--justfile", "--file":
+		return true
+	default:
+		return false
+	}
+}
+
+func packageManagerAllowsDerivedArtifactWrites(args []string) bool {
+	subcmd, rest := splitSubcommandForPolicy(args)
+	switch subcmd {
+	case "run", "run-script":
+		return nameImpliesDerivedArtifactWrites(firstNonFlagArgForPolicy(rest))
+	case "build":
+		return true
+	default:
+		return false
+	}
+}
+
+func taskRunnerAllowsDerivedArtifactWrites(args []string) bool {
+	goals := taskRunnerGoalsForPolicy(args)
+	if len(goals) == 0 {
+		return false
+	}
+	for _, goal := range goals {
+		if !nameImpliesDerivedArtifactWrites(goal) {
+			return false
+		}
+	}
+	return true
+}
+
+func taskRunnerGoalsForPolicy(args []string) []string {
+	var goals []string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			goals = append(goals, args[i+1:]...)
+			break
+		}
+		if strings.HasPrefix(arg, "-") {
+			if optionLikelyConsumesValueForPolicy(arg) && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				i++
+			}
+			continue
+		}
+		goals = append(goals, arg)
+	}
+	return goals
+}
+
+func nameImpliesDerivedArtifactWrites(name string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(name))
+	switch {
+	case normalized == "":
+		return false
+	case strings.Contains(normalized, "build"),
+		strings.Contains(normalized, "bundle"),
+		strings.Contains(normalized, "compile"),
+		strings.Contains(normalized, "generate"),
+		strings.Contains(normalized, "dist"),
+		strings.Contains(normalized, "release"),
+		strings.Contains(normalized, "deploy"),
+		strings.Contains(normalized, "pack"):
+		return true
+	default:
+		return false
+	}
+}
+
+func isAllowedNonWorkspaceWriteTarget(path string) bool {
 	switch {
 	case path == "/dev/null":
 		return true
