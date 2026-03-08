@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef } from 'react';
 import type { LoopStreamPacket } from '../electron';
 import type { ActivityEvent } from '../types/ui';
 import type { ActivityInput } from '../utils/activityTimeline';
-import { annotateActivitiesWithPendingApprovals } from './useLoopDesktop.helpers';
 import { createHandleStreamPacket, createHandleTurnEvent } from './useLoopDesktop.stream';
 import type { ConversationLiveState } from './useLoopDesktop.types';
 import { useConversationStore } from '../stores/conversationStore';
@@ -13,20 +12,17 @@ import { useUiPrefsStore } from '../stores/uiPrefsStore';
 import { useStreamingStore, activeStreams } from '../stores/streamingStore';
 import { useCommandApprovalStore } from '../stores/commandApprovalStore';
 import { useNoticeStore } from '../stores/noticeStore';
+import { annotateActivitiesWithPendingApprovals } from '../stores/activityStore.helpers';
+import {
+  clearConversationPipeline,
+  getConversationEvents,
+  replaceConversationEvents,
+  syncConversationPendingApprovals,
+  updateConversationEvent,
+  upsertConversationEvent,
+} from '../stores/activityPipeline';
 
 const EMPTY_ACTIVITY_IDS: string[] = [];
-
-function sortEvents(events: ActivityEvent[]): ActivityEvent[] {
-  return [...events].sort((left, right) => {
-    if (left.sequenceNo !== right.sequenceNo) {
-      return left.sequenceNo - right.sequenceNo;
-    }
-    if (left.timestamp !== right.timestamp) {
-      return left.timestamp - right.timestamp;
-    }
-    return left.id.localeCompare(right.id);
-  });
-}
 
 export interface UseActivitiesReturn {
   activities: ActivityEvent[];
@@ -102,22 +98,11 @@ export function useActivities(): UseActivitiesReturn {
 
   // ── Annotation sync effect ─────────────────────────────
   useEffect(() => {
-    const annotatedActivities = annotateActivitiesWithPendingApprovals(
-      rawActivities,
-      pendingApprovalsForSelectedConversation,
-    );
-    const eventStore = useEventStore.getState();
-
-    for (const annotatedEvent of annotatedActivities) {
-      const currentEvent = eventStore.events[annotatedEvent.id];
-      const currentWaitingApproval = currentEvent?.tool?.waitingApproval ?? false;
-      const nextWaitingApproval = annotatedEvent.tool?.waitingApproval ?? false;
-      if (currentWaitingApproval === nextWaitingApproval) {
-        continue;
-      }
-      eventStore.updateEvent(annotatedEvent.id, () => annotatedEvent);
+    if (!selectedConversationId) {
+      return;
     }
-  }, [pendingApprovalsForSelectedConversation, rawActivities]);
+    syncConversationPendingApprovals(selectedConversationId, pendingApprovalsForSelectedConversation);
+  }, [pendingApprovalsForSelectedConversation, rawActivities, selectedConversationId]);
 
   // ── Core activity operations ───────────────────────────
   const getConversationLiveState = useCallback((conversationId: string): ConversationLiveState => {
@@ -141,20 +126,13 @@ export function useActivities(): UseActivitiesReturn {
 
   const replaceConversationActivities = useCallback((conversationId: string, events: ActivityEvent[]): void => {
     if (!conversationId) return;
-    const normalized = sortEvents(
-      events.map((event, index) => ({
-        ...event,
-        conversationId,
-        sequenceNo: Number.isFinite(event.sequenceNo) ? event.sequenceNo : index + 1,
-      })),
-    );
-    useConversationStore.getState().replaceConversationEvents(conversationId, normalized);
+    replaceConversationEvents(conversationId, events);
   }, []);
 
   const updateConversationActivities = useCallback(
     (conversationId: string, updater: (events: ActivityEvent[]) => ActivityEvent[]): void => {
       if (!conversationId) return;
-      const currentEvents = useConversationStore.getState().getConversationEvents(conversationId);
+      const currentEvents = getConversationEvents(conversationId);
       replaceConversationActivities(conversationId, updater(currentEvents));
     },
     [replaceConversationActivities],
@@ -184,14 +162,14 @@ export function useActivities(): UseActivitiesReturn {
       streaming: input.streaming,
     };
 
-    useConversationStore.getState().upsertConversationEvent(event);
+    upsertConversationEvent(event);
     return event.id;
   }, [selectedConversationIdRef]);
 
   const mutateActivity = useCallback((id: string, transform: (event: ActivityEvent) => ActivityEvent): void => {
     const currentEvent = useEventStore.getState().events[id];
     if (!currentEvent) return;
-    useEventStore.getState().updateEvent(id, transform);
+    updateConversationEvent(id, transform);
   }, []);
 
   const appendStreamingText = useCallback(
@@ -288,7 +266,7 @@ export function useActivities(): UseActivitiesReturn {
       setCurrentStatus('');
       return;
     }
-    useConversationStore.getState().clearConversation(conversationId);
+    clearConversationPipeline(conversationId);
     usePatchRevertStore.getState().clearConversation(conversationId);
     setCurrentStatus('');
   }, [selectedConversationIdRef, setCurrentStatus]);

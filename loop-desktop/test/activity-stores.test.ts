@@ -3,8 +3,15 @@ import test from 'node:test';
 
 import type { ActivityEvent } from '../src/types/ui.ts';
 import { useConversationStore } from '../src/stores/conversationStore.ts';
+import { useEventStore } from '../src/stores/eventStore.ts';
 import { buildActivityGroups } from '../src/stores/groupStore.ts';
+import { useGroupStore } from '../src/stores/groupStore.ts';
 import { usePatchRevertStore } from '../src/stores/patchRevertStore.ts';
+import {
+  replaceConversationEvents,
+  updateConversationEvent,
+  upsertConversationEvent,
+} from '../src/stores/activityPipeline.ts';
 import { buildRenderGroups } from '../src/utils/activityRenderGroups.ts';
 import { buildAssistantPatchContext } from '../src/utils/patchActivityState.ts';
 import { historyRowsToActivities } from '../src/utils/activityTimeline.ts';
@@ -24,6 +31,12 @@ function event(overrides: Partial<ActivityEvent> & Pick<ActivityEvent, 'id' | 'c
     streaming: false,
     ...overrides,
   };
+}
+
+function resetActivityStores(): void {
+  useConversationStore.setState({ conversations: {} });
+  useEventStore.setState({ events: {} });
+  useGroupStore.setState({ groupsByConversation: {} });
 }
 
 test('buildActivityGroups uses sequence order and user messages split groups', () => {
@@ -56,10 +69,9 @@ test('buildActivityGroups keeps pre-user events in the prior sequence bucket whe
 });
 
 test('conversation store advances next sequence from replaced events and explicit reservations', () => {
-  useConversationStore.setState({ events: {}, conversations: {}, groupsByConversation: {} });
-  const store = useConversationStore.getState();
+  resetActivityStores();
 
-  store.replaceConversationEvents('conv-1', [
+  replaceConversationEvents('conv-1', [
     event({ id: 'user-1', conversationId: 'conv-1', sequenceNo: 1, kind: 'user', title: 'user', timestamp: 1 }),
     event({ id: 'assistant-1', conversationId: 'conv-1', sequenceNo: 3, kind: 'assistant', title: 'assistant', timestamp: 3 }),
   ]);
@@ -71,49 +83,50 @@ test('conversation store advances next sequence from replaced events and explici
 });
 
 test('conversation store keeps ordering and groups in sync when events are inserted incrementally', () => {
-  useConversationStore.setState({ events: {}, conversations: {}, groupsByConversation: {} });
+  resetActivityStores();
   const store = useConversationStore.getState();
 
-  store.upsertConversationEvent(
+  upsertConversationEvent(
     event({ id: 'assistant-1', conversationId: 'conv-1', sequenceNo: 3, kind: 'assistant', title: 'assistant', timestamp: 3 }),
   );
-  store.upsertConversationEvent(
+  upsertConversationEvent(
     event({ id: 'user-1', conversationId: 'conv-1', sequenceNo: 1, kind: 'user', title: 'user', timestamp: 1 }),
   );
-  store.upsertConversationEvent(
+  upsertConversationEvent(
     event({ id: 'tool-1', conversationId: 'conv-1', sequenceNo: 4, kind: 'tool', title: 'tool', timestamp: 4 }),
   );
 
   assert.deepEqual(store.getConversationState('conv-1').orderedEventIds, ['user-1', 'assistant-1', 'tool-1']);
   assert.deepEqual(
-    useConversationStore.getState().groupsByConversation['conv-1']?.map((group) => group.eventIds),
+    useGroupStore.getState().groupsByConversation['conv-1']?.map((group) => group.eventIds),
     [['user-1', 'assistant-1', 'tool-1']],
   );
 });
 
 test('conversation store skips regrouping for content-only event updates', () => {
-  useConversationStore.setState({ events: {}, conversations: {}, groupsByConversation: {} });
-  const store = useConversationStore.getState();
+  resetActivityStores();
 
-  store.replaceConversationEvents('conv-1', [
+  replaceConversationEvents('conv-1', [
     event({ id: 'user-1', conversationId: 'conv-1', sequenceNo: 1, kind: 'user', title: 'user', timestamp: 1 }),
     event({ id: 'assistant-1', conversationId: 'conv-1', sequenceNo: 2, kind: 'assistant', title: 'assistant', timestamp: 2, body: 'hello' }),
   ]);
 
   const previousConversationState = useConversationStore.getState().conversations['conv-1'];
-  const previousGroups = useConversationStore.getState().groupsByConversation['conv-1'];
+  const previousGroups = useGroupStore.getState().groupsByConversation['conv-1'];
 
-  store.updateEvent('assistant-1', (current) => ({
+  updateConversationEvent('assistant-1', (current) => ({
     ...current,
     body: `${current.body} world`,
     streaming: true,
   }));
 
-  const nextState = useConversationStore.getState();
-  assert.equal(nextState.events['assistant-1']?.body, 'hello world');
-  assert.equal(nextState.events['assistant-1']?.streaming, true);
-  assert.strictEqual(nextState.conversations['conv-1'], previousConversationState);
-  assert.strictEqual(nextState.groupsByConversation['conv-1'], previousGroups);
+  const nextConversationState = useConversationStore.getState();
+  const nextEventState = useEventStore.getState();
+  const nextGroupState = useGroupStore.getState();
+  assert.equal(nextEventState.events['assistant-1']?.body, 'hello world');
+  assert.equal(nextEventState.events['assistant-1']?.streaming, true);
+  assert.strictEqual(nextConversationState.conversations['conv-1'], previousConversationState);
+  assert.strictEqual(nextGroupState.groupsByConversation['conv-1'], previousGroups);
 });
 
 test('patch revert store clears optimistic state per conversation', () => {

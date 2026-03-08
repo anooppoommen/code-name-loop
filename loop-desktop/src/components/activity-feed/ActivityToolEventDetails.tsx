@@ -13,17 +13,24 @@ import {
 import type { ActivityEvent } from '../../types/ui';
 import { parseSystemErrorDetails } from './ActivityItemHelpers';
 import type { ActivityToolReplyProps } from './ActivityItemTypes';
+import { useActivityEvent } from './useActivityEvent';
 
-interface ActivityToolEventDetailsProps extends ActivityToolReplyProps {
+type ActivityToolEventDetailsProps = ActivityToolReplyProps & ({
+  eventId: string;
+  event?: undefined;
+} | {
   event: ActivityEvent;
+  eventId?: undefined;
+}) & {
   fallbackText?: string;
   patchOutputClassName: string;
   fallbackClassName: string;
   includeSystemErrorDetails?: boolean;
-}
+};
 
 export const ActivityToolEventDetails = memo(function ActivityToolEventDetails({
-  event,
+  event: eventProp,
+  eventId,
   fallbackText,
   patchOutputClassName,
   fallbackClassName,
@@ -33,6 +40,12 @@ export const ActivityToolEventDetails = memo(function ActivityToolEventDetails({
   onUseToolReply,
   onSendToolReply,
 }: ActivityToolEventDetailsProps) {
+  const storedEvent = useActivityEvent(eventId ?? '');
+  const event = eventProp ?? storedEvent;
+  if (!event) {
+    return null;
+  }
+
   const requestInputPayload = useMemo(() => parseRequestUserInputPayload(event), [event]);
   const updatePlanPayload = useMemo(() => parseUpdatePlanPayload(event), [event]);
   const commandToolPayload = useMemo(() => parseCommandToolPayload(event), [event]);

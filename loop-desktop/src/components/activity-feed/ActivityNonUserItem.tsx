@@ -1,6 +1,5 @@
 import { memo, useRef } from 'react';
 import type { ReactNode } from 'react';
-import type { ActivityEvent } from '../../types/ui';
 import { shortID } from '../../utils/parsers';
 import type { ActivityVisualStyle } from './ActivityItemHelpers';
 import { formatActivityTime, labelFor, toolPhaseLabel } from './ActivityItemHelpers';
@@ -8,12 +7,11 @@ import { ActivityFrame, ActivityImageStrip, CopyDropdown, MarkdownBlock } from '
 import { parseFileToolPayload } from '../tool-cards';
 import { ActivityToolEventDetails } from './ActivityToolEventDetails';
 import type { ActivityImageSelectHandler, ActivityToolReplyProps } from './ActivityItemTypes';
+import { useActivityEvent } from './useActivityEvent';
 
 interface ActivityNonUserItemProps extends ActivityToolReplyProps {
-  event: ActivityEvent;
+  eventId: string;
   renderedText: string;
-  isAssistant: boolean;
-  isSystemEvent: boolean;
   isFinalAgent?: boolean;
   leftGutterIcon: ReactNode;
   visual: ActivityVisualStyle;
@@ -21,10 +19,8 @@ interface ActivityNonUserItemProps extends ActivityToolReplyProps {
 }
 
 export const ActivityNonUserItem = memo(function ActivityNonUserItem({
-  event,
+  eventId,
   renderedText,
-  isAssistant,
-  isSystemEvent,
   isFinalAgent,
   leftGutterIcon,
   visual,
@@ -34,7 +30,14 @@ export const ActivityNonUserItem = memo(function ActivityNonUserItem({
   onUseToolReply,
   onSendToolReply,
 }: ActivityNonUserItemProps) {
+  const event = useActivityEvent(eventId);
   const markdownContainerRef = useRef<HTMLDivElement>(null);
+  if (!event) {
+    return null;
+  }
+
+  const isAssistant = event.kind === 'assistant';
+  const isSystemEvent = event.kind !== 'assistant' && event.kind !== 'user';
   const isFileTool = !!parseFileToolPayload(event);
 
   return (
@@ -92,7 +95,7 @@ export const ActivityNonUserItem = memo(function ActivityNonUserItem({
           <ActivityImageStrip images={event.images || []} onSelect={onSelectImage} />
           {!isSystemEvent ? <MarkdownBlock text={renderedText} /> : null}
           <ActivityToolEventDetails
-            event={event}
+            eventId={eventId}
             fallbackText={isSystemEvent ? event.body : undefined}
             patchOutputClassName="max-h-96 overflow-y-auto whitespace-pre-wrap rounded-lg border border-loop-800/90 bg-loop-900/35 px-3 py-2 text-xs leading-relaxed text-loop-300 scrollbar-thin"
             fallbackClassName={`mt-2 max-h-96 overflow-y-auto whitespace-pre-wrap rounded-lg border border-loop-800/90 px-3 py-2 text-xs leading-relaxed scrollbar-thin ${visual.detail}`}

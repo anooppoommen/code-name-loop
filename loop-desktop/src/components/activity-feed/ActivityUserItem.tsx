@@ -1,20 +1,17 @@
 import { Brain, Cog } from 'lucide-react';
 import { memo, useRef, useState } from 'react';
-import type { ActivityEvent } from '../../types/ui';
-import { formatActivityTime } from './ActivityItemHelpers';
+import { formatActivityTime, userThinkingToneClass } from './ActivityItemHelpers';
 import { ActivityFrame, ActivityImageStrip, MarkdownBlock } from './ActivityItemShared';
 import type {
   ActivityEditMessageHandler,
   ActivityImageSelectHandler,
 } from './ActivityItemTypes';
 import { ActivityUserActions } from './ActivityUserActions';
+import { useActivityEvent } from './useActivityEvent';
 
 interface ActivityUserItemProps {
-  event: ActivityEvent;
+  eventId: string;
   renderedText: string;
-  userModel: string;
-  userThinkingLevel: string;
-  thinkingToneClass: string;
   isSending: boolean;
   onRetryMessage: (messageId: string) => Promise<void>;
   onEditMessage: ActivityEditMessageHandler;
@@ -22,25 +19,30 @@ interface ActivityUserItemProps {
 }
 
 export const ActivityUserItem = memo(function ActivityUserItem({
-  event,
+  eventId,
   renderedText,
-  userModel,
-  userThinkingLevel,
-  thinkingToneClass,
   isSending,
   onRetryMessage,
   onEditMessage,
   onSelectImage,
 }: ActivityUserItemProps) {
+  const event = useActivityEvent(eventId);
   const [isHovered, setIsHovered] = useState(false);
   const markdownContainerRef = useRef<HTMLDivElement>(null);
+  if (!event) {
+    return null;
+  }
+
+  const userModel = event.userTurn?.model?.trim() || '';
+  const userThinkingLevel = event.userTurn?.thinkingLevel?.trim() || '';
+  const thinkingToneClass = userThinkingToneClass(userThinkingLevel);
 
   return (
     <ActivityFrame
       className="px-2 py-3"
       right={
         <ActivityUserActions
-          event={event}
+          eventId={eventId}
           renderedText={renderedText}
           markdownContainerRef={markdownContainerRef}
           isHovered={isHovered}

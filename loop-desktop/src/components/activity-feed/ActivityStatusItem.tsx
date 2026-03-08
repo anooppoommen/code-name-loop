@@ -1,8 +1,13 @@
 import { memo } from 'react';
-import type { ActivityEvent } from '../../types/ui';
 import { ActivityFrame } from './ActivityItemShared';
+import { useActivityEvent } from './useActivityEvent';
 
-export const ActivityStatusItem = memo(function ActivityStatusItem({ event }: { event: ActivityEvent }) {
+export const ActivityStatusItem = memo(function ActivityStatusItem({ eventId }: { eventId: string }) {
+  const event = useActivityEvent(eventId);
+  if (!event) {
+    return null;
+  }
+
   return (
     <ActivityFrame
       className="px-2 py-0.5 text-[11px] font-normal text-loop-500 opacity-75"

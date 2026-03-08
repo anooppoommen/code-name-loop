@@ -1,19 +1,19 @@
 import { memo, useDeferredValue, useEffect, useMemo, useState } from 'react';
 import { parseParallelToolPayload } from '../tool-cards';
 import type { ToolReplyActions } from '../tool-cards';
-import type { ActivityEvent } from '../../types/ui';
 import { textTargetForEvent } from './textTarget';
 import { ActivityImageLightbox } from './ActivityItemShared';
-import { iconFor, userThinkingToneClass, visualStyleFor } from './ActivityItemHelpers';
+import { iconFor, visualStyleFor } from './ActivityItemHelpers';
 import { ActivityNonUserItem } from './ActivityNonUserItem';
 import { ActivityParallelItem } from './ActivityParallelItem';
 import { ActivityStatusItem } from './ActivityStatusItem';
 import { ActivityThoughtItem } from './ActivityThoughtItem';
 import { useThrottledText } from './ActivityMotion';
 import { ActivityUserItem } from './ActivityUserItem';
+import { useActivityEvent } from './useActivityEvent';
 
 export interface ActivityItemProps extends ToolReplyActions {
-  event: ActivityEvent;
+  eventId: string;
   isFinalAgent?: boolean;
   onRetryMessage: (messageId: string) => Promise<void>;
   onEditMessage: (messageId: string, text: string, images: { mimeType: string; dataUrl: string }[]) => void;
@@ -22,7 +22,7 @@ export interface ActivityItemProps extends ToolReplyActions {
 export { ActivityFrame } from './ActivityItemShared';
 
 export const ActivityItem = memo(function ActivityItem({
-  event,
+  eventId,
   isFinalAgent,
   canCompose,
   isSending,
@@ -31,11 +31,13 @@ export const ActivityItem = memo(function ActivityItem({
   onRetryMessage,
   onEditMessage,
 }: ActivityItemProps) {
+  const event = useActivityEvent(eventId);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
-  const userModel = event.userTurn?.model?.trim() || '';
-  const userThinkingLevel = event.userTurn?.thinkingLevel?.trim() || '';
+  if (!event) {
+    return null;
+  }
+
   const renderedText = useDeferredValue(useThrottledText(textTargetForEvent(event), !!event.streaming));
-  const thinkingToneClass = useMemo(() => userThinkingToneClass(userThinkingLevel), [userThinkingLevel]);
   const visual = useMemo(() => visualStyleFor(event), [event]);
   const parallelToolPayload = useMemo(() => parseParallelToolPayload(event), [event]);
   const leftGutterIcon = useMemo(() => {
@@ -57,17 +59,15 @@ export const ActivityItem = memo(function ActivityItem({
   }, [selectedImage]);
 
   if (event.kind === 'status') {
-    return <ActivityStatusItem event={event} />;
+    return <ActivityStatusItem eventId={eventId} />;
   }
 
   const isUser = event.kind === 'user';
-  const isAsst = event.kind === 'assistant';
-  const isSystemEvent = !isUser && !isAsst;
 
   if (event.kind === 'thought') {
     return (
       <ActivityThoughtItem
-        event={event}
+        eventId={eventId}
         renderedText={renderedText}
         leftGutterIcon={leftGutterIcon}
         visual={visual}
@@ -78,7 +78,7 @@ export const ActivityItem = memo(function ActivityItem({
   if (parallelToolPayload) {
     return (
       <ActivityParallelItem
-        event={event}
+        eventId={eventId}
         payload={parallelToolPayload}
         leftGutterIcon={leftGutterIcon}
         visual={visual}
@@ -94,11 +94,8 @@ export const ActivityItem = memo(function ActivityItem({
     <>
       {isUser ? (
         <ActivityUserItem
-          event={event}
+          eventId={eventId}
           renderedText={renderedText}
-          userModel={userModel}
-          userThinkingLevel={userThinkingLevel}
-          thinkingToneClass={thinkingToneClass}
           isSending={isSending}
           onRetryMessage={onRetryMessage}
           onEditMessage={onEditMessage}
@@ -106,10 +103,8 @@ export const ActivityItem = memo(function ActivityItem({
         />
       ) : (
         <ActivityNonUserItem
-          event={event}
+          eventId={eventId}
           renderedText={renderedText}
-          isAssistant={isAsst}
-          isSystemEvent={isSystemEvent}
           isFinalAgent={isFinalAgent}
           leftGutterIcon={leftGutterIcon}
           visual={visual}

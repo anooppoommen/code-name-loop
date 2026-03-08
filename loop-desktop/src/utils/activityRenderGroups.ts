@@ -1,5 +1,9 @@
-import type { ActivityGroup } from '../stores/groupStore';
+import type { ActivityGroup } from '../stores/groupStore.ts';
 import type { ActivityEvent } from '../types/ui';
+import {
+  buildActivityRenderGroups,
+  visibleEventIdsForGroup,
+} from '../stores/activityStore.helpers.ts';
 
 export interface RenderGroup {
   type: 'single' | 'intermediate';
@@ -13,10 +17,9 @@ export function visibleEventsForGroup(
   eventsById: Record<string, ActivityEvent>,
   hideLifecycle: boolean,
 ): ActivityEvent[] {
-  return group.eventIds
+  return visibleEventIdsForGroup(group, eventsById, hideLifecycle)
     .map((eventId) => eventsById[eventId])
-    .filter((event): event is ActivityEvent => !!event)
-    .filter((event) => !hideLifecycle || event.kind !== 'lifecycle');
+    .filter((event): event is ActivityEvent => !!event);
 }
 
 export function buildRenderGroups(
@@ -25,70 +28,10 @@ export function buildRenderGroups(
   hideLifecycle: boolean,
   isSending: boolean,
 ): RenderGroup[] {
-  const next: RenderGroup[] = [];
-  const visibleGroups = groups
-    .map((group) => ({ group, events: visibleEventsForGroup(group, eventsById, hideLifecycle) }))
-    .filter((entry) => entry.events.length > 0);
-
-  for (let groupIndex = 0; groupIndex < visibleGroups.length; groupIndex += 1) {
-    const { group, events } = visibleGroups[groupIndex];
-    const isActiveGroup = isSending && groupIndex === visibleGroups.length - 1;
-
-    next.push({
-      type: 'single',
-      id: `${group.id}:head`,
-      events: [events[0]],
-    });
-
-    if (events.length === 1) {
-      continue;
-    }
-
-    let terminalIndex = -1;
-    for (let index = events.length - 1; index >= 1; index -= 1) {
-      if (events[index].kind === 'assistant') {
-        terminalIndex = index;
-        break;
-      }
-    }
-
-    if (terminalIndex === -1) {
-      const intermediate = events.slice(1);
-      if (intermediate.length > 0) {
-        next.push({
-          type: 'intermediate',
-          id: `${group.id}:intermediate`,
-          events: intermediate,
-          defaultExpanded: isActiveGroup,
-        });
-      }
-      continue;
-    }
-
-    const intermediate = events.slice(1, terminalIndex);
-    if (intermediate.length > 0) {
-      next.push({
-        type: 'intermediate',
-        id: `${group.id}:intermediate`,
-        events: intermediate,
-        defaultExpanded: isActiveGroup,
-      });
-    }
-
-    next.push({
-      type: 'single',
-      id: `${group.id}:terminal`,
-      events: [events[terminalIndex]],
-    });
-
-    for (let index = terminalIndex + 1; index < events.length; index += 1) {
-      next.push({
-        type: 'single',
-        id: `${group.id}:trailing:${events[index].id}`,
-        events: [events[index]],
-      });
-    }
-  }
-
-  return next;
+  return buildActivityRenderGroups(groups, eventsById, hideLifecycle, isSending).map((group) => ({
+    ...group,
+    events: group.eventIds
+      .map((eventId) => eventsById[eventId])
+      .filter((event): event is ActivityEvent => !!event),
+  }));
 }

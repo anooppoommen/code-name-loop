@@ -18,10 +18,10 @@ import type { PatchFile } from '../utils/patches';
 import { useEventStore } from '../stores/eventStore';
 import { useGroupStore } from '../stores/groupStore';
 import { usePatchRevertStore } from '../stores/patchRevertStore';
-import { buildRenderGroups, visibleEventsForGroup } from '../utils/activityRenderGroups';
 import { buildAssistantPatchContext, type AssistantPatchContextEntry } from '../utils/patchActivityState';
 import { buildPatchRevertKey } from '../utils/patchRevertKey';
 import { useShallow } from 'zustand/react/shallow';
+import type { ActivityRenderGroup } from '../stores/activityStore.helpers';
 
 interface ActivityFeedProps extends ToolReplyActions {
   conversationId: string;
@@ -42,16 +42,16 @@ interface ActivityFeedProps extends ToolReplyActions {
 
 const BOTTOM_THRESHOLD_PX = 24;
 const BOTTOM_SETTLE_MS = 1200;
-const EMPTY_GROUPS: ReturnType<typeof useGroupStore.getState>['groupsByConversation'][string] = [];
-const EMPTY_EVENTS: ActivityEvent[] = [];
 const EMPTY_EVENT_ID_SET = new Set<string>();
+const EMPTY_EVENT_IDS: string[] = [];
+const EMPTY_RENDER_GROUPS: ActivityRenderGroup[] = [];
 
 interface ActivityFeedEventsProps {
   allowInteractiveMotion: boolean;
   eventsLength: number;
-  groupedEvents: ReturnType<typeof buildRenderGroups>;
+  groupedEvents: ActivityRenderGroup[];
   isSending: boolean;
-  renderEventItem: (event: ActivityEvent) => ReactElement | null;
+  renderEventItem: (eventId: string) => ReactElement | null;
 }
 
 const ActivityFeedEvents = memo(function ActivityFeedEvents({
@@ -70,13 +70,13 @@ const ActivityFeedEvents = memo(function ActivityFeedEvents({
       ) : null}
       {groupedEvents.map((group) => {
         if (group.type === 'single') {
-          return renderEventItem(group.events[0]);
+          return renderEventItem(group.eventIds[0]);
         }
 
         return (
           <ActivityIntermediateGroup
             key={group.id}
-            events={group.events}
+            eventIds={group.eventIds}
             defaultExpanded={group.defaultExpanded ?? false}
             disableInitialMotion
             animate={allowInteractiveMotion}
@@ -101,7 +101,7 @@ const ActivitySendingStatus = memo(function ActivitySendingStatus({ currentStatu
 });
 
 interface ActivityEventRowProps extends ToolReplyActions {
-  event: ActivityEvent;
+  eventId: string;
   conversationId: string;
   allowInteractiveMotion: boolean;
   isFinalAgent: boolean;
@@ -116,7 +116,7 @@ interface ActivityEventRowProps extends ToolReplyActions {
 }
 
 const ActivityEventRow = memo(function ActivityEventRow({
-  event,
+  eventId,
   conversationId,
   allowInteractiveMotion,
   isFinalAgent,
@@ -131,6 +131,11 @@ const ActivityEventRow = memo(function ActivityEventRow({
   onRetryMessage,
   onEditMessage,
 }: ActivityEventRowProps) {
+  const event = useEventStore((state) => state.events[eventId]);
+  if (!event) {
+    return null;
+  }
+
   const shouldAnimate = allowInteractiveMotion && (isAppended || shouldTrackLiveHeight);
 
   return (
@@ -141,7 +146,7 @@ const ActivityEventRow = memo(function ActivityEventRow({
       data-activity-event-id={event.id}
     >
       <ActivityItem
-        event={event}
+        eventId={event.id}
         isFinalAgent={isFinalAgent}
         canCompose={canCompose}
         isSending={isSending}
@@ -186,54 +191,31 @@ export const ActivityFeed = memo(function ActivityFeed({
   onEditMessage,
 }: ActivityFeedProps) {
   const prefersReducedMotion = Boolean(useReducedMotion());
-  const groups = useGroupStore(
-    useCallback((state) => state.groupsByConversation[conversationId] ?? EMPTY_GROUPS, [conversationId]),
+  const groupedEvents = useGroupStore(
+    useCallback(
+      (state) => state.getRenderGroups(conversationId, hideLifecycle, isSending) ?? EMPTY_RENDER_GROUPS,
+      [conversationId, hideLifecycle, isSending],
+    ),
   );
-  const conversationEvents = useEventStore(
-    useShallow(useCallback((state) => {
-      const orderedEventIds = state.conversations[conversationId]?.orderedEventIds ?? [];
-      if (orderedEventIds.length === 0) {
-        return EMPTY_EVENTS;
-      }
-      return orderedEventIds
-        .map((eventId) => state.events[eventId])
-        .filter((event): event is ActivityEvent => !!event);
-    }, [conversationId])),
+  const renderedEventIds = useGroupStore(
+    useCallback(
+      (state) => state.getVisibleEventIds(conversationId, hideLifecycle) ?? EMPTY_EVENT_IDS,
+      [conversationId, hideLifecycle],
+    ),
   );
-  const eventsById = useMemo(() => {
-    if (conversationEvents.length === 0) {
-      return {} as Record<string, ActivityEvent>;
-    }
-
-    const next: Record<string, ActivityEvent> = {};
-    for (const event of conversationEvents) {
-      next[event.id] = event;
-    }
-    return next;
-  }, [conversationEvents]);
-
-  const timelineEvents = useMemo(() => {
-    const next: ActivityEvent[] = [];
-    for (const group of groups) {
-      for (const event of visibleEventsForGroup(group, eventsById, false)) {
-        next.push(event);
-      }
-    }
-    return next;
-  }, [eventsById, groups]);
-
-  const events = useMemo(() => {
-    if (!hideLifecycle) {
-      return timelineEvents;
-    }
-    return timelineEvents.filter((event) => event.kind !== 'lifecycle');
-  }, [hideLifecycle, timelineEvents]);
-
-  const groupedEvents = useMemo(
-    () => buildRenderGroups(groups, eventsById, hideLifecycle, isSending),
-    [eventsById, groups, hideLifecycle, isSending],
+  const timelineEventIds = useGroupStore(
+    useCallback((state) => state.getTimelineEventIds(conversationId) ?? EMPTY_EVENT_IDS, [conversationId]),
   );
-  const renderedEventIds = useMemo(() => events.map((event) => event.id), [events]);
+  const events = useEventStore(
+    useShallow(useCallback((state) => renderedEventIds
+      .map((eventId) => state.events[eventId])
+      .filter((event): event is ActivityEvent => !!event), [renderedEventIds])),
+  );
+  const timelineEvents = useEventStore(
+    useShallow(useCallback((state) => timelineEventIds
+      .map((eventId) => state.events[eventId])
+      .filter((event): event is ActivityEvent => !!event), [timelineEventIds])),
+  );
   const showHistoryLoadingState = isLoadingHistory && !isSending && events.length === 0;
 
   const [isAtBottom, setIsAtBottom] = useState(true);
@@ -574,7 +556,11 @@ export const ActivityFeed = memo(function ActivityFeed({
     }
   }, [assistantPatchContext, conversationId, syncPatchRevertAuthoritative]);
 
-  const renderEventItem = useCallback((event: ActivityEvent) => {
+  const renderEventItem = useCallback((eventId: string) => {
+    const event = useEventStore.getState().events[eventId];
+    if (!event) {
+      return null;
+    }
     const isFinalAgent = event.id === finalAgentEventId;
     // shouldTrackLiveHeight: true when the item's content can change dynamically.
     // - event.streaming: assistant text events updating live
@@ -588,7 +574,7 @@ export const ActivityFeed = memo(function ActivityFeed({
     return (
       <ActivityEventRow
         key={event.id}
-        event={event}
+        eventId={event.id}
         conversationId={conversationId}
         allowInteractiveMotion={allowInteractiveMotion}
         isFinalAgent={isFinalAgent}

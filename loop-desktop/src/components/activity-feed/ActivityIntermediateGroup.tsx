@@ -10,18 +10,20 @@ import {
   ActivityPresence,
 } from './ActivityMotion';
 import type { ActivityEvent } from '../../types/ui';
+import { useEventStore } from '../../stores/eventStore';
+import { useShallow } from 'zustand/react/shallow';
 
 interface ActivityIntermediateGroupProps {
-  events: ActivityEvent[];
+  eventIds: string[];
   defaultExpanded: boolean;
   disableInitialMotion: boolean;
   animate: boolean;
-  renderEventItem: (event: ActivityEvent) => ReactElement | null;
+  renderEventItem: (eventId: string) => ReactElement | null;
 }
 
 export const ActivityIntermediateGroup = memo(
   function ActivityIntermediateGroup({
-    events,
+    eventIds,
     defaultExpanded,
     disableInitialMotion,
     animate,
@@ -34,6 +36,11 @@ export const ActivityIntermediateGroup = memo(
     const preserveAnchorFrameRef = useRef<number | null>(null);
     const clearManualHoldTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const canAnimate = animate;
+    const events = useEventStore(
+      useShallow((state) => eventIds
+        .map((eventId) => state.events[eventId])
+        .filter((event): event is ActivityEvent => !!event)),
+    );
 
     useEffect(() => {
       if (defaultExpanded) {
@@ -197,7 +204,7 @@ export const ActivityIntermediateGroup = memo(
             <div className="grid overflow-hidden">
               <div className="min-h-0">
                 <div className="flex flex-col gap-0 pb-1">
-                  {events.map((event) => renderEventItem(event))}
+                  {events.map((event) => renderEventItem(event.id))}
                 </div>
               </div>
             </div>
@@ -231,7 +238,7 @@ export const ActivityIntermediateGroup = memo(
               disableInitialAnimation={disableInitialMotion}
             >
               <div className="flex min-h-0 flex-col gap-0 pb-1">
-                {events.map((event) => renderEventItem(event))}
+                {events.map((event) => renderEventItem(event.id))}
               </div>
             </ActivityCollapsible>
           </>

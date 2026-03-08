@@ -7,16 +7,17 @@ import { ActivityFrame } from './ActivityItemShared';
 import { ActivityToolEventDetails } from './ActivityToolEventDetails';
 import type { ActivityToolReplyProps } from './ActivityItemTypes';
 import { textTargetForEvent } from './textTarget';
+import { useActivityEvent } from './useActivityEvent';
 
 interface ActivityParallelItemProps extends ActivityToolReplyProps {
-  event: ActivityEvent;
+  eventId: string;
   payload: ParallelToolPayload;
   leftGutterIcon: ReactNode;
   visual: ActivityVisualStyle;
 }
 
 export function ActivityParallelItem({
-  event,
+  eventId,
   payload,
   leftGutterIcon,
   visual,
@@ -25,6 +26,11 @@ export function ActivityParallelItem({
   onUseToolReply,
   onSendToolReply,
 }: ActivityParallelItemProps) {
+  const event = useActivityEvent(eventId);
+  if (!event) {
+    return null;
+  }
+
   return (
     <ActivityFrame
       className={`group px-2 py-1.5 ${visual.row}`}

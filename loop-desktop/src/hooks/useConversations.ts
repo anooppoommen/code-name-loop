@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { attachReplyStream, getActiveReplyStream, requestJson } from '../lib/loopClient';
 import { useConversationStore } from '../stores/conversationStore';
 import type { ActivityEvent, CheckpointSummary, ConversationSummary } from '../types/ui';
-import { type ActivityInput, historyRowsToActivities } from '../utils/activityTimeline';
+import { type ActivityInput } from '../utils/activityTimeline';
 import type { PatchFile } from '../utils/patches';
 import {
     asRecord,
@@ -15,7 +15,7 @@ import {
     shortID,
     stringifyResponseError,
 } from '../utils/parsers';
-import { annotateActivitiesWithPendingApprovals, rowsFromUnknown } from './useLoopDesktop.helpers';
+import { rowsFromUnknown } from './useLoopDesktop.helpers';
 
 import { useConnectionStore } from '../stores/connectionStore';
 import { useSelectionStore } from '../stores/selectionStore';
@@ -24,6 +24,11 @@ import { useStreamingStore, activeStreams } from '../stores/streamingStore';
 import { useCommandApprovalStore } from '../stores/commandApprovalStore';
 import { useModelSettingsStore } from '../stores/modelSettingsStore';
 import { useComposerDraftStore } from '../stores/composerDraftStore';
+import {
+    clearConversationPipeline,
+    hydrateConversationFromTimeline,
+    upsertConversationEvent,
+} from '../stores/activityPipeline';
 
 interface ConversationPageCursor {
     id: string;
@@ -196,26 +201,15 @@ export function useConversations(): UseConversationsReturn {
             timestamp: Date.now(),
             streaming: input.streaming,
         };
-        useConversationStore.getState().upsertConversationEvent(event);
+        upsertConversationEvent(event);
         return event.id;
     }, [selectedConversationIdRef]);
-
-    // Helper: replace activities for a conversation
-    const replaceConversationActivities = useCallback((conversationId: string, events: ActivityEvent[]): void => {
-        if (!conversationId) return;
-        const sorted = [...events].sort((l, r) => {
-            if (l.sequenceNo !== r.sequenceNo) return l.sequenceNo - r.sequenceNo;
-            if (l.timestamp !== r.timestamp) return l.timestamp - r.timestamp;
-            return l.id.localeCompare(r.id);
-        });
-        useConversationStore.getState().replaceConversationEvents(conversationId, sorted);
-    }, []);
 
     // Helper: clear view for current conversation
     const clearConversationView = useCallback((): void => {
         const conversationId = selectedConversationIdRef.current;
         if (!conversationId) return;
-        useConversationStore.getState().clearConversation(conversationId);
+        clearConversationPipeline(conversationId);
     }, [selectedConversationIdRef]);
 
     const handleStreamPacketRef = useRef<((packet: import('../electron').LoopStreamPacket, conversationId: string) => void) | null>(null);
@@ -385,17 +379,13 @@ export function useConversations(): UseConversationsReturn {
             if (rows.length === 0 && (hasActiveStream || isConversationSending)) return;
 
             const pendingApprovals = useCommandApprovalStore.getState().getPendingForConversation(conversationId);
-            replaceConversationActivities(
-                conversationId,
-                annotateActivitiesWithPendingApprovals(historyRowsToActivities(rows), pendingApprovals),
-            );
-            useConversationStore.getState().resetLiveState(conversationId);
+            hydrateConversationFromTimeline(conversationId, rows, pendingApprovals);
             useStreamingStore.getState().setSendingConversations((prev) => {
                 if (!prev[conversationId]) return prev;
                 return prev;
             });
         },
-        [backendUrl, pushActivity, replaceConversationActivities, selectedConversationIdRef],
+        [backendUrl, pushActivity, selectedConversationIdRef],
     );
 
     const createConversation = useCallback(

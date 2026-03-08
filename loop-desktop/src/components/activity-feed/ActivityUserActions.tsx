@@ -1,13 +1,13 @@
 import { Pencil, RotateCcw } from 'lucide-react';
 import { motion, useReducedMotion } from 'framer-motion';
 import type { RefObject } from 'react';
-import type { ActivityEvent } from '../../types/ui';
 import { ACTIVITY_EASE_CSS, ActivityPresence, hoverMotion } from './ActivityMotion';
 import { CopyDropdown } from './ActivityItemShared';
 import type { ActivityEditMessageHandler } from './ActivityItemTypes';
+import { useActivityEvent } from './useActivityEvent';
 
 interface ActivityUserActionsProps {
-  event: ActivityEvent;
+  eventId: string;
   renderedText: string;
   markdownContainerRef: RefObject<HTMLDivElement | null>;
   isHovered: boolean;
@@ -17,7 +17,7 @@ interface ActivityUserActionsProps {
 }
 
 export function ActivityUserActions({
-  event,
+  eventId,
   renderedText,
   markdownContainerRef,
   isHovered,
@@ -26,8 +26,9 @@ export function ActivityUserActions({
   onEditMessage,
 }: ActivityUserActionsProps) {
   const reduced = Boolean(useReducedMotion());
+  const event = useActivityEvent(eventId);
 
-  if (!event.messageId) {
+  if (!event?.messageId) {
     return null;
   }
 

@@ -6,8 +6,8 @@ import { rowsFromUnknown } from './useLoopDesktop.helpers';
 import { useConnectionStore } from '../stores/connectionStore';
 import { useSelectionStore } from '../stores/selectionStore';
 import { useNoticeStore } from '../stores/noticeStore';
-import { useConversationStore } from '../stores/conversationStore';
 import { usePatchRevertStore } from '../stores/patchRevertStore';
+import { clearConversationPipeline } from '../stores/activityPipeline';
 
 export interface UseWorkspacesReturn {
     workspaces: WorkspaceSummary[];
@@ -179,7 +179,7 @@ export function useWorkspaces(): UseWorkspacesReturn {
             // Clear the conversation view
             const conversationId = useSelectionStore.getState().selectedConversationId;
             if (conversationId) {
-                useConversationStore.getState().clearConversation(conversationId);
+                clearConversationPipeline(conversationId);
                 usePatchRevertStore.getState().clearConversation(conversationId);
             }
         }
@@ -198,7 +198,7 @@ export function useWorkspaces(): UseWorkspacesReturn {
             // Clear conversation view when swapping workspaces
             const conversationId = useSelectionStore.getState().selectedConversationId;
             if (conversationId) {
-                useConversationStore.getState().clearConversation(conversationId);
+                clearConversationPipeline(conversationId);
                 usePatchRevertStore.getState().clearConversation(conversationId);
             }
         },
