@@ -1,6 +1,7 @@
 **Prompt Eval Report**
 
-Source basis:
+Source basis (private local data; generated artifacts are intentionally not
+committed):
 
 - database: `loop/loop.db`
 - workspace: `code-name-agent`
@@ -25,10 +26,9 @@ Observed failure clusters from the baseline suite run:
 
 **Suite Artifacts**
 
-- full generated suite: `agent/systeminstruction/evals/recent_conversations.v1.json`
-- baseline results: `agent/systeminstruction/evals/results/v4-full.json`
-- iteration 1 results: `agent/systeminstruction/evals/results/v5-full.json`
-- iteration 2 results: `agent/systeminstruction/evals/results/v6-full.json`
+The generated suites and result JSON files are ignored by Git because they
+contain reconstructed turns and metadata derived from real conversations.
+Generate and evaluate them locally with `cmd/prompt_eval`; do not commit them.
 
 Each case includes:
 
@@ -128,7 +128,7 @@ The winning prompt family adds:
 **V8 / V2 Suite**
 
 The original suite was still weak on one thing the user explicitly wanted: early multi-tool context building.
-To measure that better, the suite generator was updated and regenerated as `agent/systeminstruction/evals/recent_conversations.v2.json`.
+To measure that better, the private local suite was regenerated with the updated generator.
 
 What changed in `v2`:
 
